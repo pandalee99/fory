@@ -1547,21 +1547,21 @@ public final class MemoryBuffer {
       this.writerIndex = writerIndex + 1;
       return 1;
     }
-    varInt |= (int) ((value & 0x7F) << 8) | 0x80;
+    varInt |= (int) (value << 8 &0x7F00) | 0x80;
     value >>>= 7;
     if (value == 0) {
       unsafePutInt(writerIndex, varInt);
       this.writerIndex = writerIndex + 2;
       return 2;
     }
-    varInt |= (int) ((value & 0x7F) << 16) | 0x8000;
+    varInt |= (int) (value << 16 & 0x7F0000) | 0x8000;
     value >>>= 7;
     if (value == 0) {
       unsafePutInt(writerIndex, varInt);
       this.writerIndex = writerIndex + 3;
       return 3;
     }
-    varInt |= (int) ((value & 0x7F) << 24) | 0x800000;
+    varInt |= (int) (value << 24 & 0x7F000000) | 0x800000;
     value >>>= 7;
     if (value == 0) {
       unsafePutInt(writerIndex, varInt);
@@ -1569,28 +1569,28 @@ public final class MemoryBuffer {
       return 4;
     }
     long varLong = (varInt & 0xFFFFFFFFL);
-    varLong |= ((value & 0x7F) << 32) | 0x80000000L;
+    varLong |= (value << 32 & 0x7F00000000L) | 0x80000000L;
     value >>>= 7;
     if (value == 0) {
       unsafePutLong(writerIndex, varLong);
       this.writerIndex = writerIndex + 5;
       return 5;
     }
-    varLong |= ((value & 0x7F) << 40) | 0x8000000000L;
+    varLong |= (value << 40 & 0x7F0000000000L) | 0x8000000000L;
     value >>>= 7;
     if (value == 0) {
       unsafePutLong(writerIndex, varLong);
       this.writerIndex = writerIndex + 6;
       return 6;
     }
-    varLong |= ((value & 0x7F) << 48) | 0x800000000000L;
+    varLong |= (value << 48 & 0x7F000000000000L) | 0x800000000000L;
     value >>>= 7;
     if (value == 0) {
       unsafePutLong(writerIndex, varLong);
       this.writerIndex = writerIndex + 7;
       return 7;
     }
-    varLong |= ((value & 0x7F) << 56) | 0x80000000000000L;
+    varLong |= (value << 56 & 0x7F00000000000000L) | 0x80000000000000L;
     value >>>= 7;
     if (value == 0) {
       unsafePutLong(writerIndex, varLong);
