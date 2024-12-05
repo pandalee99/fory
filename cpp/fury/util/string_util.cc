@@ -29,6 +29,7 @@
 
 #include <chrono>
 #include <string>
+#include <stdexcept>
 
 namespace fury {
 
@@ -167,6 +168,94 @@ std::string utf16ToUtf8(const std::u16string &utf16, bool is_little_endian) {
 
   return utf8;
 }
+
+// Decode a single UTF-8 block (using AVX2)
+    inline __m256i decodeUtf8Block(const __m256i& utf8, __m256i& mask1, __m256i& mask2, __m256i& mask3) {
+        __m256i result;
+
+        // 1-byte: Characters < 0x80
+        __m256i is_one_byte = _mm256_cmpgt_epi8(_mm256_set1_epi8(0x80), utf8);
+
+        // 2-byte: Characters < 0x800
+        __m256i first_byte_mask = _mm256_andnot_si256(is_one_byte, _mm256_cmpgt_epi8(utf8, mask1));
+        __m256i second_byte_mask = _mm256_andnot_si256(first_byte_mask, _mm256_cmpgt_epi8(utf8, mask2));
+
+        // Handle surrogate pairs (if necessary)
+        __m256i three_byte_mask = _mm256_andnot_si256(second_byte_mask, _mm256_cmpgt_epi8(utf8, mask3));
+
+        // Combine masks and return results
+        result = _mm256_or_si256(_mm256_or_si256(is_one_byte, second_byte_mask), three_byte_mask);
+
+        return result;
+    }
+
+// AVX2 accelerated UTF-8 to UTF-16 conversion
+    std::u16string utf8ToUtf16(const std::string& utf8, bool is_little_endian) {
+        std::u16string utf16;
+        utf16.reserve(utf8.size());
+
+        const size_t block_size = 32;  // Process 32 bytes at a time
+        size_t length = utf8.size();
+        size_t i = 0;
+
+
+        // Process blocks of 32 bytes
+        while (i + block_size <= length) {
+            __m256i utf8_block = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(utf8.data() + i));
+
+            __m256i mask1, mask2, mask3;
+            __m256i decoded = decodeUtf8Block(utf8_block, mask1, mask2, mask3);
+
+            // Simulate storing decoded values into UTF-16
+            uint16_t buffer[block_size];
+            _mm256_storeu_si256(reinterpret_cast<__m256i*>(buffer), decoded);
+
+            for (size_t j = 0; j < block_size; ++j) {
+                utf16.push_back(buffer[j]);
+            }
+
+            i += block_size;
+        }
+
+        // Handle remaining bytes
+        const char* input = reinterpret_cast<const char*>(utf8.data() + i);
+        const char* end = utf8.data() + utf8.size();
+
+        while (input < end) {
+            unsigned char byte = static_cast<unsigned char>(*input);
+            uint16_t code_unit = 0;
+
+            if (byte < 0x80) {
+                // 1-byte character
+                code_unit = byte;
+                ++input;
+            } else if ((byte & 0xE0) == 0xC0) {
+                // 2-byte character
+                code_unit = (byte & 0x1F) << 6;
+                code_unit |= (static_cast<unsigned char>(*(++input)) & 0x3F);
+                ++input;
+            } else if ((byte & 0xF0) == 0xE0) {
+                // 3-byte character
+                code_unit = (byte & 0x0F) << 12;
+                code_unit |= (static_cast<unsigned char>(*(++input)) & 0x3F) << 6;
+                code_unit |= (static_cast<unsigned char>(*(++input)) & 0x3F);
+                ++input;
+            } else {
+                throw std::runtime_error("Invalid UTF-8 encoding");
+            }
+
+            utf16.push_back(code_unit);
+        }
+
+        // Adjust byte order if needed
+        if (!is_little_endian) {
+            for (auto& value : utf16) {
+                value = swapBytes(value);
+            }
+        }
+
+        return utf16;
+    }
 
 #elif defined(__ARM_NEON) || defined(__ARM_NEON__)
 
