@@ -27,6 +27,11 @@
 #include "platform.h"
 #include "string_util.h"
 #include "gtest/gtest.h"
+#include <string>
+#include <cstring>
+#include "simdutf.h"
+
+
 
 namespace fury {
 
