@@ -466,6 +466,35 @@ def test_serialize_simple_struct(data_file_path):
     struct_round_back(data_file_path, fory, obj)
 
 
+class SomeClass:
+    f1: "SomeClass"
+    f2: Dict[str, str]
+    f3: Dict[str, str]
+
+
+def test_custom_class_roundtrip():
+    fory = pyfory.Fory(ref_tracking=True)
+    fory.register_type(SomeClass, typename="example.SomeClass")
+    obj1 = SomeClass()
+    obj1.f2 = {"k1": "v1", "k2": "v2"}
+    obj1.f1, obj1.f3 = obj1, obj1.f2
+    data1 = fory.serialize(obj1)
+    obj2 = fory.deserialize(data1)
+    data2 = fory.serialize(obj2)
+    assert data1 == data2
+    # bytes can be data serialized by other languages.
+    # due to the self-referential nature of this object,
+    # direct `==` comparison will fail.
+    # 1. Serialize `obj1` to `data1`
+    # 2. Deserialize `data1` to `obj2`
+    # 3. Serialize `obj2` to `data2`
+    # If `data1 == data2`, the round-trip preserves value equivalence.
+    # print(data1)
+    # print(data2)
+    # print(obj1)
+    # print(obj2)
+
+
 class EnumTestClass(enum.Enum):
     FOO = 0
     BAR = 1
@@ -495,7 +524,7 @@ def test_struct_hash(data_file_path):
     read_hash = pyfory.Buffer(data_bytes).read_int32()
     fory = pyfory.Fory(language=pyfory.Language.XLANG, ref_tracking=True)
     fory.register_type(ComplexObject1, typename="ComplexObject1")
-    serializer = fory.class_resolver.get_serializer(ComplexObject1)
+    serializer = fory.type_resolver.get_serializer(ComplexObject1)
     from pyfory._struct import _get_hash
 
     v = _get_hash(fory, serializer._field_names, serializer._type_hints)

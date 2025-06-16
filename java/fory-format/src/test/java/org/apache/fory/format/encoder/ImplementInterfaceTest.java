@@ -19,11 +19,17 @@
 
 package org.apache.fory.format.encoder;
 
+import java.util.Arrays;
+import java.util.List;
+import java.util.Optional;
+import java.util.TreeSet;
 import lombok.Data;
 import org.apache.fory.annotation.ForyField;
+import org.apache.fory.format.row.binary.BinaryArray;
 import org.apache.fory.format.row.binary.BinaryRow;
 import org.apache.fory.memory.MemoryBuffer;
 import org.apache.fory.memory.MemoryUtils;
+import org.apache.fory.reflect.TypeRef;
 import org.testng.Assert;
 import org.testng.annotations.Test;
 
@@ -37,6 +43,10 @@ public class ImplementInterfaceTest {
     NestedType getNested();
 
     PoisonPill getPoison();
+
+    static PoisonPill builder() {
+      return new PoisonPill();
+    }
   }
 
   public interface NestedType {
@@ -70,6 +80,7 @@ public class ImplementInterfaceTest {
 
   static {
     Encoders.registerCustomCodec(PoisonPill.class, new PoisonPillCodec());
+    Encoders.registerCustomCodec(Id.class, new IdCodec());
   }
 
   @Test
@@ -123,5 +134,168 @@ public class ImplementInterfaceTest {
     public PoisonPill decode(final byte[] value) {
       throw new AssertionError();
     }
+  }
+
+  public interface OptionalType {
+    Optional<String> f1();
+  }
+
+  static class OptionalTypeImpl implements OptionalType {
+    private final Optional<String> f1;
+
+    OptionalTypeImpl(final Optional<String> f1) {
+      this.f1 = f1;
+    }
+
+    @Override
+    public Optional<String> f1() {
+      return f1;
+    }
+  }
+
+  @Test
+  public void testNullOptional() {
+    final OptionalType bean1 = new OptionalTypeImpl(null);
+    final RowEncoder<OptionalType> encoder = Encoders.bean(OptionalType.class);
+    final BinaryRow row = encoder.toRow(bean1);
+    final MemoryBuffer buffer = MemoryUtils.wrap(row.toBytes());
+    row.pointTo(buffer, 0, buffer.size());
+    final OptionalType deserializedBean = encoder.fromRow(row);
+    Assert.assertEquals(deserializedBean.f1(), Optional.empty());
+  }
+
+  @Test
+  public void testPresentOptional() {
+    final OptionalType bean1 = new OptionalTypeImpl(Optional.of("42"));
+    final RowEncoder<OptionalType> encoder = Encoders.bean(OptionalType.class);
+    final BinaryRow row = encoder.toRow(bean1);
+    final MemoryBuffer buffer = MemoryUtils.wrap(row.toBytes());
+    row.pointTo(buffer, 0, buffer.size());
+    final OptionalType deserializedBean = encoder.fromRow(row);
+    Assert.assertEquals(deserializedBean.f1(), Optional.of("42"));
+  }
+
+  public static class Id<T> {
+    byte id;
+
+    Id(final byte id) {
+      this.id = id;
+    }
+  }
+
+  public interface OptionalCustomType {
+    Optional<Id<OptionalCustomType>> f1();
+  }
+
+  static class OptionalCustomTypeImpl implements OptionalCustomType {
+    @Override
+    public Optional<Id<OptionalCustomType>> f1() {
+      return Optional.of(new Id<>((byte) 42));
+    }
+  }
+
+  static class IdCodec<T> implements CustomCodec.MemoryBufferCodec<Id<T>> {
+    @Override
+    public MemoryBuffer encode(final Id<T> value) {
+      return MemoryBuffer.fromByteArray(new byte[] {value.id});
+    }
+
+    @Override
+    public Id<T> decode(final MemoryBuffer value) {
+      return new Id<>(value.readByte());
+    }
+  }
+
+  @Test
+  public void testOptionalCustomType() {
+    final OptionalCustomType bean1 = new OptionalCustomTypeImpl();
+    final RowEncoder<OptionalCustomType> encoder = Encoders.bean(OptionalCustomType.class);
+    final BinaryRow row = encoder.toRow(bean1);
+    final MemoryBuffer buffer = MemoryUtils.wrap(row.toBytes());
+    row.pointTo(buffer, 0, buffer.size());
+    final OptionalCustomType deserializedBean = encoder.fromRow(row);
+    Assert.assertEquals(deserializedBean.f1().get().id, bean1.f1().get().id);
+  }
+
+  public interface ListInner {
+    int f1();
+  }
+
+  static class ListInnerImpl implements ListInner {
+    private final int f1;
+
+    ListInnerImpl(final int f1) {
+      this.f1 = f1;
+    }
+
+    @Override
+    public int f1() {
+      return f1;
+    }
+  }
+
+  public interface ListOuter {
+    List<ListInner> f1();
+  }
+
+  static class ListOuterImpl implements ListOuter {
+    private final List<ListInner> f1;
+
+    ListOuterImpl(final List<ListInner> f1) {
+      this.f1 = f1;
+    }
+
+    @Override
+    public List<ListInner> f1() {
+      return f1;
+    }
+  }
+
+  @Test
+  public void testListTooLazy() {
+    final ListOuter bean1 = new ListOuterImpl(Arrays.asList(new ListInnerImpl(42)));
+    final RowEncoder<ListOuter> encoder = Encoders.bean(ListOuter.class);
+    final BinaryRow row = encoder.toRow(bean1);
+    final MemoryBuffer buffer = MemoryUtils.wrap(row.toBytes());
+    row.pointTo(buffer, 0, buffer.size());
+    final ListOuter deserializedBean = encoder.fromRow(row);
+    Assert.assertEquals(deserializedBean.f1().get(0).f1(), 42);
+  }
+
+  public interface Value extends Comparable<Value> {
+    int v();
+
+    @Override
+    default int compareTo(final Value o) {
+      return Integer.compare(v(), o.v());
+    }
+  }
+
+  public static class ValueImpl implements Value {
+    int v;
+
+    public ValueImpl(final int v) {
+      this.v = v;
+    }
+
+    @Override
+    public int v() {
+      return v;
+    }
+  }
+
+  @Test
+  public void testTreeSetOfInterface() {
+    final ArrayEncoder<TreeSet<Value>> encoder =
+        Encoders.arrayEncoder(new TypeRef<TreeSet<Value>>() {});
+    final TreeSet<Value> expected = new TreeSet<Value>();
+    expected.add(new ValueImpl(1));
+    expected.add(new ValueImpl(3));
+    expected.add(new ValueImpl(5));
+    final BinaryArray array = encoder.toArray(expected);
+    final MemoryBuffer buffer = array.getBuffer();
+    array.pointTo(buffer, 0, buffer.size());
+    final TreeSet<Value> deserializedBean = encoder.fromArray(array);
+    Assert.assertEquals(deserializedBean, expected);
   }
 }
