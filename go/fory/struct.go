@@ -91,7 +91,6 @@ func (s *structSerializer) Read(f *Fory, buf *ByteBuffer, type_ reflect.Type, va
 			s.structHash = hash
 		}
 	}
-
 	structHash := buf.ReadInt32()
 	if structHash != s.structHash {
 		return fmt.Errorf("hash %d is not consistent with %d for type %s",
@@ -161,7 +160,7 @@ type ptrToStructSerializer struct {
 }
 
 func (s *ptrToStructSerializer) TypeId() TypeId {
-	return FORY_TYPE_TAG
+	return -NAMED_STRUCT
 }
 
 func (s *ptrToStructSerializer) NeedWriteRef() bool {

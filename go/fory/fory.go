@@ -274,7 +274,6 @@ func (f *Fory) writeValue(buffer *ByteBuffer, value reflect.Value, serializer Se
 	if value.Kind() == reflect.Interface {
 		value = value.Elem()
 	}
-
 	if serializer != nil {
 		return serializer.Write(f, buffer, value)
 	}
@@ -386,7 +385,7 @@ func (f *Fory) readReferencableBySerializer(buf *ByteBuffer, value reflect.Value
 			return nil
 		}
 		prev := f.refResolver.GetReadObject(refId)
-		value.Set(reflect.ValueOf(prev))
+		value.Set(prev)
 		return nil
 	}
 
@@ -406,14 +405,12 @@ func (f *Fory) readData(buffer *ByteBuffer, value reflect.Value, serializer Seri
 		if err != nil {
 			return err
 		}
-
 		serializer = ti.Serializer
 		concrete := reflect.New(ti.Type).Elem()
 
 		if err := serializer.Read(f, buffer, ti.Type, concrete); err != nil {
 			return err
 		}
-
 		value.Set(concrete)
 		return nil
 	}

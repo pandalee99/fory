@@ -543,14 +543,19 @@ cdef class TypeResolver:
     cpdef inline TypeInfo read_typeinfo(self, Buffer buffer):
         cdef:
             int32_t type_id = buffer.read_varuint32()
+        if type_id < 0:
+            type_id = -type_id
+        if type_id > self._c_registered_id_to_type_info.size():
+            raise ValueError(f"Unexpected type_id {type_id}")
+        cdef:
             int32_t internal_type_id = type_id & 0xFF
         cdef MetaStringBytes namespace_bytes, typename_bytes
         if IsNamespacedType(internal_type_id):
             namespace_bytes = self.metastring_resolver.read_meta_string_bytes(buffer)
             typename_bytes = self.metastring_resolver.read_meta_string_bytes(buffer)
             return self._load_bytes_to_typeinfo(type_id, namespace_bytes, typename_bytes)
-        if type_id < 0 or type_id > self._c_registered_id_to_type_info.size():
-            raise ValueError(f"Unexpected type_id {type_id}")
+        # if type_id < 0 or type_id > self._c_registered_id_to_type_info.size():
+        #     raise ValueError(f"Unexpected type_id {type_id}")
         typeinfo_ptr = self._c_registered_id_to_type_info[type_id]
         if typeinfo_ptr == NULL:
             raise ValueError(f"Unexpected type_id {type_id}")
@@ -1808,17 +1813,24 @@ cdef class MapSerializer(Serializer):
             buffer.write_int16(-1)
             chunk_size_offset = buffer.writer_index - 1
             chunk_header = 0
+            print("hahaha:", key_serializer, value_serializer)
             if key_serializer is not None:
                 chunk_header |= KEY_DECL_TYPE
             else:
                 key_typeinfo = self.type_resolver.get_typeinfo(key_cls)
+                print("key_typeinfo:", key_typeinfo)
+                print("key", buffer.hex())
                 type_resolver.write_typeinfo(buffer, key_typeinfo)
+                print("key", buffer.hex())
                 key_serializer = key_typeinfo.serializer
             if value_serializer is not None:
                 chunk_header |= VALUE_DECL_TYPE
             else:
                 value_typeinfo = self.type_resolver.get_typeinfo(value_cls)
+                print("value_typeinfo:", value_typeinfo)
+                print("val", buffer.hex())
                 type_resolver.write_typeinfo(buffer, value_typeinfo)
+                print("val", buffer.hex())
                 value_serializer = value_typeinfo.serializer
             key_write_ref = key_serializer.need_to_write_ref
             value_write_ref = value_serializer.need_to_write_ref

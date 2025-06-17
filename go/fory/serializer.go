@@ -51,7 +51,6 @@ func (s boolSerializer) NeedWriteRef() bool {
 	return false
 }
 
-
 type int8Serializer struct {
 }
 
@@ -242,7 +241,7 @@ func (s stringSerializer) Read(f *Fory, buf *ByteBuffer, type_ reflect.Type, val
 }
 
 func (s stringSerializer) NeedWriteRef() bool {
-	return false
+	return true
 }
 
 // ptrToStringSerializer serializes a pointer to string. Reference are considered based on pointer instead of
