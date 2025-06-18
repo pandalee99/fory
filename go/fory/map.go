@@ -150,7 +150,6 @@ func (s mapSerializer) Write(f *Fory, buf *ByteBuffer, value reflect.Value) erro
 				break
 			}
 		}
-
 		if !hasNext {
 			break
 		}
@@ -159,7 +158,6 @@ func (s mapSerializer) Write(f *Fory, buf *ByteBuffer, value reflect.Value) erro
 		buf.WriteInt16(-1)
 		chunkSizeOffset := buf.writerIndex
 		chunkHeader := 0
-
 		if keySerializer != nil {
 			chunkHeader |= KEY_DECL_TYPE
 		} else {
@@ -200,7 +198,6 @@ func (s mapSerializer) Write(f *Fory, buf *ByteBuffer, value reflect.Value) erro
 		}
 		buf.PutUint8(chunkSizeOffset-2, uint8(chunkHeader))
 		chunkSize := 0
-
 		for chunkSize < MAX_CHUNK_SIZE {
 			if !isValid(entryKey) || !isValid(entryVal) || getActualType(entryKey) != keyCls || getActualType(entryVal) != valueCls {
 				break
@@ -268,7 +265,6 @@ func (s mapSerializer) Read(f *Fory, buf *ByteBuffer, typ reflect.Type, value re
 	keySer := s.keySerializer
 	valSer := s.valueSerializer
 	resolver := f.typeResolver
-
 	for size > 0 {
 		for {
 			keyHasNull := (chunkHeader & KEY_HAS_NULL) != 0
@@ -344,7 +340,6 @@ func (s mapSerializer) Read(f *Fory, buf *ByteBuffer, typ reflect.Type, value re
 			} else {
 				v = reflect.Zero(valueType)
 			}
-
 			value.SetMapIndex(k, v)
 			size--
 			if size == 0 {
@@ -366,6 +361,7 @@ func (s mapSerializer) Read(f *Fory, buf *ByteBuffer, typ reflect.Type, value re
 				return err
 			}
 			keySer = ti.Serializer
+			keyType = ti.Type
 		}
 		if !valDeclType {
 			ti, err := resolver.readTypeInfo(buf)
@@ -373,17 +369,16 @@ func (s mapSerializer) Read(f *Fory, buf *ByteBuffer, typ reflect.Type, value re
 				return err
 			}
 			valSer = ti.Serializer
+			valueType = ti.Type
 		}
 
 		for i := 0; i < chunkSize; i++ {
 			var k, v reflect.Value
-
 			if trackKeyRef {
 				refID, err := f.refResolver.TryPreserveRefId(buf)
 				if err != nil {
 					return err
 				}
-
 				if refID < int32(NotNullValueFlag) {
 					k = f.refResolver.GetCurrentReadObject()
 				} else {
@@ -405,7 +400,6 @@ func (s mapSerializer) Read(f *Fory, buf *ByteBuffer, typ reflect.Type, value re
 				if err != nil {
 					return err
 				}
-
 				if refID < int32(NotNullValueFlag) {
 					v = f.refResolver.GetCurrentReadObject()
 				} else {
@@ -421,7 +415,12 @@ func (s mapSerializer) Read(f *Fory, buf *ByteBuffer, typ reflect.Type, value re
 					return err
 				}
 			}
-
+			if k.Kind() == reflect.Interface {
+				k = k.Elem()
+			}
+			if v.Kind() == reflect.Interface {
+				v = v.Elem()
+			}
 			value.SetMapIndex(k, v)
 			size--
 		}
@@ -479,7 +478,7 @@ func actualVal(t reflect.Type) (reflect.Value, error) {
 }
 
 func isValid(v reflect.Value) bool {
-	return v.IsValid() && !v.IsZero()
+	return v.IsValid()
 }
 
 type mapConcreteKeyValueSerializer struct {

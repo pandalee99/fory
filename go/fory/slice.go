@@ -48,7 +48,6 @@ func (s sliceSerializer) Write(f *Fory, buf *ByteBuffer, value reflect.Value) er
 		buf.WriteVarUint32(0) // Write 0 for empty slice
 		return nil
 	}
-
 	// Write collection header and get type information
 	collectFlag, elemTypeInfo := s.writeHeader(f, buf, value)
 
@@ -155,7 +154,6 @@ func (s sliceSerializer) writeDifferentTypes(f *Fory, buf *ByteBuffer, value ref
 			buf.WriteInt8(NullFlag) // Write null marker
 			continue
 		}
-
 		// Handle reference tracking
 		refWritten, err := f.refResolver.WriteRefOrNull(buf, elem)
 		if err != nil {
@@ -168,7 +166,6 @@ func (s sliceSerializer) writeDifferentTypes(f *Fory, buf *ByteBuffer, value ref
 		// Get and write type info for each element (since types vary)
 		typeInfo, _ := f.typeResolver.getTypeInfo(elem, true)
 		buf.WriteVarInt32(typeInfo.TypeID)
-
 		// Write actual value
 		if err := typeInfo.Serializer.Write(f, buf, elem); err != nil {
 			return err
@@ -196,9 +193,8 @@ func (s sliceSerializer) Read(f *Fory, buf *ByteBuffer, type_ reflect.Type, valu
 		typeID := buf.ReadVarInt32()
 		elemTypeInfo, _ = f.typeResolver.getTypeInfoById(int16(typeID))
 	}
-
 	// Initialize slice with proper capacity
-	if value.Cap() < length {
+	if value.IsZero() || value.Cap() < length {
 		value.Set(reflect.MakeSlice(type_, length, length))
 	} else {
 		value.Set(value.Slice(0, length))
@@ -332,10 +328,8 @@ func (s *sliceConcreteValueSerializer) Read(f *Fory, buf *ByteBuffer, type_ refl
 	f.refResolver.Reference(value)
 	var prevType reflect.Type
 	for i := 0; i < length; i++ {
-
 		elem := value.Index(i)
 		elemType := elem.Type()
-
 		var elemSerializer Serializer
 		if i == 0 || elemType != prevType {
 			elemSerializer = nil
@@ -345,6 +339,7 @@ func (s *sliceConcreteValueSerializer) Read(f *Fory, buf *ByteBuffer, type_ refl
 		if err := readBySerializer(f, buf, value.Index(i), elemSerializer, s.referencable); err != nil {
 			return err
 		}
+		prevType = elemType
 	}
 	return nil
 }

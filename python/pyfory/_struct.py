@@ -215,6 +215,7 @@ class ComplexObjectSerializer(Serializer):
 
     def xread(self, buffer):
         if self._hash == 0:
+            self._field_names = sorted(self._type_hints.keys())
             self._hash = _get_hash(self.fory, self._field_names, self._type_hints)
         hash_ = buffer.read_int32()
         if hash_ != self._hash:
