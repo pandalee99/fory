@@ -470,7 +470,6 @@ func (r *typeResolver) getTypeInfo(value reflect.Value, create bool) (TypeInfo, 
 		}
 		return info, nil
 	}
-
 	var internal = false
 
 	// Early return if type registration is required but not allowed

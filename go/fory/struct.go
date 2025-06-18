@@ -181,6 +181,10 @@ func (s *ptrToStructSerializer) Read(f *Fory, buf *ByteBuffer, type_ reflect.Typ
 
 func computeStructHash(fieldsInfo structFieldsInfo, typeResolver *typeResolver) (int32, error) {
 	var hash int32 = 17
+	names := make([]string, len(fieldsInfo))
+	for i, f := range fieldsInfo {
+		names[i] = f.name
+	}
 	for _, f := range fieldsInfo {
 		if newHash, err := computeFieldHash(hash, f, typeResolver); err != nil {
 			return 0, err

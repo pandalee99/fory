@@ -91,7 +91,7 @@ func (r *RefResolver) WriteRefOrNull(buffer *ByteBuffer, value reflect.Value) (r
 		isNil = value.IsNil()
 		length = value.Len()
 	case reflect.Interface:
-		value := value.Elem()
+		value = value.Elem()
 		switch value.Kind() {
 		case reflect.Bool, reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
 			reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
