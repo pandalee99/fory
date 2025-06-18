@@ -401,29 +401,26 @@ func (r *typeResolver) RegisterSerializer(type_ reflect.Type, s Serializer) erro
 }
 
 func (r *typeResolver) RegisterTypeTag(type_ reflect.Type, tag string) error {
-	// 1. 先检查 value 类型是否已经注册
 	if prev, ok := r.typeToSerializers[type_]; ok {
 		return fmt.Errorf("type %s already has a serializer %s registered", type_, prev)
 	}
 
-	// 2. 注册 value 版 serializer，tag -> valueSerializer
 	valueSerializer := &structSerializer{
 		type_:   type_,
 		typeTag: tag,
 	}
 	r.typeToSerializers[type_] = valueSerializer
-	r.typeTagToSerializers[tag] = valueSerializer // ← 只给 value 版
+	r.typeTagToSerializers[tag] = valueSerializer
 	r.typeToTypeInfo[type_] = "@" + tag
 	r.typeInfoToType["@"+tag] = type_
 
-	// 3. 注册 pointer 版 serializer，用 "*"+tag 作 key
 	ptrType := reflect.PtrTo(type_)
 	ptrSerializer := &ptrToStructSerializer{
-		structSerializer: *valueSerializer, // 复用 valueSerializer 的配置
+		structSerializer: *valueSerializer,
 		type_:            ptrType,
 	}
 	r.typeToSerializers[ptrType] = ptrSerializer
-	r.typeTagToSerializers["*"+tag] = ptrSerializer // ← 绑定到 "*tag"
+	r.typeTagToSerializers["*"+tag] = ptrSerializer
 	r.typeToTypeInfo[ptrType] = "*@" + tag
 	r.typeInfoToType["*@"+tag] = ptrType
 
