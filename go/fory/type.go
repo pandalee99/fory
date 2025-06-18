@@ -174,7 +174,6 @@ const (
 )
 
 var namedTypes = map[TypeId]struct{}{
-	FORY_TYPE_TAG:           {},
 	NAMED_EXT:               {},
 	NAMED_ENUM:              {},
 	NAMED_STRUCT:            {},
@@ -389,13 +388,11 @@ func (r *typeResolver) RegisterSerializer(type_ reflect.Type, s Serializer) erro
 	}
 	r.typeToSerializers[type_] = s
 	typeId := s.TypeId()
-	if typeId != FORY_TYPE_TAG {
-		if typeId > NotSupportCrossLanguage {
-			if _, ok := r.typeIdToType[typeId]; ok {
-				return fmt.Errorf("type %s with id %d has been registered", type_, typeId)
-			}
-			r.typeIdToType[typeId] = type_
+	if typeId > NotSupportCrossLanguage {
+		if _, ok := r.typeIdToType[typeId]; ok {
+			return fmt.Errorf("type %s with id %d has been registered", type_, typeId)
 		}
+		r.typeIdToType[typeId] = type_
 	}
 	return nil
 }
@@ -423,6 +420,7 @@ func (r *typeResolver) RegisterTypeTag(type_ reflect.Type, tag string) error {
 	r.typeTagToSerializers["*"+tag] = ptrSerializer
 	r.typeToTypeInfo[ptrType] = "*@" + tag
 	r.typeInfoToType["*@"+tag] = ptrType
+	//TODO: generate typeInfo
 
 	return nil
 }
