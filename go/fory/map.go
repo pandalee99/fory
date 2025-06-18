@@ -100,15 +100,24 @@ func (s mapSerializer) Write(f *Fory, buf *ByteBuffer, value reflect.Value) erro
 						if written, err := refResolver.WriteRefOrNull(buf, entryKey); err != nil {
 							return err
 						} else if !written {
-							s.write_obj(f, keySerializer, buf, entryKey)
+							err := s.writeObj(f, keySerializer, buf, entryKey)
+							if err != nil {
+								return err
+							}
 						}
 					} else {
 						buf.WriteInt8(NULL_VALUE_KEY_DECL_TYPE)
-						s.write_obj(f, keySerializer, buf, entryKey)
+						err := s.writeObj(f, keySerializer, buf, entryKey)
+						if err != nil {
+							return err
+						}
 					}
 				} else {
 					buf.WriteInt8(VALUE_HAS_NULL | TRACKING_KEY_REF)
-					f.Write(buf, entryKey)
+					err := f.Write(buf, entryKey)
+					if err != nil {
+						return err
+					}
 				}
 			} else {
 				if valValid {
@@ -118,20 +127,32 @@ func (s mapSerializer) Write(f *Fory, buf *ByteBuffer, value reflect.Value) erro
 							if written, err := refResolver.WriteRefOrNull(buf, entryKey); err != nil {
 								return err
 							} else if !written {
-								valueSerializer.Write(f, buf, entryKey)
+								err := valueSerializer.Write(f, buf, entryKey)
+								if err != nil {
+									return err
+								}
 							}
 							if written, err := refResolver.WriteRefOrNull(buf, value); err != nil {
 								return err
 							} else if !written {
-								valueSerializer.Write(f, buf, entryVal)
+								err := valueSerializer.Write(f, buf, entryVal)
+								if err != nil {
+									return err
+								}
 							}
 						} else {
 							buf.WriteInt8(NULL_KEY_VALUE_DECL_TYPE)
-							valueSerializer.Write(f, buf, entryVal)
+							err := valueSerializer.Write(f, buf, entryVal)
+							if err != nil {
+								return err
+							}
 						}
 					} else {
 						buf.WriteInt8(KEY_HAS_NULL | TRACKING_VALUE_REF)
-						f.Write(buf, entryVal)
+						err := f.Write(buf, entryVal)
+						if err != nil {
+							return err
+						}
 					}
 				} else {
 					buf.WriteInt8(KV_NULL)
@@ -203,19 +224,31 @@ func (s mapSerializer) Write(f *Fory, buf *ByteBuffer, value reflect.Value) erro
 				break
 			}
 			if !keyWriteRef {
-				s.write_obj(f, keySerializer, buf, entryKey)
+				err := s.writeObj(f, keySerializer, buf, entryKey)
+				if err != nil {
+					return err
+				}
 			} else if written, err := refResolver.WriteRefOrNull(buf, entryKey); err != nil {
 				return err
 			} else if !written {
-				s.write_obj(f, keySerializer, buf, entryKey)
+				err := s.writeObj(f, keySerializer, buf, entryKey)
+				if err != nil {
+					return err
+				}
 			}
 
 			if !valueWriteRef {
-				s.write_obj(f, valueSerializer, buf, entryVal)
+				err := s.writeObj(f, valueSerializer, buf, entryVal)
+				if err != nil {
+					return err
+				}
 			} else if written, err := refResolver.WriteRefOrNull(buf, entryVal); err != nil {
 				return err
 			} else if !written {
-				s.write_obj(f, valueSerializer, buf, entryVal)
+				err := s.writeObj(f, valueSerializer, buf, entryVal)
+				if err != nil {
+					return err
+				}
 			}
 
 			chunkSize += 1
@@ -240,7 +273,7 @@ func (s mapSerializer) Write(f *Fory, buf *ByteBuffer, value reflect.Value) erro
 	return nil
 }
 
-func (s mapSerializer) write_obj(f *Fory, serializer Serializer, buf *ByteBuffer, obj reflect.Value) error {
+func (s mapSerializer) writeObj(f *Fory, serializer Serializer, buf *ByteBuffer, obj reflect.Value) error {
 	return serializer.Write(f, buf, obj)
 }
 
