@@ -19,10 +19,9 @@ package fory
 
 import (
 	"bytes"
+	"github.com/apache/fory/go/fory/meta"
 	"strings"
 	"testing"
-
-	"github.com/apache/fory/go/fory/meta"
 )
 
 func TestMetaStringResolver(t *testing.T) {
