@@ -591,7 +591,6 @@ func convertRecursively(newVal, tmplVal reflect.Value) (reflect.Value, error) {
 	if tmplVal.Kind() == reflect.Interface && !tmplVal.IsNil() {
 		tmplVal = tmplVal.Elem()
 	}
-
 	switch tmplVal.Kind() {
 	case reflect.Slice:
 		// Both must be slices and have the same length
@@ -633,7 +632,6 @@ func convertRecursively(newVal, tmplVal reflect.Value) (reflect.Value, error) {
 			out.SetMapIndex(ck, cv)
 		}
 		return out, nil
-
 	case reflect.Ptr:
 		var innerNewVal reflect.Value
 		// If newVal is a pointer
@@ -658,7 +656,20 @@ func convertRecursively(newVal, tmplVal reflect.Value) (reflect.Value, error) {
 		outPtr := reflect.New(tmplInner.Type())
 		outPtr.Elem().Set(elemOut)
 		return outPtr, nil
-
+	case reflect.Array:
+		if newVal.Len() != tmplVal.Len() {
+			return reflect.Zero(tmplVal.Type()),
+				fmt.Errorf("array length mismatch: got %d, expected %d", newVal.Len(), tmplVal.Len())
+		}
+		out := reflect.New(tmplVal.Type()).Elem()
+		for i := 0; i < newVal.Len(); i++ {
+			cv, err := convertRecursively(newVal.Index(i), tmplVal.Index(i))
+			if err != nil {
+				return reflect.Zero(tmplVal.Type()), err
+			}
+			out.Index(i).Set(cv)
+		}
+		return out, nil
 	default:
 		if newVal.Type().ConvertibleTo(tmplVal.Type()) {
 			return newVal.Convert(tmplVal.Type()), nil
