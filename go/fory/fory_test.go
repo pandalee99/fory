@@ -206,6 +206,7 @@ func TestSerializeMap(t *testing.T) {
 }
 
 func TestSerializeArray(t *testing.T) {
+	fmt.Println(">>>> running convertRecursively, this commit:", "<YOUR_UNIQUE_MARKER>")
 	for _, referenceTracking := range []bool{false, true} {
 		fory := NewFory(referenceTracking)
 		for _, data := range commonArray() {
