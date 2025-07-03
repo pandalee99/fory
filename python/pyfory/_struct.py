@@ -214,6 +214,9 @@ class ComplexObjectSerializer(Serializer):
             self.fory.xserialize_ref(buffer, field_value, serializer=serializer)
 
     def xread(self, buffer):
+        pairs = list(zip(self._field_names, self._serializers))
+        pairs.sort(key=lambda x: x[0])
+        self._field_names, self._serializers = zip(*pairs)
         if self._hash == 0:
             self._hash = _get_hash(self.fory, self._field_names, self._type_hints)
         hash_ = buffer.read_int32()
@@ -224,8 +227,7 @@ class ComplexObjectSerializer(Serializer):
             )
         obj = self.type_.__new__(self.type_)
         self.fory.ref_resolver.reference(obj)
-        for index, field_name in enumerate(self._field_names):
-            serializer = self._serializers[index]
+        for field_name, serializer in zip(self._field_names, self._serializers):
             field_value = self.fory.xdeserialize_ref(buffer, serializer=serializer)
             setattr(
                 obj,

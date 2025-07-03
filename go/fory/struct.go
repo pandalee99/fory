@@ -36,6 +36,10 @@ func (s *structSerializer) TypeId() TypeId {
 	return NAMED_STRUCT
 }
 
+func (s *structSerializer) NeedWriteRef() bool {
+	return true
+}
+
 func (s *structSerializer) Write(f *Fory, buf *ByteBuffer, value reflect.Value) error {
 	// TODO support fields back and forward compatible. need to serialize fields name too.
 	if s.fieldsInfo == nil {
@@ -73,6 +77,12 @@ func (s *structSerializer) Write(f *Fory, buf *ByteBuffer, value reflect.Value) 
 func (s *structSerializer) Read(f *Fory, buf *ByteBuffer, type_ reflect.Type, value reflect.Value) error {
 	// struct value may be a value type if it's not a pointer, so we don't invoke `refResolver.Reference` here,
 	// but invoke it in `ptrToStructSerializer` instead.
+	if value.Kind() == reflect.Ptr {
+		if value.IsNil() {
+			value.Set(reflect.New(type_.Elem()))
+		}
+		value = value.Elem()
+	}
 	if s.fieldsInfo == nil {
 		if infos, err := createStructFieldInfos(f, s.type_); err != nil {
 			return err
@@ -87,7 +97,6 @@ func (s *structSerializer) Read(f *Fory, buf *ByteBuffer, type_ reflect.Type, va
 			s.structHash = hash
 		}
 	}
-
 	structHash := buf.ReadInt32()
 	if structHash != s.structHash {
 		return fmt.Errorf("hash %d is not consistent with %d for type %s",
@@ -117,7 +126,24 @@ func createStructFieldInfos(f *Fory, type_ reflect.Type) (structFieldsInfo, erro
 		if unicode.IsLower(firstRune) {
 			continue
 		}
-		fieldSerializer, _ := f.typeResolver.getSerializerByType(field.Type)
+		// We set mapInStruct to true directly to avoid reflection from type checks.
+		// This only applies to maps within structs.
+		fieldSerializer, _ := f.typeResolver.getSerializerByType(field.Type, true)
+		if field.Type.Kind() == reflect.Array {
+			// When a struct field is an array type,
+			// retrieve its corresponding slice serializer and populate it into fieldInfo for reuse.
+			elemType := field.Type.Elem()
+			sliceType := reflect.SliceOf(elemType)
+			fieldSerializer = f.typeResolver.typeToSerializers[sliceType]
+		} else if field.Type.Kind() == reflect.Slice {
+			// If the field is a concrete slice type, dynamically create a valid serializer
+			// so it has the potential and capability to use readSameTypes function.
+			if field.Type.Elem().Kind() != reflect.Interface {
+				fieldSerializer = sliceSerializer{
+					f.typeResolver.typesInfo[field.Type.Elem()],
+				}
+			}
+		}
 		f := fieldInfo{
 			name:         SnakeCase(field.Name), // TODO field name to lower case
 			field:        field,
@@ -160,6 +186,10 @@ func (s *ptrToStructSerializer) TypeId() TypeId {
 	return FORY_TYPE_TAG
 }
 
+func (s *ptrToStructSerializer) NeedWriteRef() bool {
+	return true
+}
+
 func (s *ptrToStructSerializer) Write(f *Fory, buf *ByteBuffer, value reflect.Value) error {
 	return s.structSerializer.Write(f, buf, value.Elem())
 }
@@ -188,26 +218,40 @@ func computeStructHash(fieldsInfo structFieldsInfo, typeResolver *typeResolver) 
 }
 
 func computeFieldHash(hash int32, fieldInfo *fieldInfo, typeResolver *typeResolver) (int32, error) {
-	if serializer, err := typeResolver.getSerializerByType(fieldInfo.type_); err != nil {
-		// FIXME ignore unknown types for hash calculation
-		return hash, nil
-	} else {
-		var id int32 = 17
-		if s, ok := serializer.(*ptrToStructSerializer); ok {
-			// Avoid recursion for circular reference
-			id = computeStringHash(s.typeTag)
+	serializer := fieldInfo.serializer
+	var id int32
+	switch s := serializer.(type) {
+	case *structSerializer:
+		id = computeStringHash(s.typeTag + s.type_.Name())
+
+	case *ptrToStructSerializer:
+		id = computeStringHash(s.typeTag + s.type_.Elem().Name())
+
+	default:
+		if s == nil {
+			id = 0
 		} else {
-			// TODO add list element type and map key/value type to hash.
-			if serializer.TypeId() < 0 {
-				id = -int32(serializer.TypeId())
+			tid := s.TypeId()
+			/*
+			   For struct fields declared with concrete slice types,
+			   use typeID = LIST uniformly for hash calculation to align cross-language behavior,
+			   while using the concrete slice type serializer for array and slice serialization.
+			   These two approaches do not conflict.
+			*/
+			if fieldInfo.type_.Kind() == reflect.Slice {
+				tid = LIST
+			}
+			if tid < 0 {
+				id = -int32(tid)
 			} else {
-				id = int32(serializer.TypeId())
+				id = int32(tid)
 			}
 		}
-		newHash := int64(hash)*31 + int64(id)
-		for newHash >= MaxInt32 {
-			newHash = newHash / 7
-		}
-		return int32(newHash), nil
 	}
+
+	newHash := int64(hash)*31 + int64(id)
+	for newHash >= MaxInt32 {
+		newHash /= 7
+	}
+	return int32(newHash), nil
 }
