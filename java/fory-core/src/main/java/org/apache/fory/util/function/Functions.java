@@ -27,9 +27,9 @@ import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.WeakHashMap;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Predicate;
+import org.apache.fory.collection.MultiKeyWeakMap;
 import org.apache.fory.collection.Tuple2;
 import org.apache.fory.reflect.ReflectionUtils;
 import org.apache.fory.util.GraalvmSupport;
@@ -77,38 +77,82 @@ public class Functions {
     }
   }
 
-  private static final Map<Tuple2<Method, Class<?>>, Object> map =
-      GraalvmSupport.isGraalBuildtime() ? new ConcurrentHashMap<>() : new WeakHashMap<>();
+  private static final Map<Tuple2<Method, Class<?>>, Object> graalvmCache =
+      GraalvmSupport.IN_GRAALVM_NATIVE_IMAGE ? new ConcurrentHashMap<>() : null;
+  private static final MultiKeyWeakMap<Object> weakCache =
+      GraalvmSupport.IN_GRAALVM_NATIVE_IMAGE ? null : new MultiKeyWeakMap<>();
 
   public static Object makeGetterFunction(Method method) {
-    return map.computeIfAbsent(
-        Tuple2.of(method, Object.class),
-        k -> {
-          MethodHandles.Lookup lookup = _JDKAccess._trustedLookup(method.getDeclaringClass());
-          try {
-            // Why `lookup.findGetter` doesn't work?
-            // MethodHandle handle = lookup.findGetter(field.getDeclaringClass(), field.getName(),
-            // field.getType());
-            MethodHandle handle = lookup.unreflect(method);
-            return _JDKAccess.makeGetterFunction(lookup, handle, method.getReturnType());
-          } catch (IllegalAccessException ex) {
-            throw new RuntimeException(ex);
+    if (GraalvmSupport.IN_GRAALVM_NATIVE_IMAGE) {
+      return graalvmCache.computeIfAbsent(
+          Tuple2.of(method, Object.class),
+          k -> {
+            MethodHandles.Lookup lookup = _JDKAccess._trustedLookup(method.getDeclaringClass());
+            try {
+              // Why `lookup.findGetter` doesn't work?
+              // MethodHandle handle = lookup.findGetter(field.getDeclaringClass(), field.getName(),
+              // field.getType());
+              MethodHandle handle = lookup.unreflect(method);
+              return _JDKAccess.makeGetterFunction(lookup, handle, method.getReturnType());
+            } catch (IllegalAccessException ex) {
+              throw new RuntimeException(ex);
+            }
+          });
+    } else {
+      Object[] keys = new Object[] {method, Object.class};
+      Object func = weakCache.get(keys);
+      if (func == null) {
+        synchronized (weakCache) {
+          func = weakCache.get(keys);
+          if (func == null) {
+            MethodHandles.Lookup lookup = _JDKAccess._trustedLookup(method.getDeclaringClass());
+            try {
+              MethodHandle handle = lookup.unreflect(method);
+              func = _JDKAccess.makeGetterFunction(lookup, handle, method.getReturnType());
+              weakCache.put(keys, func);
+            } catch (IllegalAccessException ex) {
+              throw new RuntimeException(ex);
+            }
           }
-        });
+        }
+      }
+      return func;
+    }
   }
 
   public static Object makeGetterFunction(Method method, Class<?> returnType) {
-    return map.computeIfAbsent(
-        Tuple2.of(method, returnType),
-        k -> {
-          MethodHandles.Lookup lookup = _JDKAccess._trustedLookup(method.getDeclaringClass());
-          try {
-            MethodHandle handle = lookup.unreflect(method);
-            return _JDKAccess.makeGetterFunction(lookup, handle, returnType);
-          } catch (IllegalAccessException ex) {
-            throw new RuntimeException(ex);
+    if (GraalvmSupport.IN_GRAALVM_NATIVE_IMAGE) {
+      return graalvmCache.computeIfAbsent(
+          Tuple2.of(method, returnType),
+          k -> {
+            MethodHandles.Lookup lookup = _JDKAccess._trustedLookup(method.getDeclaringClass());
+            try {
+              MethodHandle handle = lookup.unreflect(method);
+              return _JDKAccess.makeGetterFunction(lookup, handle, returnType);
+            } catch (IllegalAccessException ex) {
+              throw new RuntimeException(ex);
+            }
+          });
+    } else {
+      Object[] keys = new Object[] {method, returnType};
+      Object func = weakCache.get(keys);
+      if (func == null) {
+        synchronized (weakCache) {
+          func = weakCache.get(keys);
+          if (func == null) {
+            MethodHandles.Lookup lookup = _JDKAccess._trustedLookup(method.getDeclaringClass());
+            try {
+              MethodHandle handle = lookup.unreflect(method);
+              func = _JDKAccess.makeGetterFunction(lookup, handle, returnType);
+              weakCache.put(keys, func);
+            } catch (IllegalAccessException ex) {
+              throw new RuntimeException(ex);
+            }
           }
-        });
+        }
+      }
+      return func;
+    }
   }
 
   public static Tuple2<Class<?>, String> getterMethodInfo(Class<?> type) {

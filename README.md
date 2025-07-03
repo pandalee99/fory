@@ -36,7 +36,7 @@ In addition to cross-language serialization, Fory also features at:
 - Drop-in replace Java serialization frameworks such as JDK/Kryo/Hessian, but 100x faster at most, which can greatly improve
   the efficiency of high-performance RPC calls, data transfer, and object persistence.
 - **100% compatible** with JDK serialization API with much faster implementation: supporting JDK `writeObject`/`readObject`/`writeReplace`/`readResolve`/`readObjectNoData`/`Externalizable` API.
-- Supports **Java 8~21**, Java 17+ `record` is supported too.
+- Supports **Java 8~24**, Java 17+ `record` is supported too.
 - Supports [AOT compilation serialization](docs/guide/graalvm_guide.md) for **GraalVM native image**, and no reflection/serialization json config are needed.
 - Supports shared and circular reference object serialization for golang.
 - Supports [scala serialization](docs/guide/scala_guide.md)
@@ -127,13 +127,13 @@ Release version:
 <dependency>
   <groupId>org.apache.fory</groupId>
   <artifactId>fory-core</artifactId>
-  <version>0.11.0</version>
+  <version>0.11.1</version>
 </dependency>
 <!-- row/arrow format support -->
 <!-- <dependency>
   <groupId>org.apache.fory</groupId>
   <artifactId>fory-format</artifactId>
-  <version>0.11.0</version>
+  <version>0.11.1</version>
 </dependency> -->
 ```
 
@@ -142,13 +142,13 @@ Release version:
 Scala2:
 
 ```sbt
-libraryDependencies += "org.apache.fory" % "fory-scala_2.13" % "0.11.0"
+libraryDependencies += "org.apache.fory" % "fory-scala_2.13" % "0.11.1"
 ```
 
 Scala3:
 
 ```sbt
-libraryDependencies += "org.apache.fory" % "fory-scala_3" % "0.11.0"
+libraryDependencies += "org.apache.fory" % "fory-scala_3" % "0.11.1"
 ```
 
 ### Kotlin
@@ -157,7 +157,7 @@ libraryDependencies += "org.apache.fory" % "fory-scala_3" % "0.11.0"
 <dependency>
   <groupId>org.apache.fory</groupId>
   <artifactId>fory-kotlin</artifactId>
-  <version>0.11.0</version>
+  <version>0.11.1</version>
 </dependency>
 ```
 

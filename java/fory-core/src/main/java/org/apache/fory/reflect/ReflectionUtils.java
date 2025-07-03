@@ -41,7 +41,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
-import java.util.WeakHashMap;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.stream.Collectors;
@@ -839,8 +838,8 @@ public class ReflectionUtils {
     return Functions.isLambda(cls) || isJdkProxy(cls);
   }
 
-  private static final WeakHashMap<Class<?>, Boolean> scalaSingletonObjectCache =
-      new WeakHashMap<>();
+  private static final Map<Class<?>, Boolean> scalaSingletonObjectCache =
+      org.apache.fory.collection.Collections.newClassKeyCacheMap();
 
   /** Returns true if a class is a scala `object` singleton. */
   public static boolean isScalaSingletonObject(Class<?> cls) {

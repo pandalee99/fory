@@ -177,6 +177,10 @@ byte[] bytes = fory.serialize(object);
 System.out.println(fory.deserialize(bytes));
 ```
 
+Note that calling `buildThreadSafeFory()` on `ForyBuilder` will create an instance of `ThreadLocalFury`.
+This may not be appropriate in environments where virtual threads are used, as each thread will create its own fory instance, a relatively expensive operation.
+An alternative for virtual threads is to use `buildThreadSafeForyPool`.
+
 ### Handling Class Schema Evolution in Serialization
 
 In many systems, the schema of a class used for serialization may change over time. For instance, fields within a class
@@ -310,7 +314,6 @@ The key difference between these two is that `AbstractCollectionSerializer` can 
 For collection serializer, this is a special parameter `supportCodegenHook` needs be configured:
 
 - When `true`:
-
   - Enables optimized access to collection elements and JIT compilation for better performance
   - Direct serialization invocation and inline for map key-value items without dynamic serializer dispatch cost.
   - Better performance for standard collection types
@@ -483,21 +486,18 @@ class IntListSerializer extends AbstractCollectionSerializer<IntList> {
 Key Points:
 
 1. **Primitive Array Storage**:
-
    - Uses `int[]` for direct storage
    - Avoids boxing/unboxing overhead
    - Provides efficient memory layout
    - Enables direct array access
 
 2. **Direct Serialization**:
-
    - Write size first
    - Write primitive values directly
    - No iteration overhead
    - No boxing/unboxing during serialization
 
 3. **Direct Deserialization**:
-
    - Read size first
    - Create primitive array
    - Read values directly into array
@@ -672,21 +672,18 @@ class CustomCollectionSerializer extends AbstractCollectionSerializer<CustomColl
 Key takeways:
 
 1. **Collection Structure**:
-
    - Array-based storage for elements
    - Fixed size after creation
    - Direct element access
    - Size tracking
 
 2. **View Implementation**:
-
    - Extends `AbstractCollection` for simplicity
    - Provides iterator for element access
    - Implements `add()` for deserialization
    - Shares array reference with original type
 
 3. **Serializer Features**:
-
    - Uses `supportCodegenHook=true` for JIT optimization
    - Shares array references when possible
    - Maintains proper size tracking
@@ -707,7 +704,6 @@ When implementing a serializer for a custom Map type, you must extend `MapSerial
 Similiar to collection serializer, this is a special parameter `supportCodegenHook` needs be configured:
 
 - When `true`:
-
   - Enables optimized access to map elements and JIT compilation for better performance
   - Direct serialization invocation and inline for map key-value items without dynamic serializer dispatch cost.
   - Better performance for standard map types
@@ -853,21 +849,18 @@ class FixedValueMapSerializer extends AbstractMapSerializer<FixedValueMap> {
 Key Points:
 
 1. **Disable Codegen**:
-
    - Set `supportCodegenHook=false` in constructor
    - Fory will use your `write`/`read` methods directly
    - No JIT optimization will be applied
    - Full control over serialization format
 
 2. **Write Method**:
-
    - Handle all serialization manually
    - Write custom fields first
    - Write map entries in your preferred format
    - Control the exact binary layout
 
 3. **Read Method**:
-
    - Handle all deserialization manually
    - Read in same order as written
    - Create and populate map instance
@@ -888,7 +881,6 @@ When to Use: this approach is best when
 Trade-offs
 
 1. **Advantages**:
-
    - Complete control over serialization
    - Custom binary format possible
    - Simpler implementation for special cases
@@ -1231,6 +1223,9 @@ Object newObj = fory.execute(
   }
 );
 ```
+
+Note that `MetaContext` is not thread-safe and cannot be reused across instances of fory or multiple threads.
+In cases of multi-threading, a separate `MetaContext` must be created for each fory instance.
 
 ### Deserialize non-existent classes
 

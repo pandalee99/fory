@@ -480,8 +480,8 @@ public class CodeGenerator {
     return sb;
   }
 
-  private static final WeakHashMap<Class<?>, Boolean> sourcePublicLevelAccessible =
-      new WeakHashMap<>();
+  private static final Map<Class<?>, Boolean> sourcePublicLevelAccessible =
+      Collections.newClassKeyCacheMap();
 
   public static Class<?> getSourcePublicAccessibleParentClass(Class<?> clz) {
     while (!sourcePublicAccessible(clz)) {
@@ -506,8 +506,8 @@ public class CodeGenerator {
     return sourcePkgLevelAccessible(clz);
   }
 
-  private static final WeakHashMap<Class<?>, Boolean> sourcePkgLevelAccessible =
-      new WeakHashMap<>();
+  private static final Map<Class<?>, Boolean> sourcePkgLevelAccessible =
+      Collections.newClassKeyCacheMap();
 
   /** Returns true if class is package level accessible from source. */
   public static boolean sourcePkgLevelAccessible(Class<?> clz) {

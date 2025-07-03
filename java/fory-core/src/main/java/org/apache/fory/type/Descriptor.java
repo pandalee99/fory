@@ -29,7 +29,6 @@ import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
@@ -39,7 +38,6 @@ import java.util.Set;
 import java.util.SortedMap;
 import java.util.TreeMap;
 import java.util.TreeSet;
-import java.util.WeakHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ForkJoinPool;
@@ -48,6 +46,7 @@ import org.apache.fory.annotation.Expose;
 import org.apache.fory.annotation.ForyField;
 import org.apache.fory.annotation.Ignore;
 import org.apache.fory.annotation.Internal;
+import org.apache.fory.collection.Collections;
 import org.apache.fory.collection.Tuple2;
 import org.apache.fory.memory.Platform;
 import org.apache.fory.reflect.TypeRef;
@@ -65,8 +64,7 @@ public class Descriptor {
   private static Cache<
           Class<?>, Tuple2<SortedMap<Member, Descriptor>, SortedMap<Member, Descriptor>>>
       descCache = CacheBuilder.newBuilder().weakKeys().softValues().concurrencyLevel(64).build();
-  private static final Map<Class<?>, AtomicBoolean> flags =
-      Collections.synchronizedMap(new WeakHashMap<>());
+  private static final Map<Class<?>, AtomicBoolean> flags = Collections.newClassKeyCacheMap();
 
   @Internal
   public static void clearDescriptorCache() {
