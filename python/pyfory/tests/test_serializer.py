@@ -586,7 +586,9 @@ class PyDataClass1:
 @pytest.mark.parametrize("track_ref", [False, True])
 def test_py_serialize_dataclass(track_ref):
     fory = Fory(
-        language=Language.PYTHON, ref_tracking=track_ref, require_type_registration=False
+        language=Language.PYTHON,
+        ref_tracking=track_ref,
+        require_type_registration=False,
     )
     obj1 = PyDataClass1(
         f1=1, f2=-2.0, f3="abc", f4=True, f5="xyz", f6=[1, 2], f7={"k1": "v1"}
@@ -599,7 +601,9 @@ def test_py_serialize_dataclass(track_ref):
 @pytest.mark.parametrize("track_ref", [False, True])
 def test_function(track_ref):
     fory = Fory(
-        language=Language.PYTHON, ref_tracking=track_ref, require_type_registration=False
+        language=Language.PYTHON,
+        ref_tracking=track_ref,
+        require_type_registration=False,
     )
     c = fory.deserialize(fory.serialize(lambda x: x * 2))
     assert c(2) == 4
