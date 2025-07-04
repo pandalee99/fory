@@ -37,11 +37,13 @@ const (
 
 // RefResolver class is used to track objects that have already been read or written.
 type RefResolver struct {
-	refTracking     bool
-	writtenObjects  map[refKey]int32
-	readObjects     []reflect.Value
-	readRefIds      []int32
-	readObject      reflect.Value // last read object which is not a reference
+	refTracking    bool
+	writtenObjects map[refKey]int32
+	readObjects    []reflect.Value
+	readRefIds     []int32
+	readObject     reflect.Value // last read object which is not a reference
+
+	// basicValueCache caches boxed struct pointers keyed by their JSON representation to support reference tracking
 	basicValueCache map[interface{}]reflect.Value
 }
 
@@ -129,6 +131,7 @@ func (r *RefResolver) WriteRefOrNull(buffer *ByteBuffer, value reflect.Value) (r
 	case reflect.Invalid:
 		isNil = true
 	case reflect.Struct:
+		// Adds reference tracking for struct types
 		raw, _ := json.Marshal(value.Interface())
 		key := string(raw)
 		boxed, ok := r.basicValueCache[key]
