@@ -19,8 +19,6 @@ license: |
   limitations under the License.
 ---
 
-## Java object graph serialization
-
 When only java object serialization needed, this mode will have better performance compared to cross-language object
 graph serialization.
 
@@ -211,10 +209,9 @@ sophisticated compression techniques to minimize overhead, there is still some a
 class metadata.
 
 To further reduce metadata costs, Fory introduces a class metadata sharing mechanism, which allows the metadata to be
-sent to the deserialization process only once. For more details, please refer to the [Meta Sharing](#MetaSharing)
-section.
+sent to the deserialization process only once. For more details, please refer to the [Meta Sharing](https://fory.apache.org/docs/specification/fory_java_serialization_spec#meta-share) specification.
 
-### Smaller size
+### Compression
 
 `ForyBuilder#withIntCompressed`/`ForyBuilder#withLongCompressed` can be used to compress int/long for smaller size.
 Normally compress int is enough.
@@ -266,10 +263,8 @@ SomeClass copied = fory.copy(a);
 ### Implement a customized serializer
 
 In some cases, you may want to implement a serializer for your type, especially some class customize serialization by
-JDK
-writeObject/writeReplace/readObject/readResolve, which is very inefficient. For example, you don't want
-following `Foo#writeObject`
-got invoked, you can take following `FooSerializer` as an example:
+JDK `writeObject/writeReplace/readObject/readResolve`, which is very inefficient. For example, if you don't want
+following `Foo#writeObject` got invoked, you can take following `FooSerializer` as an example:
 
 ```java
 class Foo {
@@ -306,6 +301,801 @@ Register serializer:
 Fory fory = getFory();
 fory.registerSerializer(Foo.class, new FooSerializer(fory));
 ```
+
+### Implement Collection Serializer
+
+Similar to maps, when implementing a serializer for a custom Collection type, you must extend `CollectionSerializer` or `AbstractCollectionSerializer`.
+The key difference between these two is that `AbstractCollectionSerializer` can serialize a class which has a collection-like structure but is not a java Collection subtype.
+
+For collection serializer, this is a special parameter `supportCodegenHook` needs be configured:
+
+- When `true`:
+
+  - Enables optimized access to collection elements and JIT compilation for better performance
+  - Direct serialization invocation and inline for map key-value items without dynamic serializer dispatch cost.
+  - Better performance for standard collection types
+  - Recommended for most collections
+
+- When `false`:
+  - Uses interfaced-based element access and dynamic serializer dispatch for elements, which have higer cost
+  - More flexible for custom collection types
+  - Required when collection has special serialization needs
+  - Handles complex collection implementations
+
+#### Implement Collection Serializer with JIT support
+
+When implementing a Collection serializer with JIT support, you can leverage Fory's existing binary format and collection serialization infrastructure. The key is to properly implement the `onCollectionWrite` and `newCollection` methods to handle metadata while letting Fory handle the element serialization.
+
+Here's an example:
+
+```java
+public class CustomCollectionSerializer<T extends Collection> extends CollectionSerializer<T> {
+    public CustomCollectionSerializer(Fory fory, Class<T> cls) {
+        // supportCodegenHook controls whether to use JIT compilation
+        super(fory, cls, true);
+    }
+
+    @Override
+    public Collection onCollectionWrite(MemoryBuffer buffer, T value) {
+        // Write collection size
+        buffer.writeVarUint32Small7(value.size());
+        // Write any additional collection metadata
+        return value;
+    }
+
+    @Override
+    public Collection newCollection(MemoryBuffer buffer) {
+        // Create new collection instance
+        Collection collection = super.newCollection(buffer);
+        // Read and set collection size
+        int numElements = getAndClearNumElements();
+        setNumElements(numElements);
+        return collection;
+    }
+}
+```
+
+Note that please invoke `setNumElements` when implementing `newCollection` to let fory know how many elements to deserialize.
+
+#### Implement a totally-customzied Collection Serializer without JIT
+
+Sometimes you need to serialize a collection type that uses primitive arrays or has special requirements.
+In such cases, you can implement a serializer with JIT disabled and directly override the `write` and `read` methods.
+
+This approach:
+
+- Gives you full control over serialization
+- Works well with primitive arrays
+- Bypasses collection iteration overhead
+- Allows direct memory access
+
+Here's an example of a custom integer list backed by a primitive array:
+
+```java
+class IntList extends AbstractCollection<Integer> {
+    private final int[] elements;
+    private final int size;
+
+    public IntList(int size) {
+        this.elements = new int[size];
+        this.size = size;
+    }
+
+    public IntList(int[] elements, int size) {
+        this.elements = elements;
+        this.size = size;
+    }
+
+    @Override
+    public Iterator<Integer> iterator() {
+        return new Iterator<Integer>() {
+            private int index = 0;
+
+            @Override
+            public boolean hasNext() {
+                return index < size;
+            }
+
+            @Override
+            public Integer next() {
+                if (!hasNext()) {
+                    throw new NoSuchElementException();
+                }
+                return elements[index++];
+            }
+        };
+    }
+
+    @Override
+    public int size() {
+        return size;
+    }
+
+    public int get(int index) {
+        if (index >= size) {
+            throw new IndexOutOfBoundsException();
+        }
+        return elements[index];
+    }
+
+    public void set(int index, int value) {
+        if (index >= size) {
+            throw new IndexOutOfBoundsException();
+        }
+        elements[index] = value;
+    }
+
+    public int[] getElements() {
+        return elements;
+    }
+}
+
+class IntListSerializer extends AbstractCollectionSerializer<IntList> {
+    public IntListSerializer(Fory fory) {
+        // Disable JIT since we're handling serialization directly
+        super(fory, IntList.class, false);
+    }
+
+    @Override
+    public void write(MemoryBuffer buffer, IntList value) {
+        // Write size
+        buffer.writeVarUint32Small7(value.size());
+
+        // Write elements directly as primitive ints
+        int[] elements = value.getElements();
+        for (int i = 0; i < value.size(); i++) {
+            buffer.writeVarInt32(elements[i]);
+        }
+    }
+
+    @Override
+    public IntList read(MemoryBuffer buffer) {
+        // Read size
+        int size = buffer.readVarUint32Small7();
+
+        // Create array and read elements
+        int[] elements = new int[size];
+        for (int i = 0; i < size; i++) {
+            elements[i] = buffer.readVarInt32();
+        }
+
+        return new IntList(elements, size);
+    }
+
+    // These methods are not used when JIT is disabled
+    @Override
+    public Collection onCollectionWrite(MemoryBuffer buffer, IntList value) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public Collection newCollection(MemoryBuffer buffer) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public IntList onCollectionRead(Collection collection) {
+        throw new UnsupportedOperationException();
+    }
+}
+```
+
+Key Points:
+
+1. **Primitive Array Storage**:
+
+   - Uses `int[]` for direct storage
+   - Avoids boxing/unboxing overhead
+   - Provides efficient memory layout
+   - Enables direct array access
+
+2. **Direct Serialization**:
+
+   - Write size first
+   - Write primitive values directly
+   - No iteration overhead
+   - No boxing/unboxing during serialization
+
+3. **Direct Deserialization**:
+
+   - Read size first
+   - Create primitive array
+   - Read values directly into array
+   - Create list with populated array
+
+4. **Disabled JIT**:
+   - Set `supportCodegenHook=false`
+   - Override `write`/`read` methods
+   - Skip collection view pattern
+   - Full control over serialization format
+
+When to Use: this approach is best when:
+
+- Working with primitive types
+- Need maximum performance
+- Want to minimize memory overhead
+- Have special serialization requirements
+
+Usage Example:
+
+```java
+// Create and populate list
+IntList list = new IntList(3);
+list.set(0, 1);
+list.set(1, 2);
+list.set(2, 3);
+
+// Serialize
+byte[] bytes = fory.serialize(list);
+
+// Deserialize
+IntList newList = (IntList) fory.deserialize(bytes);
+```
+
+This implementation is particularly efficient for scenarios where:
+
+- You're working exclusively with integers
+- Performance is critical
+- Memory efficiency is important
+- Serialization overhead needs to be minimized
+
+Remember that while this approach gives up some of Fory's optimizations, it can provide better performance for specific use cases involving primitive types and direct array access.
+
+#### Implement Serializer for Collection-like Types
+
+Sometimes you may want to implement a serializer for a type that behaves like a collection but isn't a standard Java Collection. This section demonstrates how to implement a serializer for such types.
+
+The key principles for collection-like type serialization are:
+
+1. Extend `AbstractCollectionSerializer` for custom collection-like types
+2. Enable JIT optimization with `supportCodegenHook`
+3. Provide efficient element access through views
+4. Maintain proper size tracking
+
+Here's an example:
+
+```java
+class CustomCollectionLike {
+    private final Object[] elements;
+    private final int size;
+
+    public CustomCollectionLike(int size) {
+        this.elements = new Object[size];
+        this.size = size;
+    }
+
+    // Constructor for wrapping existing array
+    public CustomCollectionLike(Object[] elements, int size) {
+        this.elements = elements;
+        this.size = size;
+    }
+
+    public Object get(int index) {
+        if (index >= size) {
+            throw new IndexOutOfBoundsException();
+        }
+        return elements[index];
+    }
+
+    public int size() {
+        return size;
+    }
+
+    public Object[] getElements() {
+        return elements;
+    }
+}
+
+// A view class that extends AbstractCollection for simpler implementation
+class CollectionView extends AbstractCollection<Object> {
+    private final Object[] elements;
+    private final int size;
+    private int writeIndex;
+
+    // Constructor for serialization (wrapping existing array)
+    public CollectionView(CustomCollectionLike collection) {
+        this.elements = collection.getElements();
+        this.size = collection.size();
+    }
+
+    // Constructor for deserialization
+    public CollectionView(int size) {
+        this.size = size;
+        this.elements = new Object[size];
+    }
+
+    @Override
+    public Iterator<Object> iterator() {
+        return new Iterator<Object>() {
+            private int index = 0;
+
+            @Override
+            public boolean hasNext() {
+                return index < size;
+            }
+
+            @Override
+            public Object next() {
+                if (!hasNext()) {
+                    throw new NoSuchElementException();
+                }
+                return elements[index++];
+            }
+        };
+    }
+
+    @Override
+    public boolean add(Object element) {
+        if (writeIndex >= size) {
+            throw new IllegalStateException("Collection is full");
+        }
+        elements[writeIndex++] = element;
+        return true;
+    }
+
+    @Override
+    public int size() {
+        return size;
+    }
+
+    public Object[] getElements() {
+        return elements;
+    }
+}
+
+class CustomCollectionSerializer extends AbstractCollectionSerializer<CustomCollectionLike> {
+    public CustomCollectionSerializer(Fory fory) {
+        super(fory, CustomCollectionLike.class, true);
+    }
+
+    @Override
+    public Collection onCollectionWrite(MemoryBuffer buffer, CustomCollectionLike value) {
+        buffer.writeVarUint32Small7(value.size());
+        return new CollectionView(value);
+    }
+
+    @Override
+    public Collection newCollection(MemoryBuffer buffer) {
+        int numElements = buffer.readVarUint32Small7();
+        setNumElements(numElements);
+        return new CollectionView(numElements);
+    }
+
+    @Override
+    public CustomCollectionLike onCollectionRead(Collection collection) {
+        CollectionView view = (CollectionView) collection;
+        return new CustomCollectionLike(view.getElements(), view.size());
+    }
+}
+```
+
+Key takeways:
+
+1. **Collection Structure**:
+
+   - Array-based storage for elements
+   - Fixed size after creation
+   - Direct element access
+   - Size tracking
+
+2. **View Implementation**:
+
+   - Extends `AbstractCollection` for simplicity
+   - Provides iterator for element access
+   - Implements `add()` for deserialization
+   - Shares array reference with original type
+
+3. **Serializer Features**:
+
+   - Uses `supportCodegenHook=true` for JIT optimization
+   - Shares array references when possible
+   - Maintains proper size tracking
+   - Uses view pattern for serialization
+
+4. **Performance Aspects**:
+   - Direct array access
+   - Minimal object creation
+   - Array sharing between instances
+   - Efficient iteration
+
+Note that this implementation provides better performance at the cost of flexibility. Consider your specific use case when choosing this approach.
+
+### Implement Map Serializer
+
+When implementing a serializer for a custom Map type, you must extend `MapSerializer` or `AbstractMapSerializer`. The key difference between these two is that `AbstractMapSerializer` can serialize a class which has a map-like structure but is not a java Map subtype.
+
+Similiar to collection serializer, this is a special parameter `supportCodegenHook` needs be configured:
+
+- When `true`:
+
+  - Enables optimized access to map elements and JIT compilation for better performance
+  - Direct serialization invocation and inline for map key-value items without dynamic serializer dispatch cost.
+  - Better performance for standard map types
+  - Recommended for most maps
+
+- When `false`:
+  - Uses interfaced-based element access and dynamic serializer dispatch for elements, which have higer cost
+  - More flexible for custom map types
+  - Required when map has special serialization needs
+  - Handles complex map implementations
+
+#### Implement Map Serializer with JIT support
+
+When implementing a Map serializer with JIT support, you can leverage Fory's existing chunk-based binary format and map serialization infrastructure. The key is to properly implement the `onMapWrite` and `newMap` methods to handle metadata while letting Fory handle the map key-value serialization.
+
+Here's an example of implementing a custom map serializer:
+
+```java
+public class CustomMapSerializer<T extends Map> extends MapSerializer<T> {
+    public CustomMapSerializer(Fory fory, Class<T> cls) {
+        // supportCodegenHook is a critical parameter that determines serialization behavior
+        super(fory, cls, true);
+    }
+
+    @Override
+    public Map onMapWrite(MemoryBuffer buffer, T value) {
+        // Write map size
+        buffer.writeVarUint32Small7(value.size());
+        // Write any additional map metadata here
+        return value;
+    }
+
+    @Override
+    public Map newMap(MemoryBuffer buffer) {
+        // Read map size
+        int numElements = buffer.readVarUint32Small7();
+        setNumElements(numElements);
+        // Create and return new map instance
+        T map = (T) new HashMap(numElements);
+        fory.getRefResolver().reference(map);
+        return map;
+    }
+}
+```
+
+Note that please invoke `setNumElements` when implementing `newMap` to let fory know how many elements to deserialize.
+
+#### Implement a totally-customzied Map Serializer without JIT
+
+Sometimes you may need complete control over the serialization process, or your map type might have special requirements that don't fit the standard patterns. In such cases, you can implement a serializer with `supportCodegenHook=false` and directly override the `write` and `read` methods.
+
+This approach:
+
+- Gives you full control over serialization
+- Allows custom binary format
+- Bypasses the standard map serialization pattern
+- May be simpler for special cases
+
+Here's an example:
+
+```java
+class FixedValueMap extends AbstractMap<String, Integer> {
+    private final Set<String> keys;
+    private final int fixedValue;
+
+    public FixedValueMap(Set<String> keys, int fixedValue) {
+        this.keys = keys;
+        this.fixedValue = fixedValue;
+    }
+
+    @Override
+    public Set<Entry<String, Integer>> entrySet() {
+        Set<Entry<String, Integer>> entries = new HashSet<>();
+        for (String key : keys) {
+            entries.add(new SimpleEntry<>(key, fixedValue));
+        }
+        return entries;
+    }
+
+    @Override
+    public Integer get(Object key) {
+        return keys.contains(key) ? fixedValue : null;
+    }
+
+    public Set<String> getKeys() {
+        return keys;
+    }
+
+    public int getFixedValue() {
+        return fixedValue;
+    }
+}
+
+class FixedValueMapSerializer extends AbstractMapSerializer<FixedValueMap> {
+    public FixedValueMapSerializer(Fory fory) {
+        // Disable codegen since we're handling serialization directly
+        super(fory, FixedValueMap.class, false);
+    }
+
+    @Override
+    public void write(MemoryBuffer buffer, FixedValueMap value) {
+        // Write the fixed value
+        buffer.writeInt32(value.getFixedValue());
+        // Write the number of keys
+        buffer.writeVarUint32Small7(value.getKeys().size());
+        // Write each key
+        for (String key : value.getKeys()) {
+            buffer.writeString(key);
+        }
+    }
+
+    @Override
+    public FixedValueMap read(MemoryBuffer buffer) {
+        // Read the fixed value
+        int fixedValue = buffer.readInt32();
+        // Read the number of keys
+        int size = buffer.readVarUint32Small7();
+        Set<String> keys = new HashSet<>(size);
+        for (int i = 0; i < size; i++) {
+            keys.add(buffer.readString());
+        }
+        return new FixedValueMap(keys, fixedValue);
+    }
+
+    // These methods are not used when supportCodegenHook is false
+    @Override
+    public Map onMapWrite(MemoryBuffer buffer, FixedValueMap value) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public FixedValueMap onMapRead(Map map) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public FixedValueMap onMapCopy(Map map) {
+        throw new UnsupportedOperationException();
+    }
+}
+```
+
+Key Points:
+
+1. **Disable Codegen**:
+
+   - Set `supportCodegenHook=false` in constructor
+   - Fory will use your `write`/`read` methods directly
+   - No JIT optimization will be applied
+   - Full control over serialization format
+
+2. **Write Method**:
+
+   - Handle all serialization manually
+   - Write custom fields first
+   - Write map entries in your preferred format
+   - Control the exact binary layout
+
+3. **Read Method**:
+
+   - Handle all deserialization manually
+   - Read in same order as written
+   - Create and populate map instance
+   - Restore custom fields
+
+4. **Unused Methods**:
+   - `onMapWrite`, `onMapRead`, `onMapCopy` are not used
+   - Can throw `UnsupportedOperationException`
+   - Only `write` and `read` are important
+
+When to Use: this approach is best when
+
+- Map has custom fields or metadata
+- Special serialization format is needed
+- Complete control over binary format is required
+- Standard map patterns don't fit
+
+Trade-offs
+
+1. **Advantages**:
+
+   - Complete control over serialization
+   - Custom binary format possible
+   - Simpler implementation for special cases
+   - Direct handling of custom fields
+
+2. **Disadvantages**:
+   - No JIT optimization
+   - Potentially lower performance
+   - Manual handling of all serialization
+   - More code to maintain
+
+Remember that disabling codegen means giving up some performance optimizations that Fory provides. Only use this approach when the standard map serialization pattern doesn't meet your needs.
+
+#### Implement Serializer for Map-like Types
+
+Sometimes you may want to implement a serializer for a type that behaves like a map but isn't a standard Java map. This section demonstrates how to implement a serializer for such types.
+
+The key principles for map-like type serialization are:
+
+1. Extend `AbstractMapSerializer` for custom collection-like types
+2. Enable JIT optimization with `supportCodegenHook`
+3. Provide efficient element access through views
+4. Maintain proper size tracking
+
+Here's a complete example:
+
+```java
+// It's better to make it to implements the java.util.Map interface, in this way we don't have to implement such serializers by ourself.
+class CustomMapLike {
+    private final Object[] keyArray;
+    private final Object[] valueArray;
+    private final int size;
+
+    // Constructor for creating new instance
+    public CustomMapLike(int initialCapacity) {
+        this.keyArray = new Object[initialCapacity];
+        this.valueArray = new Object[initialCapacity];
+        this.size = 0;
+    }
+
+    // Constructor for wrapping existing arrays
+    public CustomMapLike(Object[] keyArray, Object[] valueArray, int size) {
+        this.keyArray = keyArray;
+        this.valueArray = valueArray;
+        this.size = size;
+    }
+
+    public Integer get(String key) {
+        for (int i = 0; i < size; i++) {
+            if (key.equals(keyArray[i])) {
+                return (Integer) valueArray[i];
+            }
+        }
+        return null;
+    }
+
+    public int size() {
+        return size;
+    }
+
+    public Object[] getKeyArray() {
+        return keyArray;
+    }
+
+    public Object[] getValueArray() {
+        return valueArray;
+    }
+}
+
+class MapView extends AbstractMap<Object, Object> {
+    private final Object[] keyArray;
+    private final Object[] valueArray;
+    private final int size;
+    private int writeIndex;
+
+    // Constructor for serialization (wrapping existing CustomMapLike)
+    public MapView(CustomMapLike mapLike) {
+        this.size = mapLike.size();
+        this.keyArray = mapLike.getKeyArray();
+        this.valueArray = mapLike.getValueArray();
+    }
+
+    // Constructor for deserialization
+    public MapView(int size) {
+        this.size = size;
+        this.keyArray = new Object[size];
+        this.valueArray = new Object[size];
+    }
+
+    @Override
+    public Set<Entry<Object, Object>> entrySet() {
+        return new AbstractSet<Entry<Object, Object>>() {
+            @Override
+            public Iterator<Entry<Object, Object>> iterator() {
+                return new Iterator<Entry<Object, Object>>() {
+                    private int index = 0;
+
+                    @Override
+                    public boolean hasNext() {
+                        return index < size;
+                    }
+
+                    @Override
+                    public Entry<Object, Object> next() {
+                        if (!hasNext()) {
+                            throw new NoSuchElementException();
+                        }
+                        final int currentIndex = index++;
+                        return new SimpleEntry<>(
+                            keyArray[currentIndex],
+                            valueArray[currentIndex]
+                        );
+                    }
+                };
+            }
+
+            @Override
+            public int size() {
+                return size;
+            }
+        };
+    }
+
+    @Override
+    public Object put(Object key, Object value) {
+        if (writeIndex >= size) {
+            throw new IllegalStateException("Map is full");
+        }
+        keyArray[writeIndex] = key;
+        valueArray[writeIndex] = value;
+        writeIndex++;
+        return null;
+    }
+
+    public Object[] getKeyArray() {
+        return keyArray;
+    }
+
+    public Object[] getValueArray() {
+        return valueArray;
+    }
+
+    public int size() {
+        return size;
+    }
+}
+
+class CustomMapLikeSerializer extends AbstractMapSerializer<CustomMapLike> {
+    public CustomMapLikeSerializer(Fory fory) {
+        super(fory, CustomMapLike.class, true);
+    }
+
+    @Override
+    public Map onMapWrite(MemoryBuffer buffer, CustomMapLike value) {
+        buffer.writeVarUint32Small7(value.size());
+        // Return a zero-copy view using the same underlying arrays
+        return new MapView(value);
+    }
+
+    @Override
+    public Map newMap(MemoryBuffer buffer) {
+        int numElements = buffer.readVarUint32Small7();
+        setNumElements(numElements);
+        // Create a view with new arrays for deserialization
+        return new MapView(numElements);
+    }
+
+    @Override
+    public CustomMapLike onMapRead(Map map) {
+        MapView view = (MapView) map;
+        // Just pass the arrays directly - no copying needed
+        return new CustomMapLike(view.getKeyArray(), view.getValueArray(), view.size());
+    }
+
+    @Override
+    public CustomMapLike onMapCopy(Map map) {
+        MapView view = (MapView) map;
+        // Just pass the arrays directly - no copying needed
+        return new CustomMapLike(view.getKeyArray(), view.getValueArray(), view.size());
+    }
+}
+```
+
+### Register Custom Serializers
+
+After implementing your custom serializer, register it with Fory:
+
+```java
+Fory fory = Fory.builder()
+    .withLanguage(Language.JAVA)
+    .build();
+
+// Register map serializer
+fory.registerSerializer(CustomMap.class, new CustomMapSerializer<>(fory, CustomMap.class));
+
+// Register collection serializer
+fory.registerSerializer(CustomCollection.class, new CustomCollectionSerializer<>(fory, CustomCollection.class));
+```
+
+Note that when implementing custom map or collection serializers:
+
+1. Always extend the appropriate base class (`MapSerializer`/`AbstractMapSerializer` for maps, `CollectionSerializer`/`AbstractCollectionSerializer` for collections)
+2. Consider the impact of `supportCodegenHook` on performance and functionality
+3. Properly handle reference tracking if needed
+4. Implement proper size management using `setNumElements` and `getAndClearNumElements` when `supportCodegenHook` is `true`
+
+Besides registering serializes, one can also implement `java.io.Externalizable` for a class to customize serialization logic, such type will be serialized by fory `ExternalizableSerializer`.
 
 ### Security & Class Registration
 
@@ -371,12 +1161,6 @@ If there are no duplicate name for type, `namespace` can be left as empty to red
 
 **Do not use this API to register class since it will increase serialized size a lot compared to register
 class by id**
-
-### Serializer Registration
-
-You can also register a custom serializer for a class by `Fory#registerSerializer` API.
-
-Or implement `java.io.Externalizable` for a class.
 
 ### Zero-Copy Serialization
 
@@ -460,16 +1244,14 @@ losing any information.
 If metadata sharing is not enabled, the new class data will be skipped and an `NonexistentSkipClass` stub object will be
 returned.
 
-### Coping/Mapping object from one type to another type
+### Copy/Map object from one type to another type
 
 Fory support mapping object from one type to another type.
 
 > Notes:
 >
 > 1. This mapping will execute a deep copy, all mapped fields are serialized into binary and
-
      deserialized from that binary to map into another type.
-
 > 2. All struct types must be registered with same ID, otherwise Fory can not mapping to correct struct type.
 >    Be careful when you use `Fory#register(Class)`, because fory will allocate an auto-grown ID which might be
 >    inconsistent if you register classes with different order between Fory instance.
