@@ -113,16 +113,24 @@ deploy_jars() {
   mvn -T10 clean deploy --no-transfer-progress -DskipTests -Prelease
 }
 
-build_pyfury() {
+build_pyfory() {
   echo "Python version $(python -V), path $(which python)"
   install_pyarrow
   pip install Cython wheel pytest
   pushd "$ROOT/python"
   pip list
-  echo "Install pyfury"
+  echo "Install pyfory"
   # Fix strange installed deps not found
   pip install setuptools -U
-  bazel build //:cp_fury_so
+
+  # Detect host architecture and only pass x86_64 config when appropriate
+  ARCH=$(uname -m)
+  if [[ "$ARCH" == "x86_64" || "$ARCH" == "amd64" ]]; then
+    bazel build --config=x86_64 //:cp_fory_so
+  else
+    bazel build //:cp_fory_so
+  fi
+
   python setup.py bdist_wheel --dist-dir=../dist
   popd
 }
@@ -151,11 +159,11 @@ deploy_python() {
     pip install --ignore-installed pyarrow==$pyarrow_version
     python setup.py clean
     python setup.py bdist_wheel
-    mv dist/pyfury*.whl "$WHEEL_DIR"
+    mv dist/pyfory*.whl "$WHEEL_DIR"
   done
   rename_wheels "$WHEEL_DIR"
-  twine check "$WHEEL_DIR"/pyfury*.whl
-  twine upload -r pypi "$WHEEL_DIR"/pyfury*.whl
+  twine check "$WHEEL_DIR"/pyfory*.whl
+  twine upload -r pypi "$WHEEL_DIR"/pyfory*.whl
 }
 
 install_pyarrow() {

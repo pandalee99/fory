@@ -17,15 +17,17 @@
  * under the License.
  */
 
-import Fury, { TypeDescription, InternalSerializerType, Type } from '../../packages/fury/index';
+import Fory, { TypeInfo, InternalSerializerType, Type } from '../../packages/fory/index';
 import { describe, expect, test } from '@jest/globals';
 
 
 describe('protocol', () => {
     test('should polymorphic work', () => {
         
-        const fury = new Fury({ refTracking: true });
-        const { serialize, deserialize } = fury.registerSerializer(Type.object("example.foo", {
+        const fory = new Fory({ refTracking: true });
+        const { serialize, deserialize } = fory.registerSerializer(Type.struct({
+            typeName: "example.foo"
+        }, {
             foo: Type.string(),
             bar: Type.int32(),
             map: Type.map(Type.any(), Type.any()),

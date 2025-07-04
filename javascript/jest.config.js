@@ -27,12 +27,13 @@ module.exports = {
     "**/*.ts",
     "!**/dist/**",
     "!**/build/**",
-    "!packages/fury/lib/murmurHash3.ts"
+    "!packages/fory/lib/murmurHash3.ts"
   ],
   transform: {
     '\\.ts$': ['ts-jest', {
       tsconfig: {
-        target: "ES2021"
+        target: "ES2021",
+        experimentalDecorators: true
       },
       diagnostics: {
         ignoreCodes: [151001]

@@ -56,7 +56,7 @@ def build(v: str):
     os.mkdir("dist")
     subprocess.check_call(f"git checkout releases-{v}", shell=True)
     branch = f"releases-{v}"
-    src_tar = f"apache-fury-{v}-incubating-src.tar.gz"
+    src_tar = f"apache-fory-{v}-incubating-src.tar.gz"
     _check_all_committed()
     _strip_unnecessary_license()
     subprocess.check_call(
@@ -65,7 +65,7 @@ def build(v: str):
     subprocess.check_call(
         f"git archive --format=tar.gz "
         f"--output=dist/{src_tar} "
-        f"--prefix=apache-fury-{v}-incubating-src/ {branch}",
+        f"--prefix=apache-fory-{v}-incubating-src/ {branch}",
         shell=True,
     )
     subprocess.check_call("git reset --hard HEAD~", shell=True)
@@ -116,7 +116,7 @@ def _strip_unnecessary_license():
 
 
 def verify(v):
-    src_tar = f"apache-fury-{v}-incubating-src.tar.gz"
+    src_tar = f"apache-fory-{v}-incubating-src.tar.gz"
     subprocess.check_call(f"gpg --verify {src_tar}.asc {src_tar}", shell=True)
     logger.info("Verified signature")
     subprocess.check_call(f"sha512sum --check {src_tar}.sha512", shell=True)
@@ -127,7 +127,7 @@ def bump_version(**kwargs):
     new_version = kwargs["version"]
     langs = kwargs["l"]
     if langs == "all":
-        langs = ["java", "python", "javascript", "scala", "rust"]
+        langs = ["java", "python", "javascript", "scala", "rust", "kotlin"]
     else:
         langs = langs.split(",")
     for lang in langs:
@@ -135,15 +135,17 @@ def bump_version(**kwargs):
             bump_java_version(new_version)
         elif lang == "scala":
             _bump_version("scala", "build.sbt", new_version, _update_scala_version)
+        elif lang == "kotlin":
+            _bump_version("kotlin", "pom.xml", new_version, _update_kotlin_version)
         elif lang == "rust":
             _bump_version("rust", "Cargo.toml", new_version, _update_rust_version)
         elif lang == "python":
             _bump_version(
-                "python/pyfury", "__init__.py", new_version, _update_python_version
+                "python/pyfory", "__init__.py", new_version, _update_python_version
             )
         elif lang == "javascript":
             _bump_version(
-                "javascript/packages/fury",
+                "javascript/packages/fory",
                 "package.json",
                 new_version,
                 _update_js_version,
@@ -207,9 +209,25 @@ def _update_pom_parent_version(lines, new_version):
 
 def _update_scala_version(lines, v):
     for index, line in enumerate(lines):
-        if "furyVersion = " in line:
-            lines[index] = f'val furyVersion = "{v}"\n'
+        if "foryVersion = " in line:
+            lines[index] = f'val foryVersion = "{v}"\n'
             break
+    return lines
+
+
+def _update_kotlin_version(lines, v):
+    target_index = -1
+    for index, line in enumerate(lines):
+        if "<artifactId>fory-kotlin</artifactId>" in line:
+            target_index = index + 1
+            break
+    current_version_line = lines[target_index]
+    # Find the start and end of the version number
+    start = current_version_line.index("<version>") + len("<version>")
+    end = current_version_line.index("</version>")
+    # Replace the version number
+    updated_version_line = current_version_line[:start] + v + current_version_line[end:]
+    lines[target_index] = updated_version_line
     return lines
 
 

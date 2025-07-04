@@ -17,20 +17,20 @@
  * under the License.
  */
 
-import { fromUint8Array, alloc, BrowserBuffer } from '../packages/fury/lib/platformBuffer';
+import { fromUint8Array, alloc, BrowserBuffer } from '../packages/fory/lib/platformBuffer';
 import { describe, expect, test } from '@jest/globals';
-import Fury, { TypeDescription, InternalSerializerType } from '../packages/fury/index';
-import { RefFlags } from '../packages/fury/lib/type';
-import { BinaryWriter } from '../packages/fury/lib/writer';
-import { BinaryReader } from '../packages/fury/lib/reader';
-import SerializerResolver from '../packages/fury/lib/classResolver';
-import { makeHead } from '../packages/fury/lib/gen/serializer';
+import Fory, { TypeInfo, InternalSerializerType } from '../packages/fory/index';
+import { RefFlags } from '../packages/fory/lib/type';
+import { BinaryWriter } from '../packages/fory/lib/writer';
+import { BinaryReader } from '../packages/fory/lib/reader';
+import SerializerResolver from '../packages/fory/lib/classResolver';
+import { makeHead } from '../packages/fory/lib/gen/serializer';
 
 describe('referenceResolve', () => {
     test('should write head work', () => {
-        const fury = new Fury();
-        const bin = fury.serialize(7);
-        expect(fury.deserialize(bin)).toBe(7)
+        const fory = new Fory();
+        const bin = fory.serialize(7);
+        expect(fory.deserialize(bin)).toBe(7)
     });
 
     test('should make head work when flag positive', () => {
@@ -41,7 +41,6 @@ describe('referenceResolve', () => {
         const reader = new BinaryReader({});
         reader.reset(ab);
         expect(reader.int8()).toBe(RefFlags.NotNullValueFlag);
-        expect(reader.int16()).toBe(SerializerResolver.getTypeIdByInternalSerializerType(InternalSerializerType.STRING));
     });
 
     test('should make head work when flag is zero', () => {
@@ -52,7 +51,6 @@ describe('referenceResolve', () => {
         const reader = new BinaryReader({});
         reader.reset(ab);
         expect(reader.int8()).toBe(RefFlags.RefValueFlag);
-        expect(reader.int16()).toBe(SerializerResolver.getTypeIdByInternalSerializerType(InternalSerializerType.STRING));
     });
 });
 

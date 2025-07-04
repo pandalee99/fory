@@ -17,7 +17,7 @@
  * under the License.
  */
 
-import Fury, { TypeDescription, InternalSerializerType, ObjectTypeDescription, Type } from '../packages/fury/index';
+import Fory, { Type } from '../packages/fory/index';
 import { describe, expect, test } from '@jest/globals';
 import * as beautify from 'js-beautify';
 
@@ -25,54 +25,44 @@ describe('array', () => {
   test('should array work', () => {
     
 
-    const description = Type.object("example.bar", {
-      c: Type.array(Type.object("example.foo", {
+    const typeinfo = Type.struct({
+      typeName: "example.bar"
+    }, {
+      c: Type.array(Type.struct({
+        typeName: "example.foo"
+      }, {
         a: Type.string()
       }))
     });
-    const fury = new Fury({ refTracking: true, hooks: {
+    const fory = new Fory({ refTracking: true, hooks: {
       afterCodeGenerated: (code: string) => {
         return beautify.js(code, { indent_size: 2, space_in_empty_paren: true, indent_empty_lines: true });
       }
     } });
-    const { serialize, deserialize } = fury.registerSerializer(description);
+    const { serialize, deserialize } = fory.registerSerializer(typeinfo);
     const o = { a: "123" };
     expect(deserialize(serialize({ c: [o, o] }))).toEqual({ c: [o, o] })
   });
   test('should typedarray work', () => {
-    const description = {
-      type: InternalSerializerType.OBJECT,
-      options: {
-        props: {
-          a: {
-            type: InternalSerializerType.BOOL_ARRAY,
-          },
-          a2: {
-            type: InternalSerializerType.INT16_ARRAY,
-          },
-          a3: {
-            type: InternalSerializerType.INT32_ARRAY,
-          },
-          a4: {
-            type: InternalSerializerType.INT64_ARRAY,
-          },
-          a6: {
-            type: InternalSerializerType.FLOAT64_ARRAY,
-          },
-        },
-        tag: "example.foo"
-      }
-    };
-    
-    const fury = new Fury({ refTracking: true }); const serializer = fury.registerSerializer(description).serializer;
-    const input = fury.serialize({
+    const typeinfo = Type.struct({
+      typeName: "example.foo",
+    }, {
+      a: Type.boolArray(),
+      a2: Type.int16Array(),
+      a3: Type.int32Array(),
+      a4: Type.int64Array(),
+      a6: Type.float64Array()
+    });
+
+    const fory = new Fory({ refTracking: true }); const serializer = fory.registerSerializer(typeinfo).serializer;
+    const input = fory.serialize({
       a: [true, false],
       a2: [1, 2, 3],
       a3: [3, 5, 76],
       a4: [634, 564, 76],
       a6: [234243.555, 55654.6786],
     }, serializer);
-    const result = fury.deserialize(
+    const result = fory.deserialize(
       input
     );
     result.a4 = result.a4.map(x => Number(x));
@@ -87,23 +77,17 @@ describe('array', () => {
 
 
   test('should floatarray work', () => {
-    const description: ObjectTypeDescription = {
-      type: InternalSerializerType.OBJECT,
-      options: {
-        props: {
-          a5: {
-            type: InternalSerializerType.FLOAT32_ARRAY,
-          },
-        },
-        tag: "example.foo"
-      }
-    };
+    const typeinfo = Type.struct({
+      typeName: "example.foo"
+    }, {
+      a5: Type.float32Array(),
+    })
     
-    const fury = new Fury({ refTracking: true }); const serialize = fury.registerSerializer(description).serializer;
-    const input = fury.serialize({
+    const fory = new Fory({ refTracking: true }); const serialize = fory.registerSerializer(typeinfo).serializer;
+    const input = fory.serialize({
       a5: [2.43, 654.4, 55],
     }, serialize);
-    const result = fury.deserialize(
+    const result = fory.deserialize(
       input
     );
     expect(result.a5[0]).toBeCloseTo(2.43)
