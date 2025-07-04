@@ -46,6 +46,8 @@ type mapSerializer struct {
 	valueSerializer   Serializer
 	keyReferencable   bool
 	valueReferencable bool
+	mapInStruct       bool // Use mapInStruct to distinguish concrete map types during deserialization
+
 }
 
 func (s mapSerializer) TypeId() TypeId {
@@ -65,14 +67,12 @@ func (s mapSerializer) Write(f *Fory, buf *ByteBuffer, value reflect.Value) erro
 	if length == 0 {
 		return nil
 	}
-
-	// Get resolvers from Fory instance
 	typeResolver := f.typeResolver
 	refResolver := f.refResolver
+	s.keySerializer = nil
+	s.valueSerializer = nil
 	keySerializer := s.keySerializer
 	valueSerializer := s.valueSerializer
-
-	// Initialize map iterator and get first key-value pair
 	iter := value.MapRange()
 	if !iter.Next() {
 		return nil
@@ -86,7 +86,6 @@ func (s mapSerializer) Write(f *Fory, buf *ByteBuffer, value reflect.Value) erro
 	}
 	hasNext := true
 	for hasNext {
-		// Process null key/value pairs
 		for {
 			keyValid := isValid(entryKey)
 			valValid := isValid(entryVal)
@@ -197,7 +196,6 @@ func (s mapSerializer) Write(f *Fory, buf *ByteBuffer, value reflect.Value) erro
 			}
 			valueSerializer = valueTypeInfo.Serializer
 		}
-
 		keyWriteRef := s.keyReferencable
 		if keySerializer != nil {
 			keyWriteRef = keySerializer.NeedWriteRef()
@@ -251,7 +249,7 @@ func (s mapSerializer) Write(f *Fory, buf *ByteBuffer, value reflect.Value) erro
 				}
 			}
 
-			chunkSize += 1
+			chunkSize++
 
 			if iter.Next() {
 				entryKey, entryVal = iter.Key(), iter.Value()
@@ -283,7 +281,13 @@ func (s mapSerializer) Read(f *Fory, buf *ByteBuffer, typ reflect.Type, value re
 	}
 
 	if value.IsNil() {
-		value.Set(reflect.MakeMap(typ))
+		if s.mapInStruct == true {
+			value.Set(reflect.MakeMap(typ))
+		} else {
+			iface := reflect.TypeOf((*interface{})(nil)).Elem()
+			newMapType := reflect.MapOf(iface, iface)
+			value.Set(reflect.MakeMap(newMapType))
+		}
 	}
 
 	f.refResolver.Reference(value)
@@ -298,95 +302,88 @@ func (s mapSerializer) Read(f *Fory, buf *ByteBuffer, typ reflect.Type, value re
 	keySer := s.keySerializer
 	valSer := s.valueSerializer
 	resolver := f.typeResolver
+
 	for size > 0 {
 		for {
 			keyHasNull := (chunkHeader & KEY_HAS_NULL) != 0
 			valueHasNull := (chunkHeader & VALUE_HAS_NULL) != 0
-			if !keyHasNull && !valueHasNull {
-				break
-			}
-
 			var k, v reflect.Value
-
 			if !keyHasNull {
-				if (chunkHeader&KEY_DECL_TYPE) != 0 && (chunkHeader&TRACKING_KEY_REF) != 0 {
-					refID, err := f.refResolver.TryPreserveRefId(buf)
-					if err != nil {
-						return err
-					}
-					switch {
-					case refID == int32(NullFlag):
-						k = reflect.Zero(keyType)
-					case refID < int32(NotNullValueFlag):
-						k = f.refResolver.GetCurrentReadObject()
-					default:
-						k = reflect.New(keyType).Elem()
-						if err := s._readObj(f, buf, &k, keySer); err != nil {
-							return err
-						}
-						f.refResolver.SetReadObject(refID, k)
-					}
-				} else if (chunkHeader & KEY_DECL_TYPE) != 0 {
-					k = reflect.New(keyType).Elem()
-					if err := s._readObj(f, buf, &k, keySer); err != nil {
-						return err
-					}
+				if !valueHasNull {
+					break
 				} else {
-					k = reflect.New(keyType).Elem()
-					if err := f.ReadReferencable(buf, k); err != nil {
-						return err
+					trackKeyRef := (chunkHeader & TRACKING_KEY_REF) != 0
+					if (chunkHeader & KEY_DECL_TYPE) != 0 {
+						if trackKeyRef {
+							refID, err := f.refResolver.TryPreserveRefId(buf)
+							if err != nil {
+								return fmt.Errorf("failed to preserve reference ID: %w", err)
+							}
+							if refID < int32(NotNullValueFlag) {
+								k = f.refResolver.GetCurrentReadObject()
+							} else {
+								k = reflect.New(value.Type().Key()).Elem()
+								if err := s.readObj(f, buf, &k, keySer); err != nil {
+									return fmt.Errorf("failed to read map key object: %w", err)
+								}
+								f.refResolver.SetReadObject(refID, k)
+							}
+						} else {
+							k = reflect.New(keyType).Elem()
+							if err := s.readObj(f, buf, &k, keySer); err != nil {
+								return fmt.Errorf("failed to read map key object: %w", err)
+							}
+						}
+					} else {
+						if err := f.readReferencableBySerializer(buf, k, keySer); err != nil {
+							return fmt.Errorf("failed to deserialize key via serializer: %w", err)
+						}
 					}
+					value.SetMapIndex(k, reflect.Value{})
 				}
 			} else {
-				k = reflect.Zero(keyType)
+				if !valueHasNull {
+					trackValueRef := (chunkHeader & TRACKING_VALUE_REF) != 0
+					if (chunkHeader & VALUE_DECL_TYPE) != 0 {
+						if trackValueRef {
+							refID, err := f.refResolver.TryPreserveRefId(buf)
+							if err != nil {
+								return fmt.Errorf("failed to preserve reference ID: %w", err)
+							}
+							if refID < int32(NotNullValueFlag) {
+								v = f.refResolver.GetCurrentReadObject()
+							} else {
+								v = reflect.New(value.Type().Elem()).Elem()
+								if err := s.readObj(f, buf, &v, valSer); err != nil {
+									return fmt.Errorf("failed to read map value object: %w", err)
+								}
+								f.refResolver.SetReadObject(refID, k)
+							}
+						}
+					} else {
+						if err := f.readReferencableBySerializer(buf, v, valSer); err != nil {
+							return fmt.Errorf("failed to deserialize map value via serializer: %w", err)
+						}
+
+					}
+					value.SetMapIndex(reflect.Value{}, v)
+				} else {
+					value.SetMapIndex(reflect.Value{}, reflect.Value{})
+				}
 			}
 
-			if !valueHasNull {
-				if (chunkHeader&VALUE_DECL_TYPE) != 0 && (chunkHeader&TRACKING_VALUE_REF) != 0 {
-					refID, err := f.refResolver.TryPreserveRefId(buf)
-					if err != nil {
-						return err
-					}
-					switch {
-					case refID == int32(NullFlag):
-						v = reflect.Zero(valueType)
-					case refID < int32(NotNullValueFlag):
-						v = f.refResolver.GetCurrentReadObject()
-					default:
-						v = reflect.New(valueType).Elem()
-						if err := s._readObj(f, buf, &v, valSer); err != nil {
-							return err
-						}
-						f.refResolver.SetReadObject(refID, v)
-					}
-				} else if (chunkHeader & VALUE_DECL_TYPE) != 0 {
-					v = reflect.New(valueType).Elem()
-					if err := s._readObj(f, buf, &v, valSer); err != nil {
-						return err
-					}
-				} else {
-					v = reflect.New(valueType).Elem()
-					if err := f.ReadReferencable(buf, v); err != nil {
-						return err
-					}
-				}
-			} else {
-				v = reflect.Zero(valueType)
-			}
-			value.SetMapIndex(k, v)
 			size--
 			if size == 0 {
 				return nil
+			} else {
+				chunkHeader = buf.ReadUint8()
 			}
-
-			chunkHeader = buf.ReadUint8()
 		}
 
 		trackKeyRef := (chunkHeader & TRACKING_KEY_REF) != 0
 		trackValRef := (chunkHeader & TRACKING_VALUE_REF) != 0
 		keyDeclType := (chunkHeader & KEY_DECL_TYPE) != 0
 		valDeclType := (chunkHeader & VALUE_DECL_TYPE) != 0
-
 		chunkSize := int(buf.ReadUint8())
 		if !keyDeclType {
 			ti, err := resolver.readTypeInfo(buf)
@@ -415,15 +412,15 @@ func (s mapSerializer) Read(f *Fory, buf *ByteBuffer, typ reflect.Type, value re
 				if refID < int32(NotNullValueFlag) {
 					k = f.refResolver.GetCurrentReadObject()
 				} else {
-					k = reflect.New(keyType).Elem()
-					if err := s._readObj(f, buf, &k, keySer); err != nil {
+					k = reflect.New(value.Type().Key()).Elem()
+					if err := s.readObj(f, buf, &k, keySer); err != nil {
 						return err
 					}
 					f.refResolver.SetReadObject(refID, k)
 				}
 			} else {
 				k = reflect.New(keyType).Elem()
-				if err := s._readObj(f, buf, &k, keySer); err != nil {
+				if err := s.readObj(f, buf, &k, keySer); err != nil {
 					return err
 				}
 			}
@@ -436,23 +433,17 @@ func (s mapSerializer) Read(f *Fory, buf *ByteBuffer, typ reflect.Type, value re
 				if refID < int32(NotNullValueFlag) {
 					v = f.refResolver.GetCurrentReadObject()
 				} else {
-					v = reflect.New(valueType).Elem()
-					if err := s._readObj(f, buf, &v, valSer); err != nil {
+					v = reflect.New(value.Type().Elem()).Elem()
+					if err := s.readObj(f, buf, &v, valSer); err != nil {
 						return err
 					}
 					f.refResolver.SetReadObject(refID, v)
 				}
 			} else {
 				v = reflect.New(valueType).Elem()
-				if err := s._readObj(f, buf, &v, valSer); err != nil {
+				if err := s.readObj(f, buf, &v, valSer); err != nil {
 					return err
 				}
-			}
-			if k.Kind() == reflect.Interface {
-				k = k.Elem()
-			}
-			if v.Kind() == reflect.Interface {
-				v = v.Elem()
 			}
 			value.SetMapIndex(k, v)
 			size--
@@ -464,11 +455,10 @@ func (s mapSerializer) Read(f *Fory, buf *ByteBuffer, typ reflect.Type, value re
 			chunkHeader = buf.ReadUint8()
 		}
 	}
-
 	return nil
 }
 
-func (s mapSerializer) _readObj(
+func (s mapSerializer) readObj(
 	f *Fory,
 	buf *ByteBuffer,
 	v *reflect.Value,
@@ -511,6 +501,7 @@ func actualVal(t reflect.Type) (reflect.Value, error) {
 }
 
 func isValid(v reflect.Value) bool {
+	// Zero values are valid, so apply this change temporarily.
 	return v.IsValid()
 }
 

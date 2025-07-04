@@ -115,7 +115,7 @@ type Fory struct {
 }
 
 func (f *Fory) RegisterTagType(tag string, v interface{}) error {
-	return f.typeResolver.RegisterTypeTag(reflect.TypeOf(v), tag)
+	return f.typeResolver.RegisterTypeTag(reflect.ValueOf(v), tag)
 }
 
 func (f *Fory) Marshal(v interface{}) ([]byte, error) {
@@ -274,16 +274,32 @@ func (f *Fory) writeValue(buffer *ByteBuffer, value reflect.Value, serializer Se
 	if value.Kind() == reflect.Interface {
 		value = value.Elem()
 	}
+
+	// For array types, pre-convert the value
+	// so the corresponding slice serializer can be reused
+	if value.Kind() == reflect.Array {
+		length := value.Len()
+		sliceType := reflect.SliceOf(value.Type().Elem())
+		slice := reflect.MakeSlice(sliceType, length, length)
+		reflect.Copy(slice, value)
+		value = slice
+	}
+
 	if serializer != nil {
 		return serializer.Write(f, buffer, value)
 	}
 
-	typeInfo, _ := f.typeResolver.getTypeInfo(value, true)
+	// Get type information for the value
+	typeInfo, err := f.typeResolver.getTypeInfo(value, true)
+	if err != nil {
+		return fmt.Errorf("cannot get typeinfo for value %v: %v", value, err)
+	}
 	err = f.typeResolver.writeTypeInfo(buffer, typeInfo)
 	if err != nil {
-		return err
+		return fmt.Errorf("cannot write typeinfo for value %v: %v", value, err)
 	}
 	serializer = typeInfo.Serializer
+	// Serialize the actual value using the serializer
 	return serializer.Write(f, buffer, value)
 }
 
@@ -366,14 +382,13 @@ func (f *Fory) readReferencableBySerializer(buf *ByteBuffer, value reflect.Value
 	if serializer == nil || serializer.NeedWriteRef() {
 		refId, err := f.refResolver.TryPreserveRefId(buf)
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to preserve refID: %w", err)
 		}
 		// first read
 		if refId >= int32(NotNullValueFlag) {
 			// deserialize non-ref (may read typeinfo or use provided serializer)
-			err = f.readData(buf, value, serializer)
-			if err != nil {
-				return err
+			if err := f.readData(buf, value, serializer); err != nil {
+				return fmt.Errorf("failed to read data: %w", err)
 			}
 			// record in resolver
 			f.refResolver.SetReadObject(refId, value)
@@ -401,14 +416,13 @@ func (f *Fory) readReferencableBySerializer(buf *ByteBuffer, value reflect.Value
 
 func (f *Fory) readData(buffer *ByteBuffer, value reflect.Value, serializer Serializer) (err error) {
 	if serializer == nil {
-		ti, err := f.typeResolver.readTypeInfo(buffer)
+		typeInfo, err := f.typeResolver.readTypeInfo(buffer)
 		if err != nil {
-			return err
+			return fmt.Errorf("read typeinfo failed: %w", err)
 		}
-		serializer = ti.Serializer
-		concrete := reflect.New(ti.Type).Elem()
-
-		if err := serializer.Read(f, buffer, ti.Type, concrete); err != nil {
+		serializer = typeInfo.Serializer
+		concrete := reflect.New(typeInfo.Type).Elem()
+		if err := serializer.Read(f, buffer, typeInfo.Type, concrete); err != nil {
 			return err
 		}
 		value.Set(concrete)
