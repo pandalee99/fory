@@ -50,7 +50,6 @@ func (s sliceSerializer) Write(f *Fory, buf *ByteBuffer, value reflect.Value) er
 		buf.WriteVarUint32(0) // Write 0 for empty slice
 		return nil
 	}
-
 	// Write collection header and get type information
 	collectFlag, elemTypeInfo := s.writeHeader(f, buf, value)
 
@@ -163,6 +162,7 @@ func (s sliceSerializer) writeDifferentTypes(f *Fory, buf *ByteBuffer, value ref
 			buf.WriteInt8(NullFlag) // Write null marker
 			continue
 		}
+
 		// The following write logic doesn’t cover the fast path for strings, so add it here
 		if elem.Kind() == reflect.String {
 			buf.WriteInt8(NotNullValueFlag)
@@ -223,7 +223,6 @@ func (s sliceSerializer) Read(f *Fory, buf *ByteBuffer, type_ reflect.Type, valu
 		}
 	}
 	// Initialize slice with proper capacity
-
 	if value.IsZero() || value.Cap() < length {
 		if type_.Kind() != reflect.Slice {
 			if type_.Kind() == reflect.Interface {
@@ -366,10 +365,8 @@ func (s *sliceConcreteValueSerializer) Read(f *Fory, buf *ByteBuffer, type_ refl
 	f.refResolver.Reference(value)
 	var prevType reflect.Type
 	for i := 0; i < length; i++ {
-
 		elem := value.Index(i)
 		elemType := elem.Type()
-
 		var elemSerializer Serializer
 		if i == 0 || elemType != prevType {
 			elemSerializer = nil
@@ -379,6 +376,7 @@ func (s *sliceConcreteValueSerializer) Read(f *Fory, buf *ByteBuffer, type_ refl
 		if err := readBySerializer(f, buf, value.Index(i), elemSerializer, s.referencable); err != nil {
 			return err
 		}
+		prevType = elemType
 	}
 	return nil
 }

@@ -313,7 +313,11 @@ type ptrToStructSerializer struct {
 }
 
 func (s *ptrToStructSerializer) TypeId() TypeId {
-	return FORY_TYPE_TAG
+	return -NAMED_STRUCT
+}
+
+func (s *ptrToStructSerializer) NeedWriteRef() bool {
+	return true
 }
 
 func (s *ptrToStructSerializer) NeedWriteRef() bool {

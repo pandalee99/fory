@@ -25,7 +25,11 @@ import os
 import logging
 import importlib
 
-BAZEL_VERSION = "6.3.2"
+
+def _get_bazel_version():
+    with open(os.path.join(PROJECT_ROOT_DIR, ".bazelversion")) as f:
+        return f.read().strip()
+
 
 PYARROW_VERSION = "15.0.0"
 
@@ -68,12 +72,13 @@ def _get_os_machine():
 
 
 def _get_bazel_download_url():
+    bazel_version = _get_bazel_version()
     download_url_base = (
-        f"https://github.com/bazelbuild/bazel/releases/download/{BAZEL_VERSION}"
+        f"https://github.com/bazelbuild/bazel/releases/download/{bazel_version}"
     )
     suffix = "exe" if _is_windows() else "sh"
     return (
-        f"{download_url_base}/bazel-{BAZEL_VERSION}{'' if _is_windows() else '-installer'}-"
+        f"{download_url_base}/bazel-{bazel_version}{'' if _is_windows() else '-installer'}-"
         f"{_get_os_name_lower()}-{_get_os_machine()}.{suffix}"
     )
 
@@ -84,9 +89,13 @@ def _cd_project_subdir(subdir):
 
 def _run_cpp():
     _install_cpp_deps()
-    # run test
+    # collect all C++ targets
     query_result = _bazel("query //...")
-    _bazel("test {}".format(query_result.replace("\n", " ").replace("\r", " ")))
+    targets = query_result.replace("\n", " ").replace("\r", " ")
+    test_command = "test"
+    if _get_os_machine() == "x86_64":
+        test_command += " --config=x86_64"
+    _bazel(f"{test_command} {targets}")
 
 
 def _run_rust():

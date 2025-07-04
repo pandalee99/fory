@@ -94,7 +94,35 @@ func (r *RefResolver) WriteRefOrNull(buffer *ByteBuffer, value reflect.Value) (r
 		length = value.Len()
 	case reflect.Interface:
 		value = value.Elem()
-		return r.WriteRefOrNull(buffer, value)
+		switch value.Kind() {
+		case reflect.Bool, reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+			reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
+			reflect.Float32, reflect.Float64:
+
+			val := value.Interface()
+			boxed, ok := r.basicValueCache[val]
+			if !ok {
+				boxed = reflect.New(value.Type())
+				boxed.Elem().Set(value)
+				r.basicValueCache[val] = boxed
+			}
+			ptr := unsafe.Pointer(boxed.Pointer())
+			refKey := refKey{pointer: ptr, length: 0}
+			if writtenId, ok := r.writtenObjects[refKey]; ok {
+				buffer.WriteInt8(RefFlag)
+				buffer.WriteVarInt32(writtenId)
+				return true, nil
+			}
+			newWriteRefId := len(r.writtenObjects)
+			if newWriteRefId >= MaxInt32 {
+				return false, fmt.Errorf("too many objects execced %d to serialize", MaxInt32)
+			}
+			r.writtenObjects[refKey] = int32(newWriteRefId)
+			buffer.WriteInt8(RefValueFlag)
+			return false, nil
+		default:
+			return r.WriteRefOrNull(buffer, value)
+		}
 	case reflect.String:
 		isNil = false
 		str := unsafeGetBytes(value.Interface().(string))
@@ -194,8 +222,8 @@ func (r *RefResolver) TryPreserveRefId(buffer *ByteBuffer) (int32, error) {
 	headFlag := buffer.ReadInt8()
 	if headFlag == RefFlag {
 		// read ref id and get object from ref resolver
-		refId := buffer.ReadVarInt32()
-		r.readObject = r.GetReadObject(refId)
+		refId := buffer.ReadVarUint32()
+		r.readObject = r.GetReadObject(int32(refId))
 	} else {
 		r.readObject = reflect.Value{}
 		if headFlag == RefValueFlag {
@@ -241,7 +269,7 @@ func (r *RefResolver) SetReadObject(refId int32, value reflect.Value) {
 	if !r.refTracking {
 		return
 	}
-	if refId >= 0 {
+	if refId >= 0 && int(refId) < len(r.readObjects) {
 		r.readObjects[refId] = value
 	}
 }

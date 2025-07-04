@@ -47,7 +47,6 @@ type mapSerializer struct {
 	keyReferencable   bool
 	valueReferencable bool
 	mapInStruct       bool // Use mapInStruct to distinguish concrete map types during deserialization
-
 }
 
 func (s mapSerializer) TypeId() TypeId {
@@ -196,6 +195,7 @@ func (s mapSerializer) Write(f *Fory, buf *ByteBuffer, value reflect.Value) erro
 			}
 			valueSerializer = valueTypeInfo.Serializer
 		}
+
 		keyWriteRef := s.keyReferencable
 		if keySerializer != nil {
 			keyWriteRef = keySerializer.NeedWriteRef()
@@ -248,7 +248,7 @@ func (s mapSerializer) Write(f *Fory, buf *ByteBuffer, value reflect.Value) erro
 					return err
 				}
 			}
-
+      
 			chunkSize++
 
 			if iter.Next() {
@@ -370,6 +370,13 @@ func (s mapSerializer) Read(f *Fory, buf *ByteBuffer, typ reflect.Type, value re
 				} else {
 					value.SetMapIndex(reflect.Value{}, reflect.Value{})
 				}
+			} else {
+				v = reflect.Zero(valueType)
+			}
+			value.SetMapIndex(k, v)
+			size--
+			if size == 0 {
+				return nil
 			}
 
 			size--
@@ -384,6 +391,7 @@ func (s mapSerializer) Read(f *Fory, buf *ByteBuffer, typ reflect.Type, value re
 		trackValRef := (chunkHeader & TRACKING_VALUE_REF) != 0
 		keyDeclType := (chunkHeader & KEY_DECL_TYPE) != 0
 		valDeclType := (chunkHeader & VALUE_DECL_TYPE) != 0
+
 		chunkSize := int(buf.ReadUint8())
 		if !keyDeclType {
 			ti, err := resolver.readTypeInfo(buf)
@@ -455,6 +463,7 @@ func (s mapSerializer) Read(f *Fory, buf *ByteBuffer, typ reflect.Type, value re
 			chunkHeader = buf.ReadUint8()
 		}
 	}
+
 	return nil
 }
 
