@@ -206,7 +206,6 @@ func TestSerializeMap(t *testing.T) {
 }
 
 func TestSerializeArray(t *testing.T) {
-	fmt.Println(">>>> running convertRecursively, this commit:", "<YOUR_UNIQUE_MARKER>")
 	for _, referenceTracking := range []bool{false, true} {
 		fory := NewFory(referenceTracking)
 		for _, data := range commonArray() {
@@ -479,20 +478,20 @@ func serde(t *testing.T, fory *Fory, value interface{}) {
 	require.Nil(t, fory.Unmarshal(bytes, &newValue), "deserialize value %s with type %s failed: %s",
 		fmt.Sprintf("deserialize value %s with type %s failed: %s",
 			reflect.ValueOf(value), reflect.TypeOf(value), err))
-	rvNew := reflect.ValueOf(newValue)
-	rvOld := reflect.ValueOf(value)
-	var cv reflect.Value
+	newVal := reflect.ValueOf(newValue)
+	origVal := reflect.ValueOf(value)
+	var convVal reflect.Value
 	if reflect.DeepEqual(newValue, value) {
 		// fmt.Println("SKIP CONVERT")
-		cv = rvOld
+		convVal = origVal
 	} else {
-		cv, err = convertRecursively(rvNew, rvOld)
+		convVal, err = convertRecursively(newVal, origVal)
 	}
 	require.Nilf(t, err,
 		"convert newValue %v (type %s) to %s failed: %v",
-		newValue, reflect.TypeOf(newValue), rvOld, err,
+		newValue, reflect.TypeOf(newValue), origVal, err,
 	)
-	newValue = cv.Interface()
+	newValue = convVal.Interface()
 	if reflect.ValueOf(value).Kind() == reflect.Ptr {
 		require.Equal(t, reflect.ValueOf(value).Elem().Interface(),
 			reflect.ValueOf(newValue).Elem().Interface())

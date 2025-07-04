@@ -1102,3 +1102,59 @@ func computeStringHash(str string) int32 {
 	}
 	return int32(hash)
 }
+
+func isPrimitiveType(typeID int16) bool {
+	switch typeID {
+	case BOOL,
+		INT8,
+		INT16,
+		INT32,
+		INT64,
+		FLOAT,
+		DOUBLE:
+		return true
+	default:
+		return false
+	}
+}
+
+func isListType(typeID int16) bool {
+	return typeID == LIST
+}
+func isMapType(typeID int16) bool {
+	return typeID == MAP
+}
+
+func isPrimitiveArrayType(typeID int16) bool {
+	switch typeID {
+	case BOOL_ARRAY,
+		INT8_ARRAY,
+		INT16_ARRAY,
+		INT32_ARRAY,
+		INT64_ARRAY,
+		FLOAT32_ARRAY,
+		FLOAT64_ARRAY:
+		return true
+	default:
+		return false
+	}
+}
+
+var primitiveTypeSizes = map[int16]int{
+	BOOL:      1,
+	INT8:      1,
+	INT16:     2,
+	INT32:     4,
+	VAR_INT32: 4,
+	INT64:     8,
+	VAR_INT64: 8,
+	FLOAT:     4,
+	DOUBLE:    8,
+}
+
+func getPrimitiveTypeSize(typeID int16) int {
+	if sz, ok := primitiveTypeSizes[typeID]; ok {
+		return sz
+	}
+	return -1
+}
