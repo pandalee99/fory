@@ -37,6 +37,10 @@ func (s boolSerializer) TypeId() TypeId {
 	return BOOL
 }
 
+func (s boolSerializer) NeedWriteRef() bool {
+	return false
+}
+
 func (s boolSerializer) Write(f *Fory, buf *ByteBuffer, value reflect.Value) error {
 	buf.WriteBool(value.Bool())
 	return nil
@@ -47,15 +51,15 @@ func (s boolSerializer) Read(f *Fory, buf *ByteBuffer, type_ reflect.Type, value
 	return nil
 }
 
-func (s boolSerializer) NeedWriteRef() bool {
-	return false
-}
-
 type int8Serializer struct {
 }
 
 func (s int8Serializer) TypeId() TypeId {
 	return INT8
+}
+
+func (s int8Serializer) NeedWriteRef() bool {
+	return false
 }
 
 func (s int8Serializer) Write(f *Fory, buf *ByteBuffer, value reflect.Value) error {
@@ -68,15 +72,15 @@ func (s int8Serializer) Read(f *Fory, buf *ByteBuffer, type_ reflect.Type, value
 	return nil
 }
 
-func (s int8Serializer) NeedWriteRef() bool {
-	return false
-}
-
 type byteSerializer struct {
 }
 
 func (s byteSerializer) TypeId() TypeId {
 	return UINT8
+}
+
+func (s byteSerializer) NeedWriteRef() bool {
+	return false
 }
 
 func (s byteSerializer) Write(f *Fory, buf *ByteBuffer, value reflect.Value) error {
@@ -90,15 +94,15 @@ func (s byteSerializer) Read(f *Fory, buf *ByteBuffer, type_ reflect.Type, value
 	return nil
 }
 
-func (s byteSerializer) NeedWriteRef() bool {
-	return false
-}
-
 type int16Serializer struct {
 }
 
 func (s int16Serializer) TypeId() TypeId {
 	return INT16
+}
+
+func (s int16Serializer) NeedWriteRef() bool {
+	return false
 }
 
 func (s int16Serializer) Write(f *Fory, buf *ByteBuffer, value reflect.Value) error {
@@ -111,15 +115,15 @@ func (s int16Serializer) Read(f *Fory, buf *ByteBuffer, type_ reflect.Type, valu
 	return nil
 }
 
-func (s int16Serializer) NeedWriteRef() bool {
-	return false
-}
-
 type int32Serializer struct {
 }
 
 func (s int32Serializer) TypeId() TypeId {
 	return INT32
+}
+
+func (s int32Serializer) NeedWriteRef() bool {
+	return false
 }
 
 func (s int32Serializer) Write(f *Fory, buf *ByteBuffer, value reflect.Value) error {
@@ -132,15 +136,15 @@ func (s int32Serializer) Read(f *Fory, buf *ByteBuffer, type_ reflect.Type, valu
 	return nil
 }
 
-func (s int32Serializer) NeedWriteRef() bool {
-	return false
-}
-
 type int64Serializer struct {
 }
 
 func (s int64Serializer) TypeId() TypeId {
 	return INT64
+}
+
+func (s int64Serializer) NeedWriteRef() bool {
+	return false
 }
 
 func (s int64Serializer) Write(f *Fory, buf *ByteBuffer, value reflect.Value) error {
@@ -153,15 +157,15 @@ func (s int64Serializer) Read(f *Fory, buf *ByteBuffer, type_ reflect.Type, valu
 	return nil
 }
 
-func (s int64Serializer) NeedWriteRef() bool {
-	return false
-}
-
 type intSerializer struct {
 }
 
 func (s intSerializer) TypeId() TypeId {
 	return -INT64
+}
+
+func (s intSerializer) NeedWriteRef() bool {
+	return false
 }
 
 func (s intSerializer) Write(f *Fory, buf *ByteBuffer, value reflect.Value) error {
@@ -178,15 +182,15 @@ func (s intSerializer) Read(f *Fory, buf *ByteBuffer, type_ reflect.Type, value 
 	return nil
 }
 
-func (s intSerializer) NeedWriteRef() bool {
-	return false
-}
-
 type float32Serializer struct {
 }
 
 func (s float32Serializer) TypeId() TypeId {
 	return FLOAT
+}
+
+func (s float32Serializer) NeedWriteRef() bool {
+	return false
 }
 
 func (s float32Serializer) Write(f *Fory, buf *ByteBuffer, value reflect.Value) error {
@@ -199,15 +203,15 @@ func (s float32Serializer) Read(f *Fory, buf *ByteBuffer, type_ reflect.Type, va
 	return nil
 }
 
-func (s float32Serializer) NeedWriteRef() bool {
-	return false
-}
-
 type float64Serializer struct {
 }
 
 func (s float64Serializer) TypeId() TypeId {
 	return DOUBLE
+}
+
+func (s float64Serializer) NeedWriteRef() bool {
+	return false
 }
 
 func (s float64Serializer) Write(f *Fory, buf *ByteBuffer, value reflect.Value) error {
@@ -220,15 +224,15 @@ func (s float64Serializer) Read(f *Fory, buf *ByteBuffer, type_ reflect.Type, va
 	return nil
 }
 
-func (s float64Serializer) NeedWriteRef() bool {
-	return false
-}
-
 type stringSerializer struct {
 }
 
 func (s stringSerializer) TypeId() TypeId {
 	return STRING
+}
+
+func (s stringSerializer) NeedWriteRef() bool {
+	return true
 }
 
 func (s stringSerializer) Write(f *Fory, buf *ByteBuffer, value reflect.Value) error {
@@ -240,10 +244,6 @@ func (s stringSerializer) Read(f *Fory, buf *ByteBuffer, type_ reflect.Type, val
 	return nil
 }
 
-func (s stringSerializer) NeedWriteRef() bool {
-	return true
-}
-
 // ptrToStringSerializer serializes a pointer to string. Reference are considered based on pointer instead of
 // string value.
 type ptrToStringSerializer struct {
@@ -251,6 +251,10 @@ type ptrToStringSerializer struct {
 
 func (s ptrToStringSerializer) TypeId() TypeId {
 	return -STRING
+}
+
+func (s ptrToStringSerializer) NeedWriteRef() bool {
+	return true
 }
 
 func (s ptrToStringSerializer) Write(f *Fory, buf *ByteBuffer, value reflect.Value) error {
@@ -269,10 +273,6 @@ func (s ptrToStringSerializer) Read(f *Fory, buf *ByteBuffer, type_ reflect.Type
 	return nil
 }
 
-func (s ptrToStringSerializer) NeedWriteRef() bool {
-	return true
-}
-
 func readStringBytes(buf *ByteBuffer) []byte {
 	return buf.ReadBinary(int(buf.ReadVarInt32()))
 }
@@ -283,6 +283,11 @@ type arraySerializer struct {
 func (s arraySerializer) TypeId() TypeId {
 	return -LIST
 }
+
+func (s arraySerializer) NeedWriteRef() bool {
+	return true
+}
+
 func (s arraySerializer) Write(f *Fory, buf *ByteBuffer, value reflect.Value) error {
 	length := value.Len()
 	if err := f.writeLength(buf, length); err != nil {
@@ -306,10 +311,6 @@ func (s arraySerializer) Read(f *Fory, buf *ByteBuffer, type_ reflect.Type, valu
 	return nil
 }
 
-func (s arraySerializer) NeedWriteRef() bool {
-	return true
-}
-
 // arrayConcreteValueSerializer serialize an array/*array
 type arrayConcreteValueSerializer struct {
 	type_          reflect.Type
@@ -319,6 +320,10 @@ type arrayConcreteValueSerializer struct {
 
 func (s *arrayConcreteValueSerializer) TypeId() TypeId {
 	return -LIST
+}
+
+func (s arrayConcreteValueSerializer) NeedWriteRef() bool {
+	return true
 }
 
 func (s *arrayConcreteValueSerializer) Write(f *Fory, buf *ByteBuffer, value reflect.Value) error {
@@ -342,10 +347,6 @@ func (s *arrayConcreteValueSerializer) Read(f *Fory, buf *ByteBuffer, type_ refl
 		}
 	}
 	return nil
-}
-
-func (s arrayConcreteValueSerializer) NeedWriteRef() bool {
-	return true
 }
 
 type byteArraySerializer struct {
@@ -398,6 +399,10 @@ func (s dateSerializer) TypeId() TypeId {
 	return LOCAL_DATE
 }
 
+func (s dateSerializer) NeedWriteRef() bool {
+	return true
+}
+
 func (s dateSerializer) Write(f *Fory, buf *ByteBuffer, value reflect.Value) error {
 	date := value.Interface().(Date)
 	diff := time.Date(date.Year, date.Month, date.Day, 0, 0, 0, 0, time.Local).Sub(
@@ -413,15 +418,15 @@ func (s dateSerializer) Read(f *Fory, buf *ByteBuffer, type_ reflect.Type, value
 	return nil
 }
 
-func (s dateSerializer) NeedWriteRef() bool {
-	return true
-}
-
 type timeSerializer struct {
 }
 
 func (s timeSerializer) TypeId() TypeId {
 	return TIMESTAMP
+}
+
+func (s timeSerializer) NeedWriteRef() bool {
+	return true
 }
 
 func (s timeSerializer) Write(f *Fory, buf *ByteBuffer, value reflect.Value) error {
@@ -432,10 +437,6 @@ func (s timeSerializer) Write(f *Fory, buf *ByteBuffer, value reflect.Value) err
 func (s timeSerializer) Read(f *Fory, buf *ByteBuffer, type_ reflect.Type, value reflect.Value) error {
 	value.Set(reflect.ValueOf(CreateTimeFromUnixMicro(buf.ReadInt64())))
 	return nil
-}
-
-func (s timeSerializer) NeedWriteRef() bool {
-	return true
 }
 
 // ptrToValueSerializer serialize a ptr which point to a concrete value.
@@ -452,6 +453,10 @@ func (s *ptrToValueSerializer) TypeId() TypeId {
 	}
 }
 
+func (s *ptrToValueSerializer) NeedWriteRef() bool {
+	return true
+}
+
 func (s *ptrToValueSerializer) Write(f *Fory, buf *ByteBuffer, value reflect.Value) error {
 	return s.valueSerializer.Write(f, buf, value.Elem())
 }
@@ -460,10 +465,6 @@ func (s *ptrToValueSerializer) Read(f *Fory, buf *ByteBuffer, type_ reflect.Type
 	newValue := reflect.New(type_.Elem())
 	value.Set(newValue)
 	return s.valueSerializer.Read(f, buf, type_.Elem(), newValue.Elem())
-}
-
-func (s ptrToValueSerializer) NeedWriteRef() bool {
-	return true
 }
 
 func writeBySerializer(f *Fory, buf *ByteBuffer, value reflect.Value, serializer Serializer, referencable bool) error {
@@ -475,6 +476,11 @@ func writeBySerializer(f *Fory, buf *ByteBuffer, value reflect.Value, serializer
 }
 
 func readBySerializer(f *Fory, buf *ByteBuffer, value reflect.Value, serializer Serializer, referencable bool) error {
+	// Handle array type loading in this common entry point
+	// so other collection serializers that include arrays can reuse it
+	if value.Kind() == reflect.Array {
+		return readBeforeCheckArray(f, buf, value, serializer, referencable)
+	}
 	if referencable {
 		return f.readReferencableBySerializer(buf, value, serializer)
 	} else {
@@ -485,6 +491,29 @@ func readBySerializer(f *Fory, buf *ByteBuffer, value reflect.Value, serializer 
 			return f.readData(buf, value, serializer)
 		}
 	}
+}
+
+func readBeforeCheckArray(f *Fory, buf *ByteBuffer, value reflect.Value, serializer Serializer, referencable bool) error {
+	length := value.Len()
+	elemType := value.Type().Elem()
+	sliceType := reflect.SliceOf(elemType)
+	slicePtr := reflect.New(sliceType)
+	sliceVal := slicePtr.Elem()
+	sliceVal.Set(reflect.MakeSlice(sliceType, length, length))
+	if referencable {
+		if err := f.readReferencableBySerializer(buf, sliceVal, serializer); err != nil {
+			return err
+		}
+	} else {
+		buf.ReadInt8()
+		if err := f.readData(buf, sliceVal, serializer); err != nil {
+			return err
+		}
+	}
+	for i := 0; i < length; i++ {
+		value.Index(i).Set(sliceVal.Index(i))
+	}
+	return nil
 }
 
 // TODO(chaokunyang) support custom serialization
