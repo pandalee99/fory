@@ -421,8 +421,14 @@ func (r *typeResolver) RegisterTypeTag(value reflect.Value, tag string) error {
 	r.typeToTypeInfo[ptrType] = "*@" + tag
 	r.typeInfoToType["*@"+tag] = ptrType
 	// For named structs, directly register both their value and pointer types
-	r.getTypeInfo(value, true)
-	r.getTypeInfo(ptrValue, true)
+	info, err := r.getTypeInfo(value, true)
+	if err != nil {
+		return fmt.Errorf("failed to register named structs: info is %v", info)
+	}
+	info, err = r.getTypeInfo(ptrValue, true)
+	if err != nil {
+		return fmt.Errorf("failed to register named structs: info is %v", info)
+	}
 	return nil
 }
 
