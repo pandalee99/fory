@@ -108,10 +108,10 @@ public class Example {
 }
 ```
 
-## ForyBuilder options
+## ForyBuilder  options
 
 | Option Name                         | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | Default Value                                                  |
-| ----------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
+|-------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|----------------------------------------------------------------|
 | `timeRefIgnored`                    | Whether to ignore reference tracking of all time types registered in `TimeSerializers` and subclasses of those types when ref tracking is enabled. If ignored, ref tracking of every time type can be enabled by invoking `Fory#registerSerializer(Class, Serializer)`. For example, `fory.registerSerializer(Date.class, new DateSerializer(fory, true))`. Note that enabling ref tracking should happen before serializer codegen of any types which contain time fields. Otherwise, those fields will still skip ref tracking. | `true`                                                         |
 | `compressInt`                       | Enables or disables int compression for smaller size.                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | `true`                                                         |
 | `compressLong`                      | Enables or disables long compression for smaller size.                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | `true`                                                         |
@@ -234,9 +234,9 @@ For long compression, fory support two encoding:
   - Otherwise write as 9 bytes: `| 0b1 | little-endian 8bytes long |`
 - Fory PVL(Progressive Variable-length Long) Encoding:
   - First bit in every byte indicate whether has next byte. if first bit is set, then next byte will be read util
-    first bit of next byte is unset.
+      first bit of next byte is unset.
   - Negative number will be converted to positive number by `(v << 1) ^ (v >> 63)` to reduce cost of small negative
-    numbers.
+      numbers.
 
 If a number are `long` type, it can't be represented by smaller bytes mostly, the compression won't get good enough
 result,
@@ -463,16 +463,13 @@ returned.
 ### Coping/Mapping object from one type to another type
 
 Fory support mapping object from one type to another type.
-
 > Notes:
 >
 > 1. This mapping will execute a deep copy, all mapped fields are serialized into binary and
-
      deserialized from that binary to map into another type.
-
 > 2. All struct types must be registered with same ID, otherwise Fory can not mapping to correct struct type.
->    Be careful when you use `Fory#register(Class)`, because fory will allocate an auto-grown ID which might be
->    inconsistent if you register classes with different order between Fory instance.
+     > Be careful when you use `Fory#register(Class)`, because fory will allocate an auto-grown ID which might be
+     > inconsistent if you register classes with different order between Fory instance.
 
 ```java
 public class StructMappingExample {
