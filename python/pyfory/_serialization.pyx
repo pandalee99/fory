@@ -545,8 +545,6 @@ cdef class TypeResolver:
             int32_t type_id = buffer.read_varuint32()
         if type_id < 0:
             type_id = -type_id
-        # if type_id < 0 or type_id > self._c_registered_id_to_type_info.size():
-        #     raise ValueError(f"Unexpected type_id {type_id}")
         if type_id > self._c_registered_id_to_type_info.size():
             raise ValueError(f"Unexpected type_id {type_id}")
         cdef:
