@@ -492,14 +492,6 @@ func UnwrapReflectValue(v reflect.Value) reflect.Value {
 	return v
 }
 
-func actualVal(t reflect.Type) (reflect.Value, error) {
-	if t.Kind() == reflect.Interface {
-		var container interface{}
-		return reflect.ValueOf(&container).Elem(), nil
-	}
-	return reflect.New(t).Elem(), nil
-}
-
 func isValid(v reflect.Value) bool {
 	// Zero values are valid, so apply this change temporarily.
 	return v.IsValid()
