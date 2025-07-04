@@ -993,17 +993,14 @@ func (r *typeResolver) readTypeInfo(buffer *ByteBuffer) (TypeInfo, error) {
 			r.nsTypeToTypeInfo[compositeKey] = typeInfo
 			return typeInfo, nil
 		}
-
 		_ = typeName
 		if ns != "" {
 			_ = ns + "." + typeName
 		}
-
 		return typeInfo, nil
 	}
 
 	// Handle simple type IDs (non-namespaced types)
-
 	if typeInfo, exists := r.typeIDToTypeInfo[typeID]; exists {
 		return typeInfo, nil
 	}
