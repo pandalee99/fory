@@ -495,11 +495,17 @@ func readBySerializer(f *Fory, buf *ByteBuffer, value reflect.Value, serializer 
 
 func readBeforeCheckArray(f *Fory, buf *ByteBuffer, value reflect.Value, serializer Serializer, referencable bool) error {
 	length := value.Len()
+
+	// Determine element type and create a temporary slice type
 	elemType := value.Type().Elem()
 	sliceType := reflect.SliceOf(elemType)
+
+	// Create a new slice pointer and initialize it with the correct length
 	slicePtr := reflect.New(sliceType)
 	sliceVal := slicePtr.Elem()
 	sliceVal.Set(reflect.MakeSlice(sliceType, length, length))
+
+	// Handle referencable arrays by reading reference metadata first
 	if referencable {
 		if err := f.readReferencableBySerializer(buf, sliceVal, serializer); err != nil {
 			return err
@@ -510,6 +516,7 @@ func readBeforeCheckArray(f *Fory, buf *ByteBuffer, value reflect.Value, seriali
 			return err
 		}
 	}
+	// Copy elements from temporary slice to the target array
 	for i := 0; i < length; i++ {
 		value.Index(i).Set(sliceVal.Index(i))
 	}
