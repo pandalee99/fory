@@ -27,7 +27,7 @@ import static org.testng.Assert.assertTrue;
 import com.google.common.collect.HashBasedTable;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
-import java.io.*;
+import java.io.Serializable;
 import java.lang.invoke.MethodHandles;
 import java.math.BigDecimal;
 import java.math.BigInteger;
@@ -58,6 +58,7 @@ import org.apache.fory.builder.Generated;
 import org.apache.fory.config.CompatibleMode;
 import org.apache.fory.config.ForyBuilder;
 import org.apache.fory.config.Language;
+import org.apache.fory.exception.DeserializationException;
 import org.apache.fory.exception.ForyException;
 import org.apache.fory.exception.InsecureException;
 import org.apache.fory.memory.MemoryBuffer;
@@ -641,6 +642,7 @@ public class ForyTest extends ForyTestBase {
     assertEquals(fory.getBuffer().size(), limitInBytes);
   }
 
+  @EqualsAndHashCode
   static class Struct1 {
     int f1;
     String f2;
@@ -672,5 +674,17 @@ public class ForyTest extends ForyTestBase {
     struct1 = (Struct1) fory1.deserialize(fory2.serialize(struct2));
     Assert.assertEquals(struct1.f1, struct2.f1);
     Assert.assertEquals(struct1.f2, struct2.f2);
+  }
+
+  @Test
+  public void testDeserializeJavaObjectWrongType() {
+    Fory fory = Fory.builder().requireClassRegistration(false).build();
+    Struct1 struct1 = new Struct1(10, "abc");
+    byte[] bytes = fory.serializeJavaObject(struct1);
+    // first deserialize as Struct1 (correct type)
+    Assert.assertEquals(fory.deserializeJavaObject(bytes, Struct1.class), struct1);
+    // then deserialize as Struct2 (wrong type)
+    Assert.assertThrows(
+        DeserializationException.class, () -> fory.deserializeJavaObject(bytes, Struct2.class));
   }
 }

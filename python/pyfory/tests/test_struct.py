@@ -104,12 +104,77 @@ def test_inheritance():
     type_hints = typing.get_type_hints(ChildClass1)
     print(type_hints)
     assert type_hints.keys() == {"f1", "f2", "f3"}
-    fory = Fory(
-        language=Language.PYTHON, ref_tracking=True, require_type_registration=False
-    )
+    fory = Fory(language=Language.PYTHON, ref_tracking=True, require_type_registration=False)
     obj = ChildClass1(f1="a", f2=-10, f3={"a": -10.0, "b": 1 / 3})
     assert ser_de(fory, obj) == obj
-    assert (
-        type(fory.type_resolver.get_serializer(ChildClass1))
-        == pyfory.DataClassSerializer
+    assert type(fory.type_resolver.get_serializer(ChildClass1)) is pyfory.DataClassSerializer
+
+
+@dataclass
+class DataClassObject:
+    f_int: int
+    f_float: float
+    f_str: str
+    f_bool: bool
+    f_list: List[int]
+    f_dict: Dict[str, float]
+    f_any: Any
+    f_complex: ComplexObject = None
+
+
+def test_data_class_serializer_xlang():
+    fory = Fory(language=Language.XLANG, ref_tracking=True)
+    fory.register_type(ComplexObject, typename="example.ComplexObject")
+    fory.register_type(DataClassObject, typename="example.TestDataClassObject")
+
+    complex_data = ComplexObject(
+        f1="nested_str",
+        f5=100,
+        f8=3.14,
+        f10={10: 1.0, 20: 2.0},
     )
+    obj_original = DataClassObject(
+        f_int=123,
+        f_float=45.67,
+        f_str="hello xlang",
+        f_bool=True,
+        f_list=[1, 2, 3, 4, 5],
+        f_dict={"a": 1.1, "b": 2.2},
+        f_any="any_value",
+        f_complex=complex_data,
+    )
+
+    obj_deserialized = ser_de(fory, obj_original)
+
+    assert obj_deserialized == obj_original
+    assert obj_deserialized.f_int == obj_original.f_int
+    assert obj_deserialized.f_float == obj_original.f_float
+    assert obj_deserialized.f_str == obj_original.f_str
+    assert obj_deserialized.f_bool == obj_original.f_bool
+    assert obj_deserialized.f_list == obj_original.f_list
+    assert obj_deserialized.f_dict == obj_original.f_dict
+    assert obj_deserialized.f_any == obj_original.f_any
+    assert obj_deserialized.f_complex == obj_original.f_complex
+    assert type(fory.type_resolver.get_serializer(DataClassObject)) is pyfory.DataClassSerializer
+    # Ensure it's using xlang mode indirectly, by checking no JIT methods if possible,
+    # or by ensuring it was registered with _register_xtype which now uses DataClassSerializer(xlang=True)
+    # For now, the registration path check is implicit via Language.XLANG usage.
+    # We can also check if the hash is non-zero if it was computed,
+    # or if the _serializers attribute exists.
+    serializer_instance = fory.type_resolver.get_serializer(DataClassObject)
+    assert hasattr(serializer_instance, "_serializers")  # xlang mode creates this
+    assert serializer_instance._xlang is True
+
+    # Test with None for a complex field
+    obj_with_none_complex = DataClassObject(
+        f_int=789,
+        f_float=12.34,
+        f_str="another string",
+        f_bool=False,
+        f_list=[10, 20],
+        f_dict={"x": 7.7, "y": 8.8},
+        f_any=None,
+        f_complex=None,
+    )
+    obj_deserialized_none = ser_de(fory, obj_with_none_complex)
+    assert obj_deserialized_none == obj_with_none_complex

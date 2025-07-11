@@ -59,8 +59,9 @@ from pyfory.serializer import (
     PickleStrongCacheSerializer,
     PickleSerializer,
     DataClassSerializer,
+    StatefulSerializer,
+    ReduceSerializer,
 )
-from pyfory._struct import ComplexObjectSerializer
 from pyfory.meta.metastring import MetaStringEncoder, MetaStringDecoder
 from pyfory.type import (
     TypeId,
@@ -118,10 +119,7 @@ else:
             self.dynamic_type = dynamic_type
 
         def __repr__(self):
-            return (
-                f"TypeInfo(cls={self.cls}, type_id={self.type_id}, "
-                f"serializer={self.serializer})"
-            )
+            return f"TypeInfo(cls={self.cls}, type_id={self.type_id}, serializer={self.serializer})"
 
         def decode_namespace(self) -> str:
             if self.namespace_bytes is None:
@@ -230,9 +228,7 @@ class TypeResolver:
         register(float, type_id=TypeId.FLOAT64, serializer=Float64Serializer)
         register(str, type_id=TypeId.STRING, serializer=StringSerializer)
         # TODO(chaokunyang) DURATION DECIMAL
-        register(
-            datetime.datetime, type_id=TypeId.TIMESTAMP, serializer=TimestampSerializer
-        )
+        register(datetime.datetime, type_id=TypeId.TIMESTAMP, serializer=TimestampSerializer)
         register(datetime.date, type_id=TypeId.LOCAL_DATE, serializer=DateSerializer)
         register(bytes, type_id=TypeId.BINARY, serializer=BytesSerializer)
         for itemsize, ftype, typeid in PyArraySerializer.typecode_dict.values():
@@ -241,9 +237,7 @@ class TypeResolver:
                 type_id=typeid,
                 serializer=PyArraySerializer(self.fory, ftype, typeid),
             )
-        register(
-            array.array, type_id=DYNAMIC_TYPE_ID, serializer=DynamicPyArraySerializer
-        )
+        register(array.array, type_id=DYNAMIC_TYPE_ID, serializer=DynamicPyArraySerializer)
         if np:
             # overwrite pyarray  with same type id.
             # if pyarray are needed, one must annotate that value with XXXArrayType
@@ -275,9 +269,7 @@ class TypeResolver:
                 type_id=TypeId.ARROW_RECORD_BATCH,
                 serializer=ArrowRecordBatchSerializer,
             )
-            register(
-                pa.Table, type_id=TypeId.ARROW_TABLE, serializer=ArrowTableSerializer
-            )
+            register(pa.Table, type_id=TypeId.ARROW_TABLE, serializer=ArrowTableSerializer)
         except Exception:
             pass
 
@@ -322,20 +314,14 @@ class TypeResolver:
         if n_params == 0 and typename is None:
             type_id = self._next_type_id()
         if n_params == 2:
-            raise TypeError(
-                f"type name {typename} and id {type_id} should not be set at the same time"
-            )
+            raise TypeError(f"type name {typename} and id {type_id} should not be set at the same time")
         if type_id not in {0, None}:
             # multiple type can have same tpe id
             if type_id in self._type_id_to_typeinfo and cls in self._types_info:
                 raise TypeError(f"{cls} registered already")
         elif cls in self._types_info:
             raise TypeError(f"{cls} registered already")
-        register_type = (
-            self._register_xtype
-            if self.fory.language == Language.XLANG
-            else self._register_pytype
-        )
+        register_type = self._register_xtype if self.fory.language == Language.XLANG else self._register_pytype
         return register_type(
             cls,
             type_id=type_id,
@@ -358,22 +344,12 @@ class TypeResolver:
         if serializer is None:
             if issubclass(cls, enum.Enum):
                 serializer = EnumSerializer(self.fory, cls)
-                type_id = (
-                    TypeId.NAMED_ENUM
-                    if type_id is None
-                    else ((type_id << 8) + TypeId.ENUM)
-                )
+                type_id = TypeId.NAMED_ENUM if type_id is None else ((type_id << 8) + TypeId.ENUM)
             else:
-                serializer = ComplexObjectSerializer(self.fory, cls)
-                type_id = (
-                    TypeId.NAMED_STRUCT
-                    if type_id is None
-                    else ((type_id << 8) + TypeId.STRUCT)
-                )
+                serializer = DataClassSerializer(self.fory, cls, xlang=True)
+                type_id = TypeId.NAMED_STRUCT if type_id is None else ((type_id << 8) + TypeId.STRUCT)
         elif not internal:
-            type_id = (
-                TypeId.NAMED_EXT if type_id is None else ((type_id << 8) + TypeId.EXT)
-            )
+            type_id = TypeId.NAMED_EXT if type_id is None else ((type_id << 8) + TypeId.EXT)
         return self.__register_type(
             cls,
             type_id=type_id,
@@ -426,15 +402,11 @@ class TypeResolver:
             ns_meta_bytes = self.metastring_resolver.get_metastr_bytes(ns_metastr)
             type_metastr = self.typename_encoder.encode(typename)
             type_meta_bytes = self.metastring_resolver.get_metastr_bytes(type_metastr)
-            typeinfo = TypeInfo(
-                cls, type_id, serializer, ns_meta_bytes, type_meta_bytes, dynamic_type
-            )
+            typeinfo = TypeInfo(cls, type_id, serializer, ns_meta_bytes, type_meta_bytes, dynamic_type)
             self._named_type_to_typeinfo[(namespace, typename)] = typeinfo
             self._ns_type_to_typeinfo[(ns_meta_bytes, type_meta_bytes)] = typeinfo
         self._types_info[cls] = typeinfo
-        if type_id > 0 and (
-            self.language == Language.PYTHON or not TypeId.is_namespaced_type(type_id)
-        ):
+        if type_id > 0 and (self.language == Language.PYTHON or not TypeId.is_namespaced_type(type_id)):
             if type_id not in self._type_id_to_typeinfo or not internal:
                 self._type_id_to_typeinfo[type_id] = typeinfo
         self._types_info[cls] = typeinfo
@@ -479,9 +451,7 @@ class TypeResolver:
             return type_info
         elif not create:
             return None
-        if self.language != Language.PYTHON or (
-            self.require_registration and not issubclass(cls, Enum)
-        ):
+        if self.language != Language.PYTHON or (self.require_registration and not issubclass(cls, Enum)):
             raise TypeUnregisteredError(f"{cls} not registered")
         logger.info("Type %s not registered", cls)
         serializer = self._create_serializer(cls)
@@ -491,13 +461,13 @@ class TypeResolver:
                 type_id = TypeId.NAMED_ENUM
             elif type(serializer) is PickleSerializer:
                 type_id = PickleSerializer.PICKLE_TYPE_ID
+            elif isinstance(serializer, (StatefulSerializer, ReduceSerializer)):
+                type_id = TypeId.NAMED_EXT
             if not self.require_registration:
                 if isinstance(serializer, DataClassSerializer):
                     type_id = TypeId.NAMED_STRUCT
         if type_id is None:
-            raise TypeUnregisteredError(
-                f"{cls} must be registered using `fory.register_type` API"
-            )
+            raise TypeUnregisteredError(f"{cls} must be registered using `fory.register_type` API")
         return self.__register_type(
             cls,
             type_id=type_id,
@@ -509,11 +479,7 @@ class TypeResolver:
     def _create_serializer(self, cls):
         for clz in cls.__mro__:
             type_info = self._types_info.get(clz)
-            if (
-                type_info
-                and type_info.serializer
-                and type_info.serializer.support_subclass()
-            ):
+            if type_info and type_info.serializer and type_info.serializer.support_subclass():
                 serializer = type(type_info.serializer)(self.fory, cls)
                 break
         else:
@@ -523,6 +489,27 @@ class TypeResolver:
                 serializer = DataClassSerializer(self.fory, cls)
             elif issubclass(cls, enum.Enum):
                 serializer = EnumSerializer(self.fory, cls)
+            elif (hasattr(cls, "__reduce__") and cls.__reduce__ is not object.__reduce__) or (
+                hasattr(cls, "__reduce_ex__") and cls.__reduce_ex__ is not object.__reduce_ex__
+            ):
+                # Use ReduceSerializer for objects that have custom __reduce__ or __reduce_ex__ methods
+                # This has higher precedence than StatefulSerializer
+                # Only use it for objects with custom reduce methods, not default ones from the object
+                module_name = getattr(cls, "__module__", "")
+                if module_name.startswith("pandas.") or module_name == "builtins" or cls.__name__ in ("type", "function", "method"):
+                    # Exclude pandas, built-ins, and certain system types
+                    serializer = PickleSerializer(self.fory, cls)
+                else:
+                    serializer = ReduceSerializer(self.fory, cls)
+            elif hasattr(cls, "__getstate__") and hasattr(cls, "__setstate__"):
+                # Use StatefulSerializer for objects that support __getstate__ and __setstate__
+                # But exclude certain types that have incompatible state methods
+                module_name = getattr(cls, "__module__", "")
+                if module_name.startswith("pandas."):
+                    # Pandas objects have __getstate__/__setstate__ but use incompatible pickle formats
+                    serializer = PickleSerializer(self.fory, cls)
+                else:
+                    serializer = StatefulSerializer(self.fory, cls)
             else:
                 serializer = PickleSerializer(self.fory, cls)
         return serializer
@@ -550,12 +537,8 @@ class TypeResolver:
         internal_type_id = type_id & 0xFF
         buffer.write_varuint32(type_id)
         if TypeId.is_namespaced_type(internal_type_id):
-            self.metastring_resolver.write_meta_string_bytes(
-                buffer, typeinfo.namespace_bytes
-            )
-            self.metastring_resolver.write_meta_string_bytes(
-                buffer, typeinfo.typename_bytes
-            )
+            self.metastring_resolver.write_meta_string_bytes(buffer, typeinfo.namespace_bytes)
+            self.metastring_resolver.write_meta_string_bytes(buffer, typeinfo.typename_bytes)
 
     def read_typeinfo(self, buffer):
         type_id = buffer.read_varuint32()
