@@ -36,8 +36,8 @@ from pyfory.lib import mmh3
 from pyfory.meta.metastring import Encoding
 from pyfory.type import is_primitive_type
 from pyfory.util import is_little_endian
-from pyfory.includes.libserialization cimport \
-    (TypeId, IsNamespacedType, Fory_PyBooleanSequenceWriteToBuffer, Fory_PyFloatSequenceWriteToBuffer)
+from pyfory.includes.libserialization cimport(TypeId, IsNamespacedType, Fory_PyBooleanSequenceWriteToBuffer,
+                                              Fory_PyFloatSequenceWriteToBuffer)
 
 from libc.stdint cimport int8_t, int16_t, int32_t, int64_t, uint64_t
 from libc.stdint cimport *
@@ -92,10 +92,11 @@ typename_decoder = MetaStringDecoder("$", "_")
 
 @cython.final
 cdef class MapRefResolver:
-    cdef flat_hash_map[uint64_t, int32_t] written_objects_id  # id(obj) -> ref_id
+    # id(obj) -> ref_id
+    cdef flat_hash_map[uint64_t, int32_t] written_objects_id
     # Hold object to avoid tmp object gc when serialize nested fields/objects.
-    cdef vector[PyObject *] written_objects
-    cdef vector[PyObject *] read_objects
+    cdef vector[PyObject * ] written_objects
+    cdef vector[PyObject * ] read_objects
     cdef vector[int32_t] read_ref_ids
     cdef object read_object
     cdef c_bool ref_tracking
@@ -119,21 +120,21 @@ cdef class MapRefResolver:
         if obj is None:
             buffer.write_int8(NULL_FLAG)
             return True
-        cdef uint64_t object_id = <uintptr_t> <PyObject *> obj
+        cdef uint64_t object_id = <uintptr_t > <PyObject * > obj
         cdef int32_t next_id
         cdef flat_hash_map[uint64_t, int32_t].iterator it = \
             self.written_objects_id.find(object_id)
         if it == self.written_objects_id.end():
             next_id = self.written_objects_id.size()
             self.written_objects_id[object_id] = next_id
-            self.written_objects.push_back(<PyObject *> obj)
+            self.written_objects.push_back( < PyObject * > obj)
             Py_INCREF(obj)
             buffer.write_int8(REF_VALUE_FLAG)
             return False
         else:
             # The obj has been written previously.
             buffer.write_int8(REF_FLAG)
-            buffer.write_varuint32(<uint64_t> deref(it).second)
+            buffer.write_varuint32( < uint64_t > deref(it).second)
             return True
 
     cpdef inline int8_t read_ref_or_null(self, Buffer buffer):
@@ -144,7 +145,7 @@ cdef class MapRefResolver:
         if head_flag == REF_FLAG:
             # read reference id and get object from reference resolver
             ref_id = buffer.read_varuint32()
-            self.read_object = <object> (self.read_objects[ref_id])
+            self.read_object = <object > (self.read_objects[ref_id])
             return REF_FLAG
         else:
             self.read_object = None
@@ -167,7 +168,7 @@ cdef class MapRefResolver:
         if head_flag == REF_FLAG:
             # read reference id and get object from reference resolver
             ref_id = buffer.read_varuint32()
-            self.read_object = <object> (self.read_objects[ref_id])
+            self.read_object = <object > (self.read_objects[ref_id])
             # `head_flag` except `REF_FLAG` can be used as stub reference id because
             # we use `refId >= NOT_NULL_VALUE_FLAG` to read data.
             return head_flag
@@ -185,7 +186,7 @@ cdef class MapRefResolver:
         cdef c_bool need_inc = self.read_objects[ref_id] == NULL
         if need_inc:
             Py_INCREF(obj)
-        self.read_objects[ref_id] = <PyObject *> obj
+        self.read_objects[ref_id] = <PyObject * > obj
 
     cpdef inline get_read_object(self, id_=None):
         if not self.ref_tracking:
@@ -193,7 +194,7 @@ cdef class MapRefResolver:
         if id_ is None:
             return self.read_object
         cdef int32_t ref_id = id_
-        return <object> (self.read_objects[ref_id])
+        return < object > (self.read_objects[ref_id])
 
     cpdef inline set_read_object(self, int32_t ref_id, obj):
         if not self.ref_tracking:
@@ -202,7 +203,7 @@ cdef class MapRefResolver:
             need_inc = self.read_objects[ref_id] == NULL
             if need_inc:
                 Py_INCREF(obj)
-            self.read_objects[ref_id] = <PyObject *> obj
+            self.read_objects[ref_id] = <PyObject * > obj
 
     cpdef inline reset(self):
         self.reset_write()
@@ -274,11 +275,11 @@ cdef class MetaStringBytes:
 cdef class MetaStringResolver:
     cdef:
         int16_t dynamic_write_string_id
-        vector[PyObject *] _c_dynamic_written_enum_string
-        vector[PyObject *] _c_dynamic_id_to_enum_string_vec
+        vector[PyObject * ] _c_dynamic_written_enum_string
+        vector[PyObject * ] _c_dynamic_id_to_enum_string_vec
         # hash -> MetaStringBytes
-        flat_hash_map[int64_t, PyObject *] _c_hash_to_metastr_bytes
-        flat_hash_map[pair[int64_t, int64_t], PyObject *] _c_hash_to_small_metastring_bytes
+        flat_hash_map[int64_t, PyObject * ] _c_hash_to_metastr_bytes
+        flat_hash_map[pair[int64_t, int64_t], PyObject * ] _c_hash_to_small_metastring_bytes
         set _enum_str_set
         dict _metastr_to_metastr_bytes
 
@@ -294,7 +295,7 @@ cdef class MetaStringResolver:
             dynamic_type_id = self.dynamic_write_string_id
             metastr_bytes.dynamic_write_string_id = dynamic_type_id
             self.dynamic_write_string_id += 1
-            self._c_dynamic_written_enum_string.push_back(<PyObject *> metastr_bytes)
+            self._c_dynamic_written_enum_string.push_back( < PyObject * > metastr_bytes)
             buffer.write_varuint32(length << 1)
             if length <= SMALL_STRING_THRESHOLD:
                 buffer.write_int8(metastr_bytes.encoding)
@@ -308,7 +309,7 @@ cdef class MetaStringResolver:
         cdef int32_t header = buffer.read_varuint32()
         cdef int32_t length = header >> 1
         if header & 0b1 != 0:
-            return <MetaStringBytes> self._c_dynamic_id_to_enum_string_vec[length - 1]
+            return < MetaStringBytes > self._c_dynamic_id_to_enum_string_vec[length - 1]
         cdef int64_t v1 = 0, v2 = 0, hashcode
         cdef PyObject * enum_str_ptr
         cdef int32_t reader_index
@@ -321,14 +322,16 @@ cdef class MetaStringResolver:
                 v1 = buffer.read_int64()
                 v2 = buffer.read_bytes_as_int64(length - 8)
             hashcode = ((v1 * 31 + v2) >> 8 << 8) | encoding
-            enum_str_ptr = self._c_hash_to_small_metastring_bytes[pair[int64_t, int64_t](v1, v2)]
+            enum_str_ptr = self._c_hash_to_small_metastring_bytes[pair[int64_t, int64_t](
+                v1, v2)]
             if enum_str_ptr == NULL:
                 reader_index = buffer.reader_index
                 str_bytes = buffer.get_bytes(reader_index - length, length)
                 enum_str = MetaStringBytes(str_bytes, hashcode=hashcode)
                 self._enum_str_set.add(enum_str)
-                enum_str_ptr = <PyObject *> enum_str
-                self._c_hash_to_small_metastring_bytes[pair[int64_t, int64_t](v1, v2)] = enum_str_ptr
+                enum_str_ptr = <PyObject * > enum_str
+                self._c_hash_to_small_metastring_bytes[pair[int64_t, int64_t](
+                    v1, v2)] = enum_str_ptr
         else:
             hashcode = buffer.read_int64()
             reader_index = buffer.reader_index
@@ -339,10 +342,10 @@ cdef class MetaStringResolver:
                 str_bytes = buffer.get_bytes(reader_index, length)
                 enum_str = MetaStringBytes(str_bytes, hashcode=hashcode)
                 self._enum_str_set.add(enum_str)
-                enum_str_ptr = <PyObject *> enum_str
+                enum_str_ptr = <PyObject * > enum_str
                 self._c_hash_to_metastr_bytes[hashcode] = enum_str_ptr
         self._c_dynamic_id_to_enum_string_vec.push_back(enum_str_ptr)
-        return <MetaStringBytes> enum_str_ptr
+        return < MetaStringBytes > enum_str_ptr
 
     def get_metastr_bytes(self, metastr):
         metastr_bytes = self._metastr_to_metastr_bytes.get(metastr)
@@ -362,7 +365,8 @@ cdef class MetaStringResolver:
             value_hash = mmh3.hash_buffer(metastr.encoded_data, seed=47)[0]
             value_hash = value_hash >> 8 << 8
             value_hash |= metastr.encoding.value & 0xFF
-        self._metastr_to_metastr_bytes[metastr] = metastr_bytes = MetaStringBytes(metastr.encoded_data, value_hash)
+        self._metastr_to_metastr_bytes[metastr] = metastr_bytes = MetaStringBytes(
+            metastr.encoded_data, value_hash)
         return metastr_bytes
 
     cpdef inline reset_read(self):
@@ -372,7 +376,7 @@ cdef class MetaStringResolver:
         if self.dynamic_write_string_id != 0:
             self.dynamic_write_string_id = 0
             for ptr in self._c_dynamic_written_enum_string:
-                (<MetaStringBytes> ptr).dynamic_write_string_id = \
+                ( < MetaStringBytes > ptr).dynamic_write_string_id = \
                     DEFAULT_DYNAMIC_WRITE_META_STR_ID
             self._c_dynamic_written_enum_string.clear()
 
@@ -437,11 +441,11 @@ cdef class TypeResolver:
         readonly Fory fory
         readonly MetaStringResolver metastring_resolver
         object _resolver
-        vector[PyObject *] _c_registered_id_to_type_info
+        vector[PyObject * ] _c_registered_id_to_type_info
         # cls -> TypeInfo
-        flat_hash_map[uint64_t, PyObject *] _c_types_info
+        flat_hash_map[uint64_t, PyObject * ] _c_types_info
         # hash -> TypeInfo
-        flat_hash_map[pair[int64_t, int64_t], PyObject *] _c_meta_hash_to_typeinfo
+        flat_hash_map[pair[int64_t, int64_t], PyObject * ] _c_meta_hash_to_typeinfo
         MetaStringResolver meta_string_resolver
 
     def __init__(self, fory):
@@ -478,10 +482,11 @@ cdef class TypeResolver:
         if type_id >= self._c_registered_id_to_type_info.size():
             self._c_registered_id_to_type_info.resize(type_id * 2, NULL)
         if type_id > 0 and (self.fory.language == Language.PYTHON or not IsNamespacedType(type_id)):
-            self._c_registered_id_to_type_info[type_id] = <PyObject *> typeinfo
-        self._c_types_info[<uintptr_t> <PyObject *> typeinfo.cls] = <PyObject *> typeinfo
+            self._c_registered_id_to_type_info[type_id] = <PyObject * > typeinfo
+        self._c_types_info[ < uintptr_t > <PyObject * > typeinfo.cls] = <PyObject * > typeinfo
         if typeinfo.typename_bytes is not None:
-            self._load_bytes_to_typeinfo(type_id, typeinfo.namespace_bytes, typeinfo.typename_bytes)
+            self._load_bytes_to_typeinfo(
+                type_id, typeinfo.namespace_bytes, typeinfo.typename_bytes)
 
     def register_serializer(self, cls: Union[type, TypeVar], serializer):
         typeinfo1 = self._resolver.get_typeinfo(cls)
@@ -500,10 +505,10 @@ cdef class TypeResolver:
         return self.get_typeinfo(cls).serializer
 
     cpdef inline TypeInfo get_typeinfo(self, cls, create=True):
-        cdef PyObject * typeinfo_ptr = self._c_types_info[<uintptr_t> <PyObject *> cls]
+        cdef PyObject * typeinfo_ptr = self._c_types_info[< uintptr_t > <PyObject * > cls]
         cdef TypeInfo type_info
         if typeinfo_ptr != NULL:
-            type_info = <object> typeinfo_ptr
+            type_info = <object > typeinfo_ptr
             if type_info.serializer is not None:
                 return type_info
             else:
@@ -513,7 +518,7 @@ cdef class TypeResolver:
             return None
         else:
             type_info = self._resolver.get_typeinfo(cls, create=create)
-            self._c_types_info[<uintptr_t> <PyObject *> cls] = <PyObject *> type_info
+            self._c_types_info[ < uintptr_t > <PyObject * > cls] = <PyObject * > type_info
             self._populate_typeinfo(type_info)
             return type_info
 
@@ -522,9 +527,10 @@ cdef class TypeResolver:
         cdef PyObject * typeinfo_ptr = self._c_meta_hash_to_typeinfo[
             pair[int64_t, int64_t](ns_metabytes.hashcode, type_metabytes.hashcode)]
         if typeinfo_ptr != NULL:
-            return <TypeInfo> typeinfo_ptr
-        typeinfo = self._resolver._load_metabytes_to_typeinfo(ns_metabytes, type_metabytes)
-        typeinfo_ptr = <PyObject *> typeinfo
+            return < TypeInfo > typeinfo_ptr
+        typeinfo = self._resolver._load_metabytes_to_typeinfo(
+            ns_metabytes, type_metabytes)
+        typeinfo_ptr = <PyObject * > typeinfo
         self._c_meta_hash_to_typeinfo[pair[int64_t, int64_t](
             ns_metabytes.hashcode, type_metabytes.hashcode)] = typeinfo_ptr
         return typeinfo
@@ -537,8 +543,10 @@ cdef class TypeResolver:
             int32_t internal_type_id = type_id & 0xFF
         buffer.write_varuint32(type_id)
         if IsNamespacedType(internal_type_id):
-            self.metastring_resolver.write_meta_string_bytes(buffer, typeinfo.namespace_bytes)
-            self.metastring_resolver.write_meta_string_bytes(buffer, typeinfo.typename_bytes)
+            self.metastring_resolver.write_meta_string_bytes(
+                buffer, typeinfo.namespace_bytes)
+            self.metastring_resolver.write_meta_string_bytes(
+                buffer, typeinfo.typename_bytes)
 
     cpdef inline TypeInfo read_typeinfo(self, Buffer buffer):
         cdef:
@@ -551,13 +559,15 @@ cdef class TypeResolver:
             int32_t internal_type_id = type_id & 0xFF
             MetaStringBytes namespace_bytes, typename_bytes
         if IsNamespacedType(internal_type_id):
-            namespace_bytes = self.metastring_resolver.read_meta_string_bytes(buffer)
-            typename_bytes = self.metastring_resolver.read_meta_string_bytes(buffer)
+            namespace_bytes = self.metastring_resolver.read_meta_string_bytes(
+                buffer)
+            typename_bytes = self.metastring_resolver.read_meta_string_bytes(
+                buffer)
             return self._load_bytes_to_typeinfo(type_id, namespace_bytes, typename_bytes)
         typeinfo_ptr = self._c_registered_id_to_type_info[type_id]
         if typeinfo_ptr == NULL:
             raise ValueError(f"Unexpected type_id {type_id}")
-        typeinfo = <TypeInfo> typeinfo_ptr
+        typeinfo = <TypeInfo > typeinfo_ptr
         return typeinfo
 
     cpdef inline reset(self):
@@ -1073,16 +1083,20 @@ cdef class Serializer:
         self.need_to_write_ref = not is_primitive_type(type_)
 
     cpdef write(self, Buffer buffer, value):
-        raise NotImplementedError(f"write method not implemented in {type(self)}")
+        raise NotImplementedError(
+            f"write method not implemented in {type(self)}")
 
     cpdef read(self, Buffer buffer):
-        raise NotImplementedError(f"read method not implemented in {type(self)}")
+        raise NotImplementedError(
+            f"read method not implemented in {type(self)}")
 
     cpdef xwrite(self, Buffer buffer, value):
-        raise NotImplementedError(f"xwrite method not implemented in {type(self)}")
+        raise NotImplementedError(
+            f"xwrite method not implemented in {type(self)}")
 
     cpdef xread(self, Buffer buffer):
-        raise NotImplementedError(f"xread method not implemented in {type(self)}")
+        raise NotImplementedError(
+            f"xread method not implemented in {type(self)}")
 
     @classmethod
     def support_subclass(cls) -> bool:
@@ -1226,7 +1240,8 @@ cdef class TimestampSerializer(CrossLanguageCompatibleSerializer):
     cpdef inline write(self, Buffer buffer, value):
         if type(value) is not datetime.datetime:
             raise TypeError(
-                "{} should be {} instead of {}".format(value, datetime, type(value))
+                "{} should be {} instead of {}".format(
+                    value, datetime, type(value))
             )
         # TimestampType represent micro seconds
         buffer.write_int64(self._get_timestamp(value))
@@ -1271,8 +1286,9 @@ cdef class CollectionSerializer(Serializer):
             self.elem_tracking_ref = -1
         else:
             self.elem_type = elem_serializer.type_
-            self.elem_typeinfo = fory.type_resolver.get_typeinfo(self.elem_type)
-            self.elem_tracking_ref = <int8_t> (elem_serializer.need_to_write_ref)
+            self.elem_typeinfo = fory.type_resolver.get_typeinfo(
+                self.elem_type)
+            self.elem_tracking_ref = <int8_t > (elem_serializer.need_to_write_ref)
         self.is_py = fory.is_py
 
     cdef pair[int8_t, int64_t] write_header(self, Buffer buffer, value):
@@ -1321,7 +1337,7 @@ cdef class CollectionSerializer(Serializer):
         cdef pair[int8_t, int64_t] header_pair = self.write_header(buffer, value)
         cdef int8_t collect_flag = header_pair.first
         cdef int64_t elem_typeinfo_ptr = header_pair.second
-        cdef TypeInfo elem_typeinfo = <type> int2obj(elem_typeinfo_ptr)
+        cdef TypeInfo elem_typeinfo = <type > int2obj(elem_typeinfo_ptr)
         cdef elem_type = elem_typeinfo.cls
         cdef MapRefResolver ref_resolver = self.ref_resolver
         cdef TypeResolver type_resolver = self.type_resolver
@@ -1385,8 +1401,9 @@ cdef class CollectionSerializer(Serializer):
         value_type = type(value)
         if value_type is list or value_type is tuple:
             size = sizeof(bool) * Py_SIZE(value)
-            buffer.grow(<int32_t>size)
-            Fory_PyBooleanSequenceWriteToBuffer(value, buffer.c_buffer.get(), buffer.writer_index)
+            buffer.grow(< int32_t > size)
+            Fory_PyBooleanSequenceWriteToBuffer(
+                value, buffer.c_buffer.get(), buffer.writer_index)
             buffer.writer_index += size
         else:
             for s in value:
@@ -1400,8 +1417,9 @@ cdef class CollectionSerializer(Serializer):
         value_type = type(value)
         if value_type is list or value_type is tuple:
             size = sizeof(double) * Py_SIZE(value)
-            buffer.grow(<int32_t>size)
-            Fory_PyFloatSequenceWriteToBuffer(value, buffer.c_buffer.get(), buffer.writer_index)
+            buffer.grow(< int32_t > size)
+            Fory_PyFloatSequenceWriteToBuffer(
+                value, buffer.c_buffer.get(), buffer.writer_index)
             buffer.writer_index += size
         else:
             for s in value:
@@ -1487,16 +1505,16 @@ cdef class ListSerializer(CollectionSerializer):
                 typeinfo = self.elem_typeinfo
             if (collect_flag & COLLECTION_HAS_NULL) == 0:
                 type_id = typeinfo.type_id
-                if type_id == <int32_t>TypeId.STRING:
+                if type_id == <int32_t > TypeId.STRING:
                     self._read_string(buffer, len_, list_)
                     return list_
-                elif type_id == <int32_t>TypeId.VAR_INT64:
+                elif type_id == <int32_t > TypeId.VAR_INT64:
                     self._read_int(buffer, len_, list_)
                     return list_
-                elif type_id == <int32_t>TypeId.BOOL:
+                elif type_id == <int32_t > TypeId.BOOL:
                     self._read_bool(buffer, len_, list_)
                     return list_
-                elif type_id == <int32_t>TypeId.FLOAT64:
+                elif type_id == <int32_t > TypeId.FLOAT64:
                     self._read_float(buffer, len_, list_)
                     return list_
             if (collect_flag & COLLECTION_TRACKING_REF) == 0:
@@ -1505,7 +1523,8 @@ cdef class ListSerializer(CollectionSerializer):
                 self._read_same_type_ref(buffer, len_, list_, typeinfo)
         else:
             for i in range(len_):
-                elem = get_next_element(buffer, ref_resolver, type_resolver, is_py)
+                elem = get_next_element(
+                    buffer, ref_resolver, type_resolver, is_py)
                 Py_INCREF(elem)
                 PyList_SET_ITEM(list_, i, elem)
         return list_
@@ -1534,13 +1553,13 @@ cdef inline get_next_element(
     # Note that all read operations in fast paths of list/tuple/set/dict/sub_dict
     # ust match corresponding writing operations. Otherwise, ref tracking will
     # error.
-    if type_id == <int32_t>TypeId.STRING:
+    if type_id == <int32_t > TypeId.STRING:
         return buffer.read_string()
-    elif type_id == <int32_t>TypeId.VAR_INT32:
+    elif type_id == <int32_t > TypeId.VAR_INT32:
         return buffer.read_varint64()
-    elif type_id == <int32_t>TypeId.BOOL:
+    elif type_id == <int32_t > TypeId.BOOL:
         return buffer.read_bool()
-    elif type_id == <int32_t>TypeId.FLOAT64:
+    elif type_id == <int32_t > TypeId.FLOAT64:
         return buffer.read_double()
     else:
         if is_py:
@@ -1571,16 +1590,16 @@ cdef class TupleSerializer(CollectionSerializer):
                 typeinfo = self.elem_typeinfo
             if (collect_flag & COLLECTION_HAS_NULL) == 0:
                 type_id = typeinfo.type_id
-                if type_id == <int32_t>TypeId.STRING:
+                if type_id == <int32_t > TypeId.STRING:
                     self._read_string(buffer, len_, tuple_)
                     return tuple_
-                if type_id == <int32_t>TypeId.VAR_INT64:
+                if type_id == <int32_t > TypeId.VAR_INT64:
                     self._read_int(buffer, len_, tuple_)
                     return tuple_
-                if type_id == <int32_t>TypeId.BOOL:
+                if type_id == <int32_t > TypeId.BOOL:
                     self._read_bool(buffer, len_, tuple_)
                     return tuple_
-                if type_id == <int32_t>TypeId.FLOAT64:
+                if type_id == <int32_t > TypeId.FLOAT64:
                     self._read_float(buffer, len_, tuple_)
                     return tuple_
             if (collect_flag & COLLECTION_TRACKING_REF) == 0:
@@ -1589,7 +1608,8 @@ cdef class TupleSerializer(CollectionSerializer):
                 self._read_same_type_ref(buffer, len_, tuple_, typeinfo)
         else:
             for i in range(len_):
-                elem = get_next_element(buffer, ref_resolver, type_resolver, is_py)
+                elem = get_next_element(
+                    buffer, ref_resolver, type_resolver, is_py)
                 Py_INCREF(elem)
                 PyTuple_SET_ITEM(tuple_, i, elem)
         return tuple_
@@ -1630,16 +1650,16 @@ cdef class SetSerializer(CollectionSerializer):
                 typeinfo = self.elem_typeinfo
             if (collect_flag & COLLECTION_HAS_NULL) == 0:
                 type_id = typeinfo.type_id
-                if type_id == <int32_t>TypeId.STRING:
+                if type_id == <int32_t > TypeId.STRING:
                     self._read_string(buffer, len_, instance)
                     return instance
-                if type_id == <int32_t>TypeId.VAR_INT64:
+                if type_id == <int32_t > TypeId.VAR_INT64:
                     self._read_int(buffer, len_, instance)
                     return instance
-                if type_id == <int32_t>TypeId.BOOL:
+                if type_id == <int32_t > TypeId.BOOL:
                     self._read_bool(buffer, len_, instance)
                     return instance
-                if type_id == <int32_t>TypeId.FLOAT64:
+                if type_id == <int32_t > TypeId.FLOAT64:
                     self._read_float(buffer, len_, instance)
                     return instance
             if (collect_flag & COLLECTION_TRACKING_REF) == 0:
@@ -1655,13 +1675,13 @@ cdef class SetSerializer(CollectionSerializer):
                 # indicates that the object is first read.
                 typeinfo = type_resolver.read_typeinfo(buffer)
                 type_id = typeinfo.type_id
-                if type_id == <int32_t>TypeId.STRING:
+                if type_id == <int32_t > TypeId.STRING:
                     instance.add(buffer.read_string())
-                elif type_id == <int32_t>TypeId.VAR_INT64:
+                elif type_id == <int32_t > TypeId.VAR_INT64:
                     instance.add(buffer.read_varint64())
-                elif type_id == <int32_t>TypeId.BOOL:
+                elif type_id == <int32_t > TypeId.BOOL:
                     instance.add(buffer.read_bool())
-                elif type_id == <int32_t>TypeId.FLOAT64:
+                elif type_id == <int32_t > TypeId.FLOAT64:
                     instance.add(buffer.read_double())
                 else:
                     if is_py:
@@ -1699,7 +1719,7 @@ cdef int32_t KV_NULL = KEY_HAS_NULL | VALUE_HAS_NULL
 # Key is null, value type is declared type, and ref tracking for value is disabled.
 cdef int32_t NULL_KEY_VALUE_DECL_TYPE = KEY_HAS_NULL | VALUE_DECL_TYPE
 # Key is null, value type is declared type, and ref tracking for value is enabled.
-cdef int32_t NULL_KEY_VALUE_DECL_TYPE_TRACKING_REF =KEY_HAS_NULL | VALUE_DECL_TYPE | TRACKING_VALUE_REF
+cdef int32_t NULL_KEY_VALUE_DECL_TYPE_TRACKING_REF = KEY_HAS_NULL | VALUE_DECL_TYPE | TRACKING_VALUE_REF
 # Value is null, key type is declared type, and ref tracking for key is disabled.
 cdef int32_t NULL_VALUE_KEY_DECL_TYPE = VALUE_HAS_NULL | KEY_DECL_TYPE
 # Value is null, key type is declared type, and ref tracking for key is enabled.
@@ -1739,7 +1759,7 @@ cdef class MapSerializer(Serializer):
         cdef TypeInfo key_typeinfo, value_typeinfo
         cdef int32_t chunk_size_offset, chunk_header, chunk_size
         cdef c_bool key_write_ref, value_write_ref
-        cdef int has_next = PyDict_Next(obj, &pos, <PyObject **>&key_addr, <PyObject **>&value_addr)
+        cdef int has_next = PyDict_Next(obj, & pos, < PyObject ** > & key_addr, < PyObject ** > & value_addr)
         cdef c_bool is_py = self.is_py
         while has_next != 0:
             key = int2obj(key_addr)
@@ -1752,7 +1772,8 @@ cdef class MapSerializer(Serializer):
                         break
                     if key_serializer is not None:
                         if key_serializer.need_to_write_ref:
-                            buffer.write_int8(NULL_VALUE_KEY_DECL_TYPE_TRACKING_REF)
+                            buffer.write_int8(
+                                NULL_VALUE_KEY_DECL_TYPE_TRACKING_REF)
                             if not self.ref_resolver.write_ref_or_null(buffer, key):
                                 if is_py:
                                     key_serializer.write(buffer, key)
@@ -1774,7 +1795,8 @@ cdef class MapSerializer(Serializer):
                     if value is not None:
                         if value_serializer is not None:
                             if value_serializer.need_to_write_ref:
-                                buffer.write_int8(NULL_KEY_VALUE_DECL_TYPE_TRACKING_REF)
+                                buffer.write_int8(
+                                    NULL_KEY_VALUE_DECL_TYPE_TRACKING_REF)
                                 if not self.ref_resolver.write_ref_or_null(buffer, value):
                                     if is_py:
                                         value_serializer.write(buffer, value)
@@ -1792,14 +1814,15 @@ cdef class MapSerializer(Serializer):
                                 else:
                                     value_serializer.xwrite(buffer, value)
                         else:
-                            buffer.write_int8(KEY_HAS_NULL | TRACKING_VALUE_REF)
+                            buffer.write_int8(
+                                KEY_HAS_NULL | TRACKING_VALUE_REF)
                             if is_py:
                                 fory.serialize_ref(buffer, value)
                             else:
                                 fory.xserialize_ref(buffer, value)
                     else:
                         buffer.write_int8(KV_NULL)
-                has_next = PyDict_Next(obj, &pos, <PyObject **>&key_addr, <PyObject **>&value_addr)
+                has_next = PyDict_Next(obj, & pos, < PyObject ** > & key_addr, < PyObject ** > & value_addr)
                 key = int2obj(key_addr)
                 Py_INCREF(key)
                 value = int2obj(value_addr)
@@ -1872,7 +1895,7 @@ cdef class MapSerializer(Serializer):
                         else:
                             value_serializer.xwrite(buffer, value)
                 chunk_size += 1
-                has_next = PyDict_Next(obj, &pos, <PyObject **>&key_addr, <PyObject **>&value_addr)
+                has_next = PyDict_Next(obj, & pos, < PyObject ** > & key_addr, < PyObject ** > & value_addr)
                 if has_next == 0:
                     break
                 if chunk_size == MAX_CHUNK_SIZE:
@@ -1915,7 +1938,8 @@ cdef class MapSerializer(Serializer):
                         track_key_ref = (chunk_header & TRACKING_KEY_REF) != 0
                         if (chunk_header & KEY_DECL_TYPE) != 0:
                             if track_key_ref:
-                                ref_id = ref_resolver.try_preserve_ref_id(buffer)
+                                ref_id = ref_resolver.try_preserve_ref_id(
+                                    buffer)
                                 if ref_id < NOT_NULL_VALUE_FLAG:
                                     key = ref_resolver.get_read_object()
                                 else:
@@ -1937,10 +1961,12 @@ cdef class MapSerializer(Serializer):
                         map_[key] = None
                 else:
                     if not value_has_null:
-                        track_value_ref = (chunk_header & TRACKING_VALUE_REF) != 0
+                        track_value_ref = (
+                            chunk_header & TRACKING_VALUE_REF) != 0
                         if (chunk_header & VALUE_DECL_TYPE) != 0:
                             if track_value_ref:
-                                ref_id = ref_resolver.try_preserve_ref_id(buffer)
+                                ref_id = ref_resolver.try_preserve_ref_id(
+                                    buffer)
                                 if ref_id < NOT_NULL_VALUE_FLAG:
                                     value = ref_resolver.get_read_object()
                                 else:
@@ -1970,7 +1996,8 @@ cdef class MapSerializer(Serializer):
             if not key_is_declared_type:
                 key_serializer = type_resolver.read_typeinfo(buffer).serializer
             if not value_is_declared_type:
-                value_serializer = type_resolver.read_typeinfo(buffer).serializer
+                value_serializer = type_resolver.read_typeinfo(
+                    buffer).serializer
             key_serializer_type = type(key_serializer)
             value_serializer_type = type(value_serializer)
             for i in range(chunk_size):
