@@ -406,8 +406,23 @@ func (s byteSliceSerializer) Read(f *Fory, buf *ByteBuffer, type_ reflect.Type, 
 	if err != nil {
 		return err
 	}
-	value.Set(reflect.ValueOf(object.GetData()))
-	return nil
+	raw := object.GetData()
+	switch type_.Kind() {
+	case reflect.Slice:
+		value.Set(reflect.ValueOf(raw))
+		return nil
+	case reflect.Array:
+		if len(raw) != type_.Len() {
+			return fmt.Errorf("byte array len %d ≠ %d", len(raw), type_.Len())
+		}
+		dst := reflect.New(type_).Elem()
+		reflect.Copy(dst, reflect.ValueOf(raw))
+		value.Set(dst)
+		return nil
+
+	default:
+		return fmt.Errorf("unsupported kind %v; want slice or array", type_.Kind())
+	}
 }
 
 type ByteSliceBufferObject struct {
@@ -452,11 +467,22 @@ func (s boolSliceSerializer) Write(f *Fory, buf *ByteBuffer, value reflect.Value
 
 func (s boolSliceSerializer) Read(f *Fory, buf *ByteBuffer, type_ reflect.Type, value reflect.Value) error {
 	length := buf.ReadLength()
-	r := make([]bool, length, length)
-	for i := 0; i < length; i++ {
-		r[i] = buf.ReadBool()
+	var r reflect.Value
+	switch type_.Kind() {
+	case reflect.Slice:
+		r = reflect.MakeSlice(type_, length, length)
+	case reflect.Array:
+		if length != type_.Len() {
+			return fmt.Errorf("length %d does not match array type %v", length, type_)
+		}
+		r = reflect.New(type_).Elem()
+	default:
+		return fmt.Errorf("unsupported kind %v, want slice/array", type_.Kind())
 	}
-	value.Set(reflect.ValueOf(r))
+	for i := 0; i < length; i++ {
+		r.Index(i).SetBool(buf.ReadBool())
+	}
+	value.Set(r)
 	return nil
 }
 
@@ -486,11 +512,22 @@ func (s int16SliceSerializer) Write(f *Fory, buf *ByteBuffer, value reflect.Valu
 
 func (s int16SliceSerializer) Read(f *Fory, buf *ByteBuffer, type_ reflect.Type, value reflect.Value) error {
 	length := buf.ReadLength() / 2
-	r := make([]int16, length, length)
-	for i := 0; i < length; i++ {
-		r[i] = buf.ReadInt16()
+	var r reflect.Value
+	switch type_.Kind() {
+	case reflect.Slice:
+		r = reflect.MakeSlice(type_, length, length)
+	case reflect.Array:
+		if length != type_.Len() {
+			return fmt.Errorf("length %d does not match array type %v", length, type_)
+		}
+		r = reflect.New(type_).Elem()
+	default:
+		return fmt.Errorf("unsupported kind %v, want slice/array", type_.Kind())
 	}
-	value.Set(reflect.ValueOf(r))
+	for i := 0; i < length; i++ {
+		r.Index(i).SetInt(int64(buf.ReadInt16()))
+	}
+	value.Set(r)
 	return nil
 }
 
@@ -520,11 +557,22 @@ func (s int32SliceSerializer) Write(f *Fory, buf *ByteBuffer, value reflect.Valu
 
 func (s int32SliceSerializer) Read(f *Fory, buf *ByteBuffer, type_ reflect.Type, value reflect.Value) error {
 	length := buf.ReadLength() / 4
-	r := make([]int32, length, length)
-	for i := 0; i < length; i++ {
-		r[i] = buf.ReadInt32()
+	var r reflect.Value
+	switch type_.Kind() {
+	case reflect.Slice:
+		r = reflect.MakeSlice(type_, length, length)
+	case reflect.Array:
+		if length != type_.Len() {
+			return fmt.Errorf("length %d does not match array type %v", length, type_)
+		}
+		r = reflect.New(type_).Elem()
+	default:
+		return fmt.Errorf("unsupported kind %v, want slice/array", type_.Kind())
 	}
-	value.Set(reflect.ValueOf(r))
+	for i := 0; i < length; i++ {
+		r.Index(i).SetInt(int64(buf.ReadInt32()))
+	}
+	value.Set(r)
 	return nil
 }
 
@@ -554,11 +602,22 @@ func (s int64SliceSerializer) Write(f *Fory, buf *ByteBuffer, value reflect.Valu
 
 func (s int64SliceSerializer) Read(f *Fory, buf *ByteBuffer, type_ reflect.Type, value reflect.Value) error {
 	length := buf.ReadLength() / 8
-	r := make([]int64, length, length)
-	for i := 0; i < length; i++ {
-		r[i] = buf.ReadInt64()
+	var r reflect.Value
+	switch type_.Kind() {
+	case reflect.Slice:
+		r = reflect.MakeSlice(type_, length, length)
+	case reflect.Array:
+		if length != type_.Len() {
+			return fmt.Errorf("length %d does not match array type %v", length, type_)
+		}
+		r = reflect.New(type_).Elem()
+	default:
+		return fmt.Errorf("unsupported kind %v, want slice/array", type_.Kind())
 	}
-	value.Set(reflect.ValueOf(r))
+	for i := 0; i < length; i++ {
+		r.Index(i).SetInt(buf.ReadInt64())
+	}
+	value.Set(r)
 	return nil
 }
 
@@ -588,11 +647,22 @@ func (s float32SliceSerializer) Write(f *Fory, buf *ByteBuffer, value reflect.Va
 
 func (s float32SliceSerializer) Read(f *Fory, buf *ByteBuffer, type_ reflect.Type, value reflect.Value) error {
 	length := buf.ReadLength() / 4
-	r := make([]float32, length, length)
-	for i := 0; i < length; i++ {
-		r[i] = buf.ReadFloat32()
+	var r reflect.Value
+	switch type_.Kind() {
+	case reflect.Slice:
+		r = reflect.MakeSlice(type_, length, length)
+	case reflect.Array:
+		if length != type_.Len() {
+			return fmt.Errorf("length %d does not match array type %v", length, type_)
+		}
+		r = reflect.New(type_).Elem()
+	default:
+		return fmt.Errorf("unsupported kind %v, want slice/array", type_.Kind())
 	}
-	value.Set(reflect.ValueOf(r))
+	for i := 0; i < length; i++ {
+		r.Index(i).SetFloat(float64(buf.ReadFloat32()))
+	}
+	value.Set(r)
 	return nil
 }
 
@@ -622,11 +692,22 @@ func (s float64SliceSerializer) Write(f *Fory, buf *ByteBuffer, value reflect.Va
 
 func (s float64SliceSerializer) Read(f *Fory, buf *ByteBuffer, type_ reflect.Type, value reflect.Value) error {
 	length := buf.ReadLength() / 8
-	r := make([]float64, length, length)
-	for i := 0; i < length; i++ {
-		r[i] = buf.ReadFloat64()
+	var r reflect.Value
+	switch type_.Kind() {
+	case reflect.Slice:
+		r = reflect.MakeSlice(type_, length, length)
+	case reflect.Array:
+		if length != type_.Len() {
+			return fmt.Errorf("length %d does not match array type %v", length, type_)
+		}
+		r = reflect.New(type_).Elem()
+	default:
+		return fmt.Errorf("unsupported kind %v, want slice/array", type_.Kind())
 	}
-	value.Set(reflect.ValueOf(r))
+	for i := 0; i < length; i++ {
+		r.Index(i).SetFloat(buf.ReadFloat64())
+	}
+	value.Set(r)
 	return nil
 }
 
@@ -664,11 +745,34 @@ func (s stringSliceSerializer) Write(f *Fory, buf *ByteBuffer, value reflect.Val
 
 func (s stringSliceSerializer) Read(f *Fory, buf *ByteBuffer, type_ reflect.Type, value reflect.Value) (err error) {
 	length := f.readLength(buf)
-	r := make([]string, length, length)
+	var r reflect.Value
+	switch type_.Kind() {
+	case reflect.Slice:
+		r = reflect.MakeSlice(type_, length, length)
+	case reflect.Array:
+		if length != type_.Len() {
+			return fmt.Errorf("length %d does not match array type %v", length, type_)
+		}
+		r = reflect.New(type_).Elem()
+	default:
+		return fmt.Errorf("unsupported kind %v, want slice/array", type_.Kind())
+	}
+
+	elemTyp := type_.Elem()
+	set := func(i int, s string) {
+		if elemTyp.Kind() == reflect.String {
+			r.Index(i).SetString(s)
+		} else {
+			r.Index(i).Set(reflect.ValueOf(s).Convert(elemTyp))
+		}
+	}
+
 	for i := 0; i < length; i++ {
-		if refFlag := f.refResolver.ReadRefOrNull(buf); refFlag == RefValueFlag || refFlag == NotNullValueFlag {
+		refFlag := f.refResolver.ReadRefOrNull(buf)
+		if refFlag == RefValueFlag || refFlag == NotNullValueFlag {
 			var nextReadRefId int32
 			if refFlag == RefValueFlag {
+				var err error
 				nextReadRefId, err = f.refResolver.PreserveRefId()
 				if err != nil {
 					return err
@@ -680,14 +784,14 @@ func (s stringSliceSerializer) Read(f *Fory, buf *ByteBuffer, type_ reflect.Type
 				// then record `value` in the reference resolver.
 				f.refResolver.SetReadObject(nextReadRefId, reflect.ValueOf(elem))
 			}
-			r[i] = elem
+			set(i, elem)
 		} else if refFlag == NullFlag {
-			r[i] = ""
-		} else {
-			r[i] = f.refResolver.GetCurrentReadObject().Interface().(string)
+			set(i, "")
+		} else { // RefNoneFlag
+			set(i, f.refResolver.GetCurrentReadObject().Interface().(string))
 		}
 	}
-	value.Set(reflect.ValueOf(r))
+	value.Set(r)
 	return nil
 }
 

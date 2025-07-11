@@ -421,8 +421,24 @@ func (f *Fory) readData(buffer *ByteBuffer, value reflect.Value, serializer Seri
 			return fmt.Errorf("read typeinfo failed: %w", err)
 		}
 		serializer = typeInfo.Serializer
-		concrete := reflect.New(typeInfo.Type).Elem()
-		if err := serializer.Read(f, buffer, typeInfo.Type, concrete); err != nil {
+		var concrete reflect.Value
+		var typ reflect.Type
+		/*
+		   Added logic to distinguish between:
+		   1. Deserialization into a specified interface type,
+		      which matches the behavior in the original tests.
+		   2. Deserialization into a user-defined concrete type.
+		*/
+		switch {
+		case value.Kind() == reflect.Interface,
+			!value.CanSet():
+			concrete = reflect.New(typeInfo.Type).Elem()
+			typ = typeInfo.Type
+		default:
+			concrete = value
+			typ = concrete.Type()
+		}
+		if err := serializer.Read(f, buffer, typ, concrete); err != nil {
 			return err
 		}
 		value.Set(concrete)

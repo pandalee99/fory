@@ -281,9 +281,20 @@ func (s mapSerializer) Read(f *Fory, buf *ByteBuffer, typ reflect.Type, value re
 	}
 
 	if value.IsNil() {
-		if s.mapInStruct == true {
+		isIfaceMap := func(t reflect.Type) bool {
+			return t.Kind() == reflect.Map &&
+				t.Key().Kind() == reflect.Interface &&
+				t.Elem().Kind() == reflect.Interface
+		}
+		// case 1: A map inside a struct will have a fixed key and value type.
+		// case 2: The user has specified the type of the map explicitly.
+		// Otherwise, a generic map type will be used
+		switch {
+		case s.mapInStruct:
 			value.Set(reflect.MakeMap(typ))
-		} else {
+		case !isIfaceMap(typ):
+			value.Set(reflect.MakeMap(typ))
+		default:
 			iface := reflect.TypeOf((*interface{})(nil)).Elem()
 			newMapType := reflect.MapOf(iface, iface)
 			value.Set(reflect.MakeMap(newMapType))
@@ -444,6 +455,12 @@ func (s mapSerializer) Read(f *Fory, buf *ByteBuffer, typ reflect.Type, value re
 				if err := s.readObj(f, buf, &v, valSer); err != nil {
 					return err
 				}
+			}
+			if k.Kind() == reflect.Interface {
+				k = k.Elem()
+			}
+			if v.Kind() == reflect.Interface {
+				v = v.Elem()
 			}
 			value.SetMapIndex(k, v)
 			size--

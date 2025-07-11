@@ -582,6 +582,51 @@ func ExampleMarshal() {
 	// map[k1:v1 k2:[true false str -1.1 1 [0 0 0 0 0] [0 0 0 0 0]] k3:-1]
 }
 
+/*
+The following three tests
+simulate the behavior of users
+specifying concrete map, slice,
+or array types for deserialization.
+*/
+func TestMapEachIndividually(t *testing.T) {
+	fory := NewFory(true)
+	for _, srcAny := range commonMap() {
+		srcType := reflect.TypeOf(srcAny)
+		endPtr := reflect.New(srcType)
+		data, _ := fory.Marshal(srcAny)
+		_ = fory.Unmarshal(data, endPtr.Interface())
+		endVal := endPtr.Elem()
+		endAny := endVal.Interface()
+		require.Equal(t, srcAny, endAny)
+	}
+}
+
+func TestArrayEachIndividually(t *testing.T) {
+	fory := NewFory(true)
+	for _, srcAny := range commonArray() {
+		srcType := reflect.TypeOf(srcAny)
+		endPtr := reflect.New(srcType)
+		data, _ := fory.Marshal(srcAny)
+		_ = fory.Unmarshal(data, endPtr.Interface())
+		endVal := endPtr.Elem()
+		endAny := endVal.Interface()
+		require.Equal(t, srcAny, endAny)
+	}
+}
+
+func TestSliceEachIndividually(t *testing.T) {
+	fory := NewFory(true)
+	for _, srcAny := range commonSlice() {
+		srcType := reflect.TypeOf(srcAny)
+		endPtr := reflect.New(srcType)
+		data, _ := fory.Marshal(srcAny)
+		_ = fory.Unmarshal(data, endPtr.Interface())
+		endVal := endPtr.Elem()
+		endAny := endVal.Interface()
+		require.Equal(t, srcAny, endAny)
+	}
+}
+
 func convertRecursively(newVal, tmplVal reflect.Value) (reflect.Value, error) {
 	// Unwrap any interface{}
 	if newVal.Kind() == reflect.Interface && !newVal.IsNil() {
