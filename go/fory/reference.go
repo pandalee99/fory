@@ -269,7 +269,7 @@ func (r *RefResolver) resetWrite() {
 func nullable(type_ reflect.Type) bool {
 	// Since we can't get value type from interface type, so we return true for interface type
 	switch type_.Kind() {
-	case reflect.Chan, reflect.Func, reflect.Map, reflect.Ptr, reflect.Slice, reflect.Interface, reflect.String:
+	case reflect.Chan, reflect.Func, reflect.Map, reflect.Ptr, reflect.Slice, reflect.Interface, reflect.String, reflect.Array:
 		return true
 	}
 	return false

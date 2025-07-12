@@ -476,11 +476,6 @@ func writeBySerializer(f *Fory, buf *ByteBuffer, value reflect.Value, serializer
 }
 
 func readBySerializer(f *Fory, buf *ByteBuffer, value reflect.Value, serializer Serializer, referencable bool) error {
-	// Handle array type loading in this common entry point
-	// so other collection serializers that include arrays can reuse it
-	if value.Kind() == reflect.Array {
-		return readBeforeCheckArray(f, buf, value, serializer, referencable)
-	}
 	if referencable {
 		return f.readReferencableBySerializer(buf, value, serializer)
 	} else {
@@ -491,36 +486,6 @@ func readBySerializer(f *Fory, buf *ByteBuffer, value reflect.Value, serializer 
 			return f.readData(buf, value, serializer)
 		}
 	}
-}
-
-func readBeforeCheckArray(f *Fory, buf *ByteBuffer, value reflect.Value, serializer Serializer, referencable bool) error {
-	length := value.Len()
-
-	// Determine element type and create a temporary slice type
-	elemType := value.Type().Elem()
-	sliceType := reflect.SliceOf(elemType)
-
-	// Create a new slice pointer and initialize it with the correct length
-	slicePtr := reflect.New(sliceType)
-	sliceVal := slicePtr.Elem()
-	sliceVal.Set(reflect.MakeSlice(sliceType, length, length))
-
-	// Handle referencable arrays by reading reference metadata first
-	if referencable {
-		if err := f.readReferencableBySerializer(buf, sliceVal, serializer); err != nil {
-			return err
-		}
-	} else {
-		buf.ReadInt8()
-		if err := f.readData(buf, sliceVal, serializer); err != nil {
-			return err
-		}
-	}
-	// Copy elements from temporary slice to the target array
-	for i := 0; i < length; i++ {
-		value.Index(i).Set(sliceVal.Index(i))
-	}
-	return nil
 }
 
 // TODO(chaokunyang) support custom serialization
