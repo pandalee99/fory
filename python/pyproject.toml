@@ -23,6 +23,8 @@ requires = [
     "numpy",
     "pyarrow==15.0.0; python_version<'3.13'",
     "pyarrow==18.0.0; python_version>='3.13'",
+    "nanobind>=1.0.0",
+    "cmake>=3.15",
 ]
 build-backend = "setuptools.build_meta"
 
@@ -55,11 +57,12 @@ dependencies = [
 
 [project.optional-dependencies]
 format = ["pyarrow"]
-all = ["pyarrow"]
-dev = ["ruff"]
+nanobind = ["nanobind>=1.0.0", "cmake>=3.15"]
+all = ["pyarrow", "nanobind>=1.0.0", "cmake>=3.15"]
+dev = ["ruff", "pytest>=6.0", "nanobind>=1.0.0", "cmake>=3.15"]
 
 [tool.setuptools]
-packages = ["pyfory", "pyfory.format", "pyfory.lib", "pyfory.meta"]
+packages = ["pyfory", "pyfory.format", "pyfory.lib", "pyfory.meta", "pyfory.nanobind_extensions"]
 include-package-data = true
 zip-safe = false
 
