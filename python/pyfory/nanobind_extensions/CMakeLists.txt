@@ -56,19 +56,26 @@ else()
     endif()
 endif()
 
-# Create the extension module
+# Create the extension modules
 nanobind_add_module(math_ops src/math_ops.cpp)
+nanobind_add_module(buffer_ops src/buffer_ops.cpp src/buffer.cpp)
 
 # Optional: Set specific compile features or options
 target_compile_features(math_ops PRIVATE cxx_std_17)
+target_compile_features(buffer_ops PRIVATE cxx_std_17)
 
 # Optional: Add compiler-specific optimizations
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(math_ops PRIVATE -Wall -Wextra -O3)
+    target_compile_options(buffer_ops PRIVATE -Wall -Wextra -O3)
 endif()
 
 # Set the output directory to make the module easily importable
 set_target_properties(math_ops PROPERTIES 
+    LIBRARY_OUTPUT_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+)
+
+set_target_properties(buffer_ops PROPERTIES 
     LIBRARY_OUTPUT_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
@@ -78,6 +85,13 @@ add_custom_command(TARGET math_ops POST_BUILD
     $<TARGET_FILE:math_ops> 
     ${CMAKE_CURRENT_SOURCE_DIR}/../math_ops$<TARGET_FILE_SUFFIX:math_ops>
     COMMENT "Copying built module to parent directory"
+)
+
+add_custom_command(TARGET buffer_ops POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy 
+    $<TARGET_FILE:buffer_ops> 
+    ${CMAKE_CURRENT_SOURCE_DIR}/../buffer_ops$<TARGET_FILE_SUFFIX:buffer_ops>
+    COMMENT "Copying built buffer_ops module to parent directory"
 )
 
 # Print some useful information
