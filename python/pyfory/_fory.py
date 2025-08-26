@@ -74,6 +74,12 @@ class Language(enum.Enum):
     DART = 7
 
 
+class CompatibleMode(enum.Enum):
+    """Schema compatibility mode."""
+    SCHEMA_CONSISTENT = 0  # Schema must be consistent between serialization peers
+    COMPATIBLE = 1  # Schema can evolve, forward/backward compatibility supported
+
+
 class BufferObject(ABC):
     """
     Fory binary representation of an object.
@@ -97,7 +103,7 @@ class BufferObject(ABC):
 class Fory:
     __slots__ = (
         "language",
-        "is_py",
+        "is_py", 
         "ref_tracking",
         "ref_resolver",
         "type_resolver",
@@ -112,6 +118,8 @@ class Fory:
         "_unsupported_callback",
         "_unsupported_objects",
         "_peer_language",
+        "compatible_mode",
+        "meta_context",
     )
     serialization_context: "SerializationContext"
 
@@ -120,6 +128,7 @@ class Fory:
         language=Language.PYTHON,
         ref_tracking: bool = False,
         require_type_registration: bool = True,
+        compatible_mode: CompatibleMode = CompatibleMode.SCHEMA_CONSISTENT,
     ):
         """
         :param require_type_registration:
@@ -137,6 +146,15 @@ class Fory:
             _ENABLE_TYPE_REGISTRATION_FORCIBLY or require_type_registration
         )
         self.ref_tracking = ref_tracking
+        self.compatible_mode = compatible_mode
+        
+        # Initialize meta context for schema evolution
+        if compatible_mode == CompatibleMode.COMPATIBLE:
+            from pyfory.compatible_serializer import MetaContext
+            self.meta_context = MetaContext()
+        else:
+            self.meta_context = None
+
         if self.ref_tracking:
             self.ref_resolver = MapRefResolver()
         else:

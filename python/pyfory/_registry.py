@@ -487,6 +487,17 @@ class TypeResolver:
         )
 
     def _create_serializer(self, cls):
+        # Check if we should use CompatibleSerializer for schema evolution
+        if hasattr(self.fory, 'compatible_mode'):
+            from pyfory._fory import CompatibleMode
+            if (self.fory.compatible_mode == CompatibleMode.COMPATIBLE and 
+                (dataclasses.is_dataclass(cls) or 
+                 (hasattr(cls, "__dict__") or hasattr(cls, "__slots__")) and 
+                 cls is not type)):
+                # Use CompatibleSerializer for schema evolution support
+                from pyfory.compatible_serializer import CompatibleSerializer
+                return CompatibleSerializer(self.fory, cls)
+        
         for clz in cls.__mro__:
             type_info = self._types_info.get(clz)
             if type_info and type_info.serializer and type_info.serializer.support_subclass():
@@ -497,7 +508,10 @@ class TypeResolver:
                 # Use PickleSerializer for function types (including lambdas)
                 serializer = PickleSerializer(self.fory, cls)
             elif dataclasses.is_dataclass(cls):
-                serializer = DataClassSerializer(self.fory, cls)
+                if self.fory.language == self.fory.language.XLANG:
+                    serializer = DataClassSerializer(self.fory, cls, xlang=True)
+                else:
+                    serializer = DataClassSerializer(self.fory, cls)
             elif issubclass(cls, enum.Enum):
                 serializer = EnumSerializer(self.fory, cls)
             elif (hasattr(cls, "__reduce__") and cls.__reduce__ is not object.__reduce__) or (

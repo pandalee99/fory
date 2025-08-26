@@ -1,0 +1,283 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you und    obj = TypedObject(
+        string_field="test",
+        int_field=42,
+        float_field=3.14,
+        bool_field=True,
+        list_field=["a", "b", "c"],
+        dict_field={"x": 1, "y": 2},
+        # optional_field="optional"
+    )ache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+import pytest
+from dataclasses import dataclass
+from typing import List, Dict, Optional
+import pyfory
+from pyfory._fory import CompatibleMode
+from pyfory.compatible_serializer import CompatibleSerializer, MetaContext
+
+
+@dataclass 
+class PersonV1:
+    """Version 1 of Person class with basic fields"""
+    name: str
+    age: int
+
+
+@dataclass
+class PersonV2:
+    """Version 2 of Person class with additional email field"""
+    name: str
+    age: int
+    email: str = "unknown@example.com"  # New field with default
+
+
+@dataclass
+class PersonV3:
+    """Version 3 of Person class with removed age field and new fields"""
+    name: str
+    email: str = "unknown@example.com"
+    city: str = "Unknown City"  # Another new field
+
+
+@dataclass
+class ComplexObjectV1:
+    """Complex object with nested collections"""
+    id: int
+    tags: List[str]
+    metadata: Dict[str, str]
+
+
+@dataclass  
+class ComplexObjectV2:
+    """Evolved version with new fields and changed types"""
+    id: int
+    tags: List[str] 
+    metadata: Dict[str, str]
+    score: float = 0.0  # New field
+    is_active: bool = True  # New field
+
+
+def test_compatible_serializer_basic():
+    """Test basic functionality of CompatibleSerializer"""
+    fory = pyfory.Fory(compatible_mode=CompatibleMode.COMPATIBLE)
+    
+    # Register the type with compatible serializer
+    fory.register_type(PersonV1)
+    
+    # Create and serialize object
+    person = PersonV1(name="John", age=30)
+    serialized = fory.serialize(person)
+    
+    # Deserialize and verify
+    deserialized = fory.deserialize(serialized)
+    assert deserialized.name == "John"
+    assert deserialized.age == 30
+
+
+def test_schema_evolution_add_field():
+    """Test forward compatibility - old data, new schema"""
+    
+    # Serialize with V1 schema
+    fory_v1 = pyfory.Fory(compatible_mode=CompatibleMode.COMPATIBLE)
+    fory_v1.register_type(PersonV1)
+    
+    person_v1 = PersonV1(name="Alice", age=25)
+    serialized_v1 = fory_v1.serialize(person_v1)
+    
+    # Deserialize with V2 schema (has additional email field)
+    fory_v2 = pyfory.Fory(compatible_mode=CompatibleMode.COMPATIBLE)
+    fory_v2.register_type(PersonV2)
+    
+    person_v2 = fory_v2.deserialize(serialized_v1)
+    assert person_v2.name == "Alice"
+    assert person_v2.age == 25
+    assert person_v2.email == "unknown@example.com"  # Default value
+
+
+def test_schema_evolution_remove_field():
+    """Test backward compatibility - new data, old schema"""
+    
+    # Serialize with V2 schema
+    fory_v2 = pyfory.Fory(compatible_mode=CompatibleMode.COMPATIBLE)
+    fory_v2.register_type(PersonV2)
+    
+    person_v2 = PersonV2(name="Bob", age=35, email="bob@example.com")
+    serialized_v2 = fory_v2.serialize(person_v2)
+    
+    # Deserialize with V1 schema (doesn't have email field)
+    fory_v1 = pyfory.Fory(compatible_mode=CompatibleMode.COMPATIBLE)
+    fory_v1.register_type(PersonV1)
+    
+    person_v1 = fory_v1.deserialize(serialized_v2)
+    assert person_v1.name == "Bob"
+    assert person_v1.age == 35
+    # email field is ignored since V1 doesn't have it
+
+
+def test_schema_evolution_complex_changes():
+    """Test complex schema evolution with multiple changes"""
+    
+    # Serialize with V2 schema
+    fory_v2 = pyfory.Fory(compatible_mode=CompatibleMode.COMPATIBLE)
+    fory_v2.register_type(PersonV2)
+    
+    person_v2 = PersonV2(name="Charlie", age=40, email="charlie@example.com")
+    serialized_v2 = fory_v2.serialize(person_v2)
+    
+    # Deserialize with V3 schema (age removed, city added)
+    fory_v3 = pyfory.Fory(compatible_mode=CompatibleMode.COMPATIBLE)
+    fory_v3.register_type(PersonV3)
+    
+    person_v3 = fory_v3.deserialize(serialized_v2)
+    assert person_v3.name == "Charlie"
+    assert person_v3.email == "charlie@example.com" 
+    assert person_v3.city == "Unknown City"  # Default value
+    # age field from V2 is ignored
+
+
+def test_complex_object_evolution():
+    """Test schema evolution with complex nested objects"""
+    
+    # Serialize with V1 schema
+    fory_v1 = pyfory.Fory(compatible_mode=CompatibleMode.COMPATIBLE)
+    fory_v1.register_type(ComplexObjectV1)
+    
+    obj_v1 = ComplexObjectV1(
+        id=123,
+        tags=["tag1", "tag2"],
+        metadata={"key1": "value1", "key2": "value2"}
+    )
+    serialized_v1 = fory_v1.serialize(obj_v1)
+    
+    # Deserialize with V2 schema (has additional fields)
+    fory_v2 = pyfory.Fory(compatible_mode=CompatibleMode.COMPATIBLE)
+    fory_v2.register_type(ComplexObjectV2)
+    
+    obj_v2 = fory_v2.deserialize(serialized_v1)
+    assert obj_v2.id == 123
+    assert obj_v2.tags == ["tag1", "tag2"]
+    assert obj_v2.metadata == {"key1": "value1", "key2": "value2"}
+    assert obj_v2.score == 0.0  # Default value
+    assert obj_v2.is_active == True  # Default value
+
+
+def test_meta_context():
+    """Test MetaContext functionality"""
+    meta_context = MetaContext()
+    
+    # Test class definition registration
+    type_id = meta_context.register_class_def(
+        PersonV1, 
+        ["name", "age"], 
+        {"name": str, "age": int}
+    )
+    
+    assert type_id >= 1000  # Should start from 1000
+    
+    # Test getting class definition
+    class_def = meta_context.get_class_def(type_id)
+    assert class_def is not None
+    assert class_def.type_cls == PersonV1
+    assert class_def.field_names == ["name", "age"]
+    assert class_def.type_hints == {"name": str, "age": int}
+
+
+def test_cross_language_compatibility():
+    """Test cross-language compatible serialization"""
+    
+    fory = pyfory.Fory(
+        language=pyfory.Language.XLANG,
+        compatible_mode=CompatibleMode.COMPATIBLE,
+        ref_tracking=True
+    )
+    fory.register_type(PersonV1)
+    
+    person = PersonV1(name="David", age=28)
+    
+    # Test xlang serialization/deserialization 
+    serialized = fory.serialize(person)
+    deserialized = fory.deserialize(serialized)
+    
+    assert deserialized.name == "David"
+    assert deserialized.age == 28
+
+
+def test_compatible_vs_schema_consistent_mode():
+    """Test difference between compatible and schema consistent modes"""
+    
+    # Create object with V1 schema
+    person_v1 = PersonV1(name="Eve", age=22)
+    
+    # Serialize in schema consistent mode
+    fory_consistent = pyfory.Fory(compatible_mode=CompatibleMode.SCHEMA_CONSISTENT)
+    fory_consistent.register_type(PersonV1)
+    serialized_consistent = fory_consistent.serialize(person_v1)
+    
+    # Serialize in compatible mode
+    fory_compatible = pyfory.Fory(compatible_mode=CompatibleMode.COMPATIBLE)
+    fory_compatible.register_type(PersonV1)
+    serialized_compatible = fory_compatible.serialize(person_v1)
+    
+    # Compatible mode should produce larger serialized data due to metadata
+    assert len(serialized_compatible) > len(serialized_consistent)
+    
+    # Both should deserialize correctly with same schema
+    person_consistent = fory_consistent.deserialize(serialized_consistent)
+    person_compatible = fory_compatible.deserialize(serialized_compatible)
+    
+    assert person_consistent.name == person_compatible.name == "Eve"
+    assert person_consistent.age == person_compatible.age == 22
+
+
+def test_field_type_compatibility():
+    """Test handling of different field types"""
+    
+    @dataclass
+    class TypedObject:
+        string_field: str
+        int_field: int
+        float_field: float
+        bool_field: bool
+        list_field: List[str]
+        dict_field: Dict[str, int]
+        
+    fory = pyfory.Fory(compatible_mode=CompatibleMode.COMPATIBLE)
+    fory.register_type(TypedObject)
+    
+    obj = TypedObject(
+        string_field="test",
+        int_field=42,
+        float_field=3.14,
+        bool_field=True,
+        list_field=["a", "b", "c"],
+        dict_field={"x": 1, "y": 2},
+    )
+    
+    serialized = fory.serialize(obj)
+    deserialized = fory.deserialize(serialized)
+    
+    assert deserialized.string_field == "test"
+    assert deserialized.int_field == 42
+    assert deserialized.float_field == 3.14
+    assert deserialized.bool_field == True
+    assert deserialized.list_field == ["a", "b", "c"]
+    assert deserialized.dict_field == {"x": 1, "y": 2}
+
+
+if __name__ == "__main__":
+    pytest.main([__file__])

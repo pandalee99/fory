@@ -29,7 +29,7 @@ from typing import TypeVar, Union, Iterable
 
 from pyfory._util import get_bit, set_bit, clear_bit
 from pyfory import _fory as fmod
-from pyfory._fory import Language, CompatibleMode
+from pyfory._fory import Language
 from pyfory._fory import _PicklerStub, _UnpicklerStub, Pickler, Unpickler
 from pyfory._fory import _ENABLE_TYPE_REGISTRATION_FORCIBLY
 from pyfory.lib import mmh3
@@ -608,15 +608,12 @@ cdef class Fory:
     cdef object _unsupported_callback
     cdef object _unsupported_objects  # iterator
     cdef object _peer_language
-    cdef readonly object compatible_mode
-    cdef public object meta_context
 
     def __init__(
             self,
             language=Language.PYTHON,
             ref_tracking: bool = False,
             require_type_registration: bool = True,
-            compatible_mode=CompatibleMode.SCHEMA_CONSISTENT,
     ):
         """
        :param require_type_registration:
@@ -634,15 +631,6 @@ cdef class Fory:
         else:
             self.require_type_registration = False
         self.ref_tracking = ref_tracking
-        self.compatible_mode = compatible_mode
-        
-        # Initialize meta context for schema evolution
-        if compatible_mode == CompatibleMode.COMPATIBLE:
-            from pyfory.compatible_serializer import MetaContext
-            self.meta_context = MetaContext()
-        else:
-            self.meta_context = None
-            
         self.ref_resolver = MapRefResolver(ref_tracking)
         self.is_py = self.language == Language.PYTHON
         self.metastring_resolver = MetaStringResolver()
