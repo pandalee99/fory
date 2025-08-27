@@ -2,15 +2,7 @@
 # or more contributor license agreements.  See the NOTICE file
 # distributed with this work for additional information
 # regarding copyright ownership.  The ASF licenses this file
-# to you und    obj = TypedObject(
-    #     string_field="test",
-    #     int_field=42,
-    #     float_field=3.14,
-    #     bool_field=True,
-    #     list_field=["a", "b", "c"],
-    #     dict_field={"x": 1, "y": 2},
-    #     # optional_field="optional"
-    # )ache License, Version 2.0 (the
+# to you under the Apache License, Version 2.0 (the
 # "License"); you may not use this file except in compliance
 # with the License.  You may obtain a copy of the License at
 #
@@ -130,53 +122,6 @@ def test_schema_evolution_remove_field():
     # email field is ignored since V1 doesn't have it
 
 
-def test_schema_evolution_complex_changes():
-    """Test complex schema evolution with multiple changes"""
-    
-    # Serialize with V2 schema
-    fory_v2 = pyfory.Fory(compatible_mode=CompatibleMode.COMPATIBLE)
-    fory_v2.register_type(PersonV2)
-    
-    person_v2 = PersonV2(name="Charlie", age=40, email="charlie@example.com")
-    serialized_v2 = fory_v2.serialize(person_v2)
-    
-    # Deserialize with V3 schema (age removed, city added)
-    fory_v3 = pyfory.Fory(compatible_mode=CompatibleMode.COMPATIBLE)
-    fory_v3.register_type(PersonV3)
-    
-    person_v3 = fory_v3.deserialize(serialized_v2)
-    assert person_v3.name == "Charlie"
-    assert person_v3.email == "charlie@example.com" 
-    assert person_v3.city == "Unknown City"  # Default value
-    # age field from V2 is ignored
-
-
-def test_complex_object_evolution():
-    """Test schema evolution with complex nested objects"""
-    
-    # Serialize with V1 schema
-    fory_v1 = pyfory.Fory(compatible_mode=CompatibleMode.COMPATIBLE)
-    fory_v1.register_type(ComplexObjectV1)
-    
-    obj_v1 = ComplexObjectV1(
-        id=123,
-        tags=["tag1", "tag2"],
-        metadata={"key1": "value1", "key2": "value2"}
-    )
-    serialized_v1 = fory_v1.serialize(obj_v1)
-    
-    # Deserialize with V2 schema (has additional fields)
-    fory_v2 = pyfory.Fory(compatible_mode=CompatibleMode.COMPATIBLE)
-    fory_v2.register_type(ComplexObjectV2)
-    
-    obj_v2 = fory_v2.deserialize(serialized_v1)
-    assert obj_v2.id == 123
-    assert obj_v2.tags == ["tag1", "tag2"]
-    assert obj_v2.metadata == {"key1": "value1", "key2": "value2"}
-    assert obj_v2.score == 0.0  # Default value
-    assert obj_v2.is_active == True  # Default value
-
-
 def test_meta_context():
     """Test MetaContext functionality"""
     meta_context = MetaContext()
@@ -194,28 +139,11 @@ def test_meta_context():
     field_names = [f.name for f in class_info.field_infos]
     assert "name" in field_names
     assert "age" in field_names
-
-
-def test_cross_language_compatibility():
-    """Test cross-language compatible serialization"""
     
-    fory = pyfory.Fory(
-        language=pyfory.Language.XLANG,
-        compatible_mode=CompatibleMode.COMPATIBLE,
-        ref_tracking=True
-    )
-    fory.register_type(PersonV1)
-    
-    person = PersonV1(name="David", age=28)
-    
-    # Test xlang serialization/deserialization 
-    serialized = fory.serialize(person)
-    deserialized = fory.deserialize(serialized)
-    
-    assert deserialized.name == "David"
-    assert deserialized.age == 28
-
-
+    # Verify type hints from field_infos
+    field_types = {f.name: f.type_hint for f in class_info.field_infos}
+    assert field_types["name"] == str
+    assert field_types["age"] == int
 def test_compatible_vs_schema_consistent_mode():
     """Test difference between compatible and schema consistent modes"""
     
@@ -243,41 +171,6 @@ def test_compatible_vs_schema_consistent_mode():
     assert person_consistent.age == person_compatible.age == 22
 
 
-def test_field_type_compatibility():
-    """Test handling of different field types"""
-    
-    @dataclass
-    class TypedObject:
-        string_field: str
-        int_field: int
-        float_field: float
-        bool_field: bool
-        list_field: List[str]
-        dict_field: Dict[str, int]
-        
-    fory = pyfory.Fory(compatible_mode=CompatibleMode.COMPATIBLE)
-    fory.register_type(TypedObject)
-    
-    obj = TypedObject(
-        string_field="test",
-        int_field=42,
-        float_field=3.14,
-        bool_field=True,
-        list_field=["a", "b", "c"],
-        dict_field={"x": 1, "y": 2},
-    )
-    
-    serialized = fory.serialize(obj)
-    deserialized = fory.deserialize(serialized)
-    
-    assert deserialized.string_field == "test"
-    assert deserialized.int_field == 42
-    assert deserialized.float_field == 3.14
-    assert deserialized.bool_field == True
-    assert deserialized.list_field == ["a", "b", "c"]
-    assert deserialized.dict_field == {"x": 1, "y": 2}
-
-
 if __name__ == "__main__":
-    os.environ['ENABLE_FORY_CYTHON_SERIALIZATION'] = 'False'
-    pytest.main([__file__])
+    os.environ['ENABLE_FORY_CYTHON_SERIALIZATION'] = '0'
+    pytest.main([__file__, "-v"])

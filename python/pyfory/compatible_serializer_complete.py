@@ -241,8 +241,11 @@ class CompatibleSerializer(CrossLanguageCompatibleSerializer):
     def _write_embedded_fields(self, buffer: Buffer, value: Any, field_infos: List[FieldInfo], xlang: bool):
         """Write embedded fields"""
         for field_info in field_infos:
-            # Write encoded field info - always use int32 for consistency
-            buffer.write_int32(field_info.encoded_field_info)
+            # Write encoded field info
+            if field_info.field_type == FIELD_TYPE_EMBEDDED_4:
+                buffer.write_int32(field_info.encoded_field_info)
+            else:
+                buffer.write_int64(field_info.encoded_field_info)
             
             # Write field value
             field_value = self._get_field_value(value, field_info.name)
@@ -251,8 +254,8 @@ class CompatibleSerializer(CrossLanguageCompatibleSerializer):
     def _write_separate_fields(self, buffer: Buffer, value: Any, field_infos: List[FieldInfo], xlang: bool):
         """Write separate (complex) fields"""
         for field_info in field_infos:
-            # Write encoded field info - always use int32 for consistency
-            buffer.write_int32(field_info.encoded_field_info)
+            # Write encoded field info
+            buffer.write_int64(field_info.encoded_field_info)
             
             # Write field value
             field_value = self._get_field_value(value, field_info.name)
@@ -272,7 +275,7 @@ class CompatibleSerializer(CrossLanguageCompatibleSerializer):
                     elif isinstance(field_value, int):
                         buffer.write_varint64(field_value)
                     elif isinstance(field_value, float):
-                        buffer.write_double(field_value)
+                        buffer.write_float64(field_value)
                     elif isinstance(field_value, str):
                         buffer.write_string(field_value)
                     else:
@@ -301,129 +304,38 @@ class CompatibleSerializer(CrossLanguageCompatibleSerializer):
         read_hash = buffer.read_int32()
         expected_hash = self.class_info.schema_hash
         
-        logger.debug(f"Read hash: {read_hash}, expected hash: {expected_hash}")
+        if read_hash != expected_hash:
+            logger.debug(f"Schema hash mismatch: read={read_hash}, expected={expected_hash}, attempting compatibility mode")
+            # In compatibility mode, we continue reading but may skip unknown fields
         
+        # Collect field values
         field_values = {}
         
-        if read_hash == expected_hash:
-            # Same schema, read in the exact same order we wrote
-            logger.debug("Schema matches, using direct field reading")
-            self._read_embedded_fields(buffer, field_values, self.class_info.embedded_4_fields, xlang)
-            self._read_embedded_fields(buffer, field_values, self.class_info.embedded_9_fields, xlang)
-            self._read_embedded_fields(buffer, field_values, self.class_info.embedded_hash_fields, xlang)
-            self._read_separate_fields(buffer, field_values, self.class_info.separate_hash_fields, xlang)
-            
-            # Read end tag
-            end_tag = buffer.read_int64()
-            logger.debug(f"Read end tag: {end_tag}")
-        else:
-            # Different schema, use scanning approach for compatibility
-            logger.debug("Schema mismatch, using compatibility scanning")
-            self._read_fields_by_scanning_v2(buffer, field_values, xlang)
+        # Read embedded fields by scanning for known encoded field infos
+        self._read_fields_by_scanning(buffer, field_values, xlang)
         
         # Create and populate object
         return self._create_object(field_values)
     
-    def _read_embedded_fields(self, buffer: Buffer, field_values: Dict[str, Any], field_infos: List[FieldInfo], xlang: bool):
-        """Read embedded fields in the same order they were written"""
-        for field_info in field_infos:
-            # Read encoded field info - always int32 for consistency
-            encoded_info = buffer.read_int32()
-            
-            logger.debug(f"Reading embedded field, expected: {field_info.encoded_field_info}, got: {encoded_info}")
-            
-            # Read field value
-            field_value = self._read_field_value(buffer, field_info, xlang)
-            field_values[field_info.name] = field_value
-            logger.debug(f"Read embedded field {field_info.name} = {field_value}")
-    
-    def _read_separate_fields(self, buffer: Buffer, field_values: Dict[str, Any], field_infos: List[FieldInfo], xlang: bool):
-        """Read separate (complex) fields in the same order they were written"""
-        for field_info in field_infos:
-            # Read encoded field info - always int32 for consistency
-            encoded_info = buffer.read_int32()
-            
-            logger.debug(f"Reading separate field, expected: {field_info.encoded_field_info}, got: {encoded_info}")
-            
-            # Read field value
-            field_value = self._read_field_value(buffer, field_info, xlang)
-            field_values[field_info.name] = field_value
-            logger.debug(f"Read separate field {field_info.name} = {field_value}")
-    
-    def _read_fields_by_scanning_v2(self, buffer: Buffer, field_values: Dict[str, Any], xlang: bool):
-        """Improved field scanning for schema compatibility"""
-        logger.debug("Starting improved field scanning")
-        
-        try:
-            while True:
-                # Try to read next field encoding or end tag
-                # First check if we have enough bytes for an int64
-                initial_pos = buffer.reader_index
-                
-                try:
-                    next_value = buffer.read_int32()  # Changed to int32 for consistency
-                except:
-                    # End of buffer
-                    logger.debug("End of buffer reached during scanning")
-                    break
-                    
-                logger.debug(f"Read encoding/tag: {next_value}")
-                
-                if next_value == END_TAG:
-                    logger.debug("Found END_TAG, stopping scan")
-                    break
-                
-                # Try to find matching field in our current schema
-                field_info = self._find_field_by_encoded_info(next_value)
-                
-                if field_info:
-                    logger.debug(f"Found matching field: {field_info.name}")
-                    # Read field value
-                    try:
-                        field_value = self._read_field_value(buffer, field_info, xlang)
-                        field_values[field_info.name] = field_value
-                        logger.debug(f"Successfully read field {field_info.name} = {field_value}")
-                    except Exception as e:
-                        logger.warning(f"Failed to read known field {field_info.name}: {e}")
-                        # Try to skip the value
-                        self._skip_field_value(buffer, xlang)
-                else:
-                    logger.debug(f"Unknown field with encoding {next_value}, attempting to skip")
-                    # Unknown field, try to skip its value
-                    self._skip_field_value(buffer, next_value)
-                    
-        except Exception as e:
-            logger.warning(f"Error during field scanning: {e}")
-            # Continue with whatever we managed to read
-    
     def _read_fields_by_scanning(self, buffer: Buffer, field_values: Dict[str, Any], xlang: bool):
         """Read fields by scanning buffer and matching encoded field infos"""
-        logger.debug(f"Starting field scan, buffer size: {buffer.writer_index}, reader_index: {buffer.reader_index}")
-        
-        while buffer.reader_index < buffer.writer_index:
+        while buffer.read_index < buffer.writer_index:
             try:
                 # Try to read next field encoding
-                remaining_bytes = buffer.writer_index - buffer.reader_index
-                logger.debug(f"Remaining bytes: {remaining_bytes}")
-                if remaining_bytes < 4:
+                if buffer.remaining() < 4:
                     break
                 
                 # Peek at the next value to determine if it's a field encoding or end tag
-                peek_pos = buffer.reader_index
+                peek_pos = buffer.read_index
                 next_value = buffer.read_int64()
-                buffer.reader_index = peek_pos  # Reset position
-                
-                logger.debug(f"Next value: {next_value}, END_TAG: {END_TAG}")
+                buffer.read_index = peek_pos  # Reset position
                 
                 if next_value == END_TAG:
                     buffer.read_int64()  # Consume end tag
-                    logger.debug("Found END_TAG, stopping scan")
                     break
                 
                 # Try to find matching field
                 field_info = self._find_field_by_encoded_info(next_value)
-                logger.debug(f"Found field_info: {field_info.name if field_info else None}")
-                
                 if field_info:
                     # Read the encoding (consume it)
                     if field_info.field_type == FIELD_TYPE_EMBEDDED_4:
@@ -434,7 +346,6 @@ class CompatibleSerializer(CrossLanguageCompatibleSerializer):
                     # Read field value
                     field_value = self._read_field_value(buffer, field_info, xlang)
                     field_values[field_info.name] = field_value
-                    logger.debug(f"Read field {field_info.name} = {field_value}")
                 else:
                     # Unknown field, try to skip
                     logger.debug(f"Skipping unknown field with encoding: {next_value}")
@@ -461,7 +372,7 @@ class CompatibleSerializer(CrossLanguageCompatibleSerializer):
                 elif field_info.type_hint == int:
                     return buffer.read_varint64()
                 elif field_info.type_hint == float:
-                    return buffer.read_double()
+                    return buffer.read_float64()
                 elif field_info.type_hint == str:
                     return buffer.read_string()
                 else:
@@ -488,60 +399,18 @@ class CompatibleSerializer(CrossLanguageCompatibleSerializer):
             except:
                 return None  # Give up
     
-    def _skip_field_value(self, buffer: Buffer, field_encoding: int):
-        """Try to skip an unknown field value based on its encoding"""
+    def _skip_field_value(self, buffer: Buffer, xlang: bool):
+        """Try to skip an unknown field value"""
         try:
-            # Extract field type from encoding (high 3 bits)
-            field_type = (field_encoding >> 29) & 0x7
-            
-            logger.debug(f"Skipping field with type {field_type}")
-            
-            if field_type in (FIELD_TYPE_EMBEDDED_4, FIELD_TYPE_EMBEDDED_9, FIELD_TYPE_EMBEDDED_HASH):
-                # Skip embedded field: null flag + value
-                null_flag = buffer.read_int8()
-                if null_flag == 0:  # NOT_NULL
-                    # Skip the actual value based on common patterns
-                    if field_type == FIELD_TYPE_EMBEDDED_4:
-                        # For basic types like int, bool
-                        try:
-                            buffer.read_varint64()  # Try varint for int
-                        except:
-                            try:
-                                buffer.read_int8()  # Try bool
-                            except:
-                                buffer.read_int32()  # Fallback
-                    elif field_type == FIELD_TYPE_EMBEDDED_9:
-                        # For string, float
-                        try:
-                            buffer.read_string()  # Try string first (most common)
-                        except:
-                            try:
-                                buffer.read_double()  # Try double
-                            except:
-                                buffer.read_int64()  # Fallback
-                    else:  # FIELD_TYPE_EMBEDDED_HASH
-                        # Try various embedded types
-                        try:
-                            buffer.read_string()
-                        except:
-                            try:
-                                buffer.read_double()
-                            except:
-                                buffer.read_varint64()
+            # This is approximate - try to read and discard a reference
+            if xlang:
+                self.fory.xdeserialize_ref(buffer)
             else:
-                # For SEPARATE fields (complex types), skip reference
-                try:
-                    self.fory.deserialize_ref(buffer)
-                except Exception as e:
-                    logger.warning(f"Failed to skip reference field: {e}")
-                    # Skip some bytes as fallback
-                    if buffer.reader_index < buffer.writer_index:
-                        buffer.reader_index = min(buffer.reader_index + 4, buffer.writer_index)
-        except Exception as e:
-            logger.warning(f"Failed to skip field with encoding {field_encoding}: {e}")
-            # Fallback - just skip a few bytes
-            if buffer.reader_index < buffer.writer_index:
-                buffer.reader_index = min(buffer.reader_index + 4, buffer.writer_index)
+                self.fory.deserialize_ref(buffer)
+        except:
+            # If that fails, skip a few bytes (very approximate)
+            if buffer.remaining() >= 4:
+                buffer.read_int32()
     
     def _find_field_by_encoded_info(self, encoded_info: int) -> Optional[FieldInfo]:
         """Find field by its encoded information"""
@@ -566,7 +435,6 @@ class CompatibleSerializer(CrossLanguageCompatibleSerializer):
     
     def _create_object(self, field_values: Dict[str, Any]) -> Any:
         """Create object instance from field values"""
-        logger.debug(f"Creating object {self.type_cls} with field_values: {field_values}")
         try:
             if is_dataclass(self.type_cls):
                 # Handle dataclass with proper defaults
@@ -574,17 +442,12 @@ class CompatibleSerializer(CrossLanguageCompatibleSerializer):
                 for field in fields(self.type_cls):
                     if field.name in field_values:
                         constructor_args[field.name] = field_values[field.name]
-                        logger.debug(f"Using field {field.name} = {field_values[field.name]}")
                     elif field.default != dataclasses.MISSING:
                         constructor_args[field.name] = field.default
-                        logger.debug(f"Using default for field {field.name} = {field.default}")
                     elif field.default_factory != dataclasses.MISSING:
                         constructor_args[field.name] = field.default_factory()
-                        logger.debug(f"Using default_factory for field {field.name}")
-                    else:
-                        logger.warning(f"No value or default for required field {field.name}")
+                    # If no default and not provided, let dataclass constructor handle it
                 
-                logger.debug(f"Constructor args: {constructor_args}")
                 return self.type_cls(**constructor_args)
             else:
                 # Handle regular class
