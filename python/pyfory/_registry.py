@@ -315,7 +315,11 @@ class TypeResolver:
                 try:
                     serializer = serializer(self.fory)
                 except BaseException:
-                    serializer = serializer()
+                    try:
+                        serializer = serializer()
+                    except BaseException:
+                        # If all attempts fail, raise the original error
+                        raise RuntimeError(f"Failed to instantiate serializer {serializer} for class {cls}")
         n_params = len({typename, type_id, None}) - 1
         if n_params == 0 and typename is None:
             type_id = self._next_type_id()
@@ -494,9 +498,14 @@ class TypeResolver:
                 (dataclasses.is_dataclass(cls) or 
                  (hasattr(cls, "__dict__") or hasattr(cls, "__slots__")) and 
                  cls is not type)):
-                # Use CompatibleSerializer for schema evolution support
-                from pyfory.compatible_serializer import CompatibleSerializer
-                return CompatibleSerializer(self.fory, cls)
+                # Use enhanced CompatibleSerializer for schema evolution support
+                try:
+                    from pyfory.compatible_serializer_enhanced import CompatibleSerializer
+                    return CompatibleSerializer(self.fory, cls)
+                except ImportError:
+                    # Fallback to original implementation
+                    from pyfory.compatible_serializer import CompatibleSerializer
+                    return CompatibleSerializer(self.fory, cls)
         
         for clz in cls.__mro__:
             type_info = self._types_info.get(clz)

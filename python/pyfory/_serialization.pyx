@@ -638,7 +638,7 @@ cdef class Fory:
         
         # Initialize meta context for schema evolution
         if compatible_mode == CompatibleMode.COMPATIBLE:
-            from pyfory.compatible_serializer import MetaContext
+            from pyfory.compatible_serializer_enhanced import MetaContext
             self.meta_context = MetaContext()
         else:
             self.meta_context = None
@@ -2251,3 +2251,188 @@ cdef class SliceSerializer(Serializer):
 
     cpdef xread(self, Buffer buffer):
         raise NotImplementedError
+
+
+# Enhanced Compatible Serializer for schema evolution - integrated into main file
+@cython.final
+cdef class CythonCompatibleSerializer(Serializer):
+    """High-performance Cython-accelerated compatible serializer for schema evolution"""
+    
+    cdef public object type_definition
+    cdef public dict field_map
+    
+    def __init__(self, fory, type_, type_definition=None):
+        super().__init__(fory, type_)
+        # Import here to avoid circular imports
+        from pyfory.compatible_serializer_enhanced import TypeDefinition
+        
+        if type_definition is None:
+            # Create type definition from class
+            self.type_definition = self._create_type_definition(type_)
+        else:
+            self.type_definition = type_definition
+            
+        # Create field mapping for fast lookup
+        self.field_map = {field.name: field for field in self.type_definition.fields}
+    
+    cdef object _create_type_definition(self, cls):
+        """Create type definition from class introspection"""
+        from pyfory.compatible_serializer_enhanced import TypeDefinition, FieldInfo
+        
+        fields = []
+        if hasattr(cls, '__annotations__'):
+            for i, (name, field_type) in enumerate(cls.__annotations__.items()):
+                field_info = FieldInfo(
+                    name=name,
+                    type_=field_type,
+                    field_id=i + 1,  # Start from 1
+                    required=True,   # Default to required
+                    default_value=getattr(cls, name, None) if hasattr(cls, name) else None
+                )
+                fields.append(field_info)
+        
+        return TypeDefinition(
+            type_id=1000,  # Use enhanced compatible type ID
+            version=1,
+            fields=fields
+        )
+    
+    cpdef write(self, Buffer buffer, value):
+        """Write object with schema evolution support"""
+        if not hasattr(value, '__dict__') and not hasattr(value.__class__, '__slots__'):
+            # Handle primitive-like objects
+            self._write_primitive_compatible(buffer, value)
+            return
+            
+        # Write type ID for enhanced compatibility
+        buffer.write_varint32(self.type_definition.type_id)
+        buffer.write_varint32(self.type_definition.version)
+        
+        # Write field count
+        field_count = len(self.type_definition.fields)
+        buffer.write_varint32(field_count)
+        
+        # Write fields in defined order
+        for field in self.type_definition.fields:
+            # Write field ID
+            buffer.write_varint32(field.field_id)
+            
+            # Get field value
+            field_value = getattr(value, field.name, field.default_value)
+            
+            # Write field value with type info
+            if field_value is None:
+                buffer.write_int8(NULL_FLAG)
+            else:
+                buffer.write_int8(NOT_NULL_VALUE_FLAG)
+                self._write_field_value(buffer, field_value, field.type_)
+    
+    cdef _write_primitive_compatible(self, Buffer buffer, value):
+        """Write primitive values with compatibility markers"""
+        buffer.write_varint32(self.type_definition.type_id)
+        buffer.write_varint32(self.type_definition.version)
+        buffer.write_varint32(1)  # Single field
+        buffer.write_varint32(1)  # Field ID 1
+        buffer.write_int8(NOT_NULL_VALUE_FLAG)
+        self.fory.serialize_nonref(buffer, value)
+    
+    cdef _write_field_value(self, Buffer buffer, value, field_type):
+        """Write field value with proper type handling"""
+        cdef type value_type = type(value)
+        
+        # Fast path for common types
+        if value_type is str:
+            buffer.write_varuint32(STRING_TYPE_ID)
+            buffer.write_string(value)
+        elif value_type is int:
+            buffer.write_varuint32(INT64_TYPE_ID)
+            buffer.write_varint64(value)
+        elif value_type is bool:
+            buffer.write_varuint32(BOOL_TYPE_ID)
+            buffer.write_bool(value)
+        elif value_type is float:
+            buffer.write_varuint32(FLOAT64_TYPE_ID)
+            buffer.write_double(value)
+        else:
+            # Use standard serialization for complex types
+            self.fory.serialize_nonref(buffer, value)
+    
+    cpdef read(self, Buffer buffer):
+        """Read object with schema evolution support"""
+        # Read type information
+        cdef int32_t type_id = buffer.read_varint32()
+        cdef int32_t version = buffer.read_varint32()
+        cdef int32_t field_count = buffer.read_varint32()
+        
+        # Create instance
+        if hasattr(self.type_, '__new__'):
+            instance = self.type_.__new__(self.type_)
+        else:
+            instance = object.__new__(self.type_)
+        
+        # Read fields
+        cdef dict read_fields = {}
+        cdef int32_t field_id, i
+        
+        for i in range(field_count):
+            field_id = buffer.read_varint32()
+            field_flag = buffer.read_int8()
+            
+            if field_flag == NULL_FLAG:
+                # Field is None - find field by ID
+                field_info = self._find_field_by_id(field_id)
+                if field_info:
+                    read_fields[field_info.name] = None
+            else:
+                # Read field value
+                field_value = self._read_field_value(buffer)
+                field_info = self._find_field_by_id(field_id)
+                if field_info:
+                    read_fields[field_info.name] = field_value
+        
+        # Apply read fields to instance
+        for field_name, field_value in read_fields.items():
+            setattr(instance, field_name, field_value)
+        
+        # Apply default values for missing fields
+        for field in self.type_definition.fields:
+            if field.name not in read_fields:
+                if field.default_value is not None:
+                    setattr(instance, field.name, field.default_value)
+                elif not field.required:
+                    setattr(instance, field.name, None)
+        
+        return instance
+    
+    cdef object _find_field_by_id(self, int32_t field_id):
+        """Find field info by field ID"""
+        for field in self.type_definition.fields:
+            if field.field_id == field_id:
+                return field
+        return None
+    
+    cdef object _read_field_value(self, Buffer buffer):
+        """Read field value with type detection"""
+        # Try to read type ID first
+        cdef int32_t type_id = buffer.read_varuint32()
+        
+        if type_id == STRING_TYPE_ID:
+            return buffer.read_string()
+        elif type_id == INT64_TYPE_ID:
+            return buffer.read_varint64()
+        elif type_id == BOOL_TYPE_ID:
+            return buffer.read_bool()
+        elif type_id == FLOAT64_TYPE_ID:
+            return buffer.read_double()
+        else:
+            # Rewind and use standard deserialization
+            buffer.reader_index -= 4  # Rewind the type_id read
+            return self.fory.deserialize_nonref(buffer)
+    
+    cpdef xwrite(self, Buffer buffer, value):
+        """Cross-language write (delegate to standard write for now)"""
+        self.write(buffer, value)
+    
+    cpdef xread(self, Buffer buffer):
+        """Cross-language read (delegate to standard read for now)"""
+        return self.read(buffer)
