@@ -27,6 +27,7 @@ from dataclasses import dataclass, field
 from typing import List, Dict, Optional, Union
 import pyfory
 from pyfory._fory import CompatibleMode
+from pyfory.compatible_serializer import CompatibleSerializer, MetaContext
 
 
 # Test data structures for schema evolution testing
@@ -126,7 +127,10 @@ class TestEnhancedCompatibleSerializer(unittest.TestCase):
     def test_basic_serialization(self):
         """Test basic serialization without schema evolution"""
         fory = pyfory.Fory(compatible_mode=CompatibleMode.COMPATIBLE)
-        fory.register_type(PersonV1)
+        
+        # Register compatible serializer
+        serializer = CompatibleSerializer(fory, PersonV1)
+        fory.register_serializer(PersonV1, serializer)
         
         person = PersonV1(name="Alice", age=30)
         serialized = fory.serialize(person)
@@ -140,14 +144,16 @@ class TestEnhancedCompatibleSerializer(unittest.TestCase):
         """Test forward compatibility - old schema reading new data"""
         # Serialize with V2 (has email)
         fory_v2 = pyfory.Fory(compatible_mode=CompatibleMode.COMPATIBLE)
-        fory_v2.register_type(PersonV2)
+        serializer_v2 = CompatibleSerializer(fory_v2, PersonV2)
+        fory_v2.register_serializer(PersonV2, serializer_v2)
         
         person_v2 = PersonV2(name="Bob", age=25, email="bob@test.com")
         serialized = fory_v2.serialize(person_v2)
         
         # Deserialize with V1 (no email)
         fory_v1 = pyfory.Fory(compatible_mode=CompatibleMode.COMPATIBLE)
-        fory_v1.register_type(PersonV1)
+        serializer_v1 = CompatibleSerializer(fory_v1, PersonV1)
+        fory_v1.register_serializer(PersonV1, serializer_v1)
         
         person_v1 = fory_v1.deserialize(serialized)
         assert isinstance(person_v1, PersonV1)
@@ -158,14 +164,16 @@ class TestEnhancedCompatibleSerializer(unittest.TestCase):
         """Test backward compatibility - new schema reading old data"""
         # Serialize with V1 (basic)
         fory_v1 = pyfory.Fory(compatible_mode=CompatibleMode.COMPATIBLE)
-        fory_v1.register_type(PersonV1)
+        serializer_v1 = CompatibleSerializer(fory_v1, PersonV1)
+        fory_v1.register_serializer(PersonV1, serializer_v1)
         
         person_v1 = PersonV1(name="Charlie", age=35)
         serialized = fory_v1.serialize(person_v1)
         
         # Deserialize with V2 (has email with default)
         fory_v2 = pyfory.Fory(compatible_mode=CompatibleMode.COMPATIBLE)
-        fory_v2.register_type(PersonV2)
+        serializer_v2 = CompatibleSerializer(fory_v2, PersonV2)
+        fory_v2.register_serializer(PersonV2, serializer_v2)
         
         person_v2 = fory_v2.deserialize(serialized)
         assert isinstance(person_v2, PersonV2)
@@ -439,50 +447,61 @@ class TestEnhancedCompatibleSerializer(unittest.TestCase):
 
     def test_cython_vs_python_compatibility(self):
         """Test that Cython and Python implementations produce compatible results"""
-        original_env = os.environ.get('ENABLE_FORY_CYTHON_SERIALIZATION')
+        # Test with both implementations if available
+        try:
+            from pyfory._serialization import CythonCompatibleSerializer
+            cython_available = True
+        except ImportError:
+            cython_available = False
         
-        for cython_enabled in [True, False]:
-            with self.subTest(cython_enabled=cython_enabled):
-                try:
-                    os.environ['ENABLE_FORY_CYTHON_SERIALIZATION'] = str(cython_enabled).lower()
-                    
-                    # Reimport to pick up the environment variable
-                    import importlib
-                    import pyfory
-                    importlib.reload(pyfory)
-                    
-                    fory = pyfory.Fory(compatible_mode=CompatibleMode.COMPATIBLE)
-                    fory.register_type(PersonV2)
-                    
-                    person = PersonV2("CythonTest", 35, "test@cython.com")
-                    serialized = fory.serialize(person)
-                    deserialized = fory.deserialize(serialized)
-                    
-                    assert isinstance(deserialized, PersonV2)
-                    assert deserialized.name == "CythonTest"
-                    assert deserialized.age == 35
-                    assert deserialized.email == "test@cython.com"
-                    
-                finally:
-                    # Restore original environment
-                    if original_env is not None:
-                        os.environ['ENABLE_FORY_CYTHON_SERIALIZATION'] = original_env
-                    elif 'ENABLE_FORY_CYTHON_SERIALIZATION' in os.environ:
-                        del os.environ['ENABLE_FORY_CYTHON_SERIALIZATION']
+        # Test Python implementation
+        fory_python = pyfory.Fory(compatible_mode=CompatibleMode.COMPATIBLE)
+        python_serializer = CompatibleSerializer(fory_python, PersonV2)
+        fory_python.register_serializer(PersonV2, python_serializer)
+        
+        person = PersonV2("CythonTest", 35, "test@cython.com")
+        serialized_python = fory_python.serialize(person)
+        deserialized_python = fory_python.deserialize(serialized_python)
+        
+        assert isinstance(deserialized_python, PersonV2)
+        assert deserialized_python.name == "CythonTest"
+        assert deserialized_python.age == 35
+        assert deserialized_python.email == "test@cython.com"
+        
+        # Test Cython implementation if available
+        if cython_available:
+            fory_cython = pyfory.Fory(compatible_mode=CompatibleMode.COMPATIBLE)
+            cython_serializer = CythonCompatibleSerializer(fory_cython, PersonV2)
+            fory_cython.register_serializer(PersonV2, cython_serializer)
+            
+            serialized_cython = fory_cython.serialize(person)
+            deserialized_cython = fory_cython.deserialize(serialized_cython)
+            
+            assert isinstance(deserialized_cython, PersonV2)
+            assert deserialized_cython.name == "CythonTest"
+            assert deserialized_cython.age == 35
+            assert deserialized_cython.email == "test@cython.com"
+            
+            # Test cross-compatibility
+            deserialized_cross1 = fory_python.deserialize(serialized_cython)
+            deserialized_cross2 = fory_cython.deserialize(serialized_python)
+            
+            assert deserialized_cross1.name == "CythonTest"
+            assert deserialized_cross2.name == "CythonTest"
 
 
 def test_meta_context_functionality():
     """Test MetaContext class functionality"""
-    from pyfory.compatible_serializer_enhanced import MetaContext
+    from pyfory.compatible_serializer import MetaContext
     
     meta_context = MetaContext()
     
     # Test type registration
-    type_id = meta_context.register_type(PersonV1)
+    type_id = meta_context.register_class(PersonV1)
     assert type_id >= 1000
     
     # Test duplicate registration returns same ID
-    type_id2 = meta_context.register_type(PersonV1)
+    type_id2 = meta_context.register_class(PersonV1)
     assert type_id == type_id2
     
     # Test type definition retrieval
@@ -499,17 +518,17 @@ def test_meta_context_functionality():
 
 def test_field_info_encoding():
     """Test FieldInfo encoding and hashing"""
-    from pyfory.compatible_serializer_enhanced import FieldInfo, _determine_field_type
+    from pyfory.compatible_serializer import FieldInfo, FieldClassification
     
     # Test basic field types
-    field1 = FieldInfo("name", str, _determine_field_type(str))
-    field2 = FieldInfo("age", int, _determine_field_type(int))
+    field1 = FieldInfo("name", str, FieldClassification.STRING)
+    field2 = FieldInfo("age", int, FieldClassification.PRIMITIVE)
     
     # Encodings should be different
     assert field1.encoded_field_info != field2.encoded_field_info
     
     # Same field should have same encoding
-    field1_copy = FieldInfo("name", str, _determine_field_type(str))
+    field1_copy = FieldInfo("name", str, FieldClassification.STRING)
     assert field1.encoded_field_info == field1_copy.encoded_field_info
 
 

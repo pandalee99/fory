@@ -151,7 +151,7 @@ class Fory:
         # Initialize meta context for schema evolution
         if compatible_mode == CompatibleMode.COMPATIBLE:
             try:
-                from pyfory.compatible_serializer_enhanced import MetaContext
+                from pyfory.compatible_serializer import MetaContext
                 self.meta_context = MetaContext()
             except ImportError:
                 # Fallback to original implementation

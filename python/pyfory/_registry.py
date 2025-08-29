@@ -500,7 +500,7 @@ class TypeResolver:
                  cls is not type)):
                 # Use enhanced CompatibleSerializer for schema evolution support
                 try:
-                    from pyfory.compatible_serializer_enhanced import CompatibleSerializer
+                    from pyfory.compatible_serializer import CompatibleSerializer
                     return CompatibleSerializer(self.fory, cls)
                 except ImportError:
                     # Fallback to original implementation

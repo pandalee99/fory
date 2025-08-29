@@ -16,10 +16,10 @@
 # under the License.
 
 """
-Enhanced Compatible Serializer Implementation
+Compatible Serializer Implementation
 
-This module provides a comprehensive implementation of schema evolution
-for Fory serialization, supporting forward and backward compatibility
+This module provides a simple implementation of schema evolution
+for Fory serialization, supporting basic forward and backward compatibility
 between different versions of data structures.
 """
 
@@ -252,7 +252,7 @@ class MetaContext:
 
 
 class CompatibleSerializer(CrossLanguageCompatibleSerializer):
-    """Enhanced compatible serializer with schema evolution"""
+    """Simple compatible serializer with basic schema evolution"""
     
     def __init__(self, fory, type_cls: Type):
         super().__init__(fory, type_cls)
@@ -267,47 +267,26 @@ class CompatibleSerializer(CrossLanguageCompatibleSerializer):
         self._type_id = self._meta_context.register_class(type_cls)
         self._type_def = self._meta_context.get_type_definition(self._type_id)
         
-        # Performance optimizations
-        self._has_fast_fields = len(self._type_def._fast_primitive_fields) > 0
-        self._all_embedded = len(self._type_def.separate_fields) == 0
-        
-        logger.debug(f"Created CompatibleSerializer for {type_cls.__name__} (ID: {self._type_id})")
-    
-    @property
-    def type_id(self) -> int:
-        return self._type_id
-    
-    @property
-    def type_def(self) -> TypeDefinition:
-        return self._type_def
+        logger.debug(f"Created CompatibleSerializer for {type_cls.__name__}")
         
     def write(self, buffer: Buffer, value: Any):
-        """Write object to buffer with schema evolution support"""
+        """Write object to buffer"""
         try:
-            # Write schema version for compatibility
-            buffer.write_uint8(1)  # Schema version
-            
             # Write schema hash for verification
             buffer.write_int32(self._type_def.schema_hash)
             
-            # Write object data using optimized path
-            if self._has_fast_fields and self._all_embedded:
-                self._write_fast_path(buffer, value)
-            else:
-                self._write_general_path(buffer, value)
+            # Write all fields in order
+            for field in self._type_def.field_infos:
+                field_value = getattr(value, field.name, None)
+                self._write_field_value(buffer, field, field_value)
                 
         except Exception as e:
             logger.error(f"Failed to serialize {self._type_cls.__name__}: {e}")
             raise
     
     def read(self, buffer: Buffer) -> Any:
-        """Read object from buffer with schema evolution support"""
+        """Read object from buffer"""
         try:
-            # Read schema version
-            schema_version = buffer.read_uint8()
-            if schema_version != 1:
-                logger.warning(f"Unexpected schema version: {schema_version}")
-            
             # Read schema hash
             remote_schema_hash = buffer.read_int32()
             local_schema_hash = self._type_def.schema_hash
@@ -315,84 +294,23 @@ class CompatibleSerializer(CrossLanguageCompatibleSerializer):
             field_values = {}
             
             if remote_schema_hash == local_schema_hash:
-                # Same schema - optimized path
-                self._read_same_schema(buffer, field_values)
+                # Same schema - read all fields in order
+                for field in self._type_def.field_infos:
+                    field_values[field.name] = self._read_field_value(buffer, field)
             else:
-                # Different schema - compatibility path
-                logger.debug(f"Schema evolution: remote={remote_schema_hash}, local={local_schema_hash}")
-                self._read_evolved_schema(buffer, field_values)
+                # Different schema - try to read and fill defaults
+                logger.debug(f"Schema mismatch: remote={remote_schema_hash}, local={local_schema_hash}")
+                for field in self._type_def.field_infos:
+                    try:
+                        field_values[field.name] = self._read_field_value(buffer, field)
+                    except:
+                        field_values[field.name] = self._get_default_value(field)
             
             return self._create_object(field_values)
             
         except Exception as e:
             logger.error(f"Failed to deserialize {self._type_cls.__name__}: {e}")
             raise
-    
-    def _read_same_schema(self, buffer: Buffer, field_values: Dict[str, Any]):
-        """Read object with same schema"""
-        # Read embedded fields
-        for field in self._type_def.embedded_fields:
-            field_values[field.name] = self._read_field_value(buffer, field)
-        
-        # Read separate fields if any  
-        for field in self._type_def.separate_fields:
-            field_values[field.name] = self._read_field_value(buffer, field)
-    
-    def _read_evolved_schema(self, buffer: Buffer, field_values: Dict[str, Any]):
-        """Read object with schema evolution (simplified version)"""
-        # For now, try to read in the same order and fill missing fields with defaults
-        try:
-            for field in self._type_def.embedded_fields:
-                try:
-                    field_values[field.name] = self._read_field_value(buffer, field)
-                except:
-                    # If reading fails, use default value
-                    field_values[field.name] = self._get_default_value(field)
-            
-            for field in self._type_def.separate_fields:
-                try:
-                    field_values[field.name] = self._read_field_value(buffer, field)
-                except:
-                    field_values[field.name] = self._get_default_value(field)
-        except:
-            # Fill remaining fields with defaults
-            for field in self._type_def.field_infos:
-                if field.name not in field_values:
-                    field_values[field.name] = self._get_default_value(field)
-    
-    def _write_fast_path(self, buffer: Buffer, value: Any):
-        """Fast path for simple objects with primitive fields"""
-        for field in self._type_def.embedded_fields:
-            field_value = getattr(value, field.name, None)
-            
-            if field.nullable and field_value is None:
-                buffer.write_bool(False)  # Null marker
-                continue
-            elif field.nullable:
-                buffer.write_bool(True)  # Non-null marker
-            
-            # Write field value based on classification
-            if field.classification in (FieldClassification.PRIMITIVE, FieldClassification.PRIMITIVE_NULLABLE):
-                if field.field_type is int:
-                    buffer.write_varint64(field_value)
-                elif field.field_type is float:
-                    buffer.write_double(field_value)
-                elif field.field_type is bool:
-                    buffer.write_bool(field_value)
-            elif field.classification in (FieldClassification.STRING, FieldClassification.STRING_NULLABLE):
-                buffer.write_string(field_value)
-    
-    def _write_general_path(self, buffer: Buffer, value: Any):
-        """General path for complex objects"""
-        # Write embedded fields first
-        for field in self._type_def.embedded_fields:
-            field_value = getattr(value, field.name, None)
-            self._write_field_value(buffer, field, field_value)
-        
-        # Write separate fields
-        for field in self._type_def.separate_fields:
-            field_value = getattr(value, field.name, None)
-            self._write_field_value(buffer, field, field_value)
     
     def _write_field_value(self, buffer: Buffer, field: FieldInfo, value: Any):
         """Write individual field value"""
@@ -413,97 +331,8 @@ class CompatibleSerializer(CrossLanguageCompatibleSerializer):
         elif field.classification in (FieldClassification.STRING, FieldClassification.STRING_NULLABLE):
             buffer.write_string(value)
         else:
-            # Object type - use Fory's serialization
-            self.fory.serialize_to_buffer(buffer, value)
-    
-    def _read_with_evolution(self, buffer: Buffer, source_type_def: TypeDefinition) -> Any:
-        """Read object with schema evolution support"""
-        # Check if schemas are compatible
-        if source_type_def.schema_hash == self._type_def.schema_hash:
-            # Same schema - fast path
-            return self._read_same_schema(buffer)
-        else:
-            # Different schema - evolution path
-            return self._read_evolved_schema(buffer, source_type_def)
-    
-    def _read_same_schema(self, buffer: Buffer) -> Any:
-        """Read object with same schema"""
-        field_values = {}
-        
-        # Read embedded fields
-        for field in self._type_def.embedded_fields:
-            field_values[field.name] = self._read_field_value(buffer, field)
-        
-        # Read separate fields if any
-        if self._type_def.separate_fields:
-            separate_count = buffer.read_varuint32()
-            for _ in range(separate_count):
-                field_hash = buffer.read_varuint32()
-                field = self._type_def.get_field_by_hash(field_hash)
-                if field:
-                    field_values[field.name] = self._read_field_value(buffer, field)
-        
-        # Create object
-        return self._create_object(field_values)
-    
-    def _read_evolved_schema(self, buffer: Buffer, source_type_def: TypeDefinition) -> Any:
-        """Read object with schema evolution"""
-        field_values = {}
-        
-        # Read source embedded fields
-        source_embedded_index = 0
-        for target_field in self._type_def.embedded_fields:
-            # Find matching source field
-            source_field = None
-            while source_embedded_index < len(source_type_def.embedded_fields):
-                candidate = source_type_def.embedded_fields[source_embedded_index]
-                if candidate.encoded_field_info == target_field.encoded_field_info:
-                    source_field = candidate
-                    source_embedded_index += 1
-                    break
-                else:
-                    # Skip incompatible source field
-                    self._skip_field_value(buffer, candidate)
-                    source_embedded_index += 1
-            
-            if source_field:
-                field_values[target_field.name] = self._read_field_value(buffer, source_field)
-            else:
-                # Use default value
-                field_values[target_field.name] = self._get_default_value(target_field)
-        
-        # Skip remaining source embedded fields
-        while source_embedded_index < len(source_type_def.embedded_fields):
-            self._skip_field_value(buffer, source_type_def.embedded_fields[source_embedded_index])
-            source_embedded_index += 1
-        
-        # Read separate fields with evolution
-        if source_type_def.separate_fields:
-            separate_count = buffer.read_varuint32()
-            available_fields = {}
-            
-            # Read all available separate fields
-            for _ in range(separate_count):
-                field_hash = buffer.read_varuint32()
-                source_field = source_type_def.get_field_by_hash(field_hash)
-                if source_field:
-                    available_fields[field_hash] = self._read_field_value(buffer, source_field)
-                else:
-                    # Skip unknown field - this is tricky, need to implement field skipping
-                    pass
-            
-            # Map to target fields
-            for target_field in self._type_def.separate_fields:
-                if target_field.encoded_field_info in available_fields:
-                    field_values[target_field.name] = available_fields[target_field.encoded_field_info]
-                else:
-                    field_values[target_field.name] = self._get_default_value(target_field)
-        else:
-            # Set defaults for target separate fields
-            for target_field in self._type_def.separate_fields:
-                field_values[target_field.name] = self._get_default_value(target_field)
-        
-        return self._create_object(field_values)
+            # Object type - use Fory's serialization (not implemented for now)
+            raise NotImplementedError("Object field serialization not implemented")
     
     def _read_field_value(self, buffer: Buffer, field: FieldInfo) -> Any:
         """Read individual field value"""
@@ -524,7 +353,7 @@ class CompatibleSerializer(CrossLanguageCompatibleSerializer):
             return buffer.read_string()
         else:
             # Object type
-            return self.fory.deserialize_from_buffer(buffer)
+            raise NotImplementedError("Object field deserialization not implemented")
     
     def _get_default_value(self, field: FieldInfo) -> Any:
         """Get default value for field"""
