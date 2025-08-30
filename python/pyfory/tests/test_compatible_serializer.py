@@ -27,7 +27,7 @@ import tempfile
 import os
 
 from pyfory import Fory, CompatibleMode, Buffer
-from pyfory.compatible_serializer import CompatibleSerializer, MetaContext, FieldInfo, TypeDefinition, FieldClassification
+from pyfory.compatible_serializer_clean import CompatibleSerializer, MetaContext, FieldInfo, TypeDefinition, FieldClassification
 
 
 # Configure logging for tests

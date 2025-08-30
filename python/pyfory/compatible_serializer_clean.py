@@ -258,10 +258,15 @@ class CompatibleSerializer(CrossLanguageCompatibleSerializer):
         super().__init__(fory, type_cls)
         self._type_cls = type_cls
         
-        # Get or create meta context
-        if not hasattr(fory, 'meta_context'):
-            fory.meta_context = MetaContext()
-        self._meta_context = fory.meta_context
+        # Get or create meta context - store in a global dict keyed by fory instance
+        global _meta_contexts
+        if not hasattr(self.__class__, '_meta_contexts'):
+            self.__class__._meta_contexts = {}
+        
+        fory_id = id(fory)
+        if fory_id not in self._meta_contexts:
+            self._meta_contexts[fory_id] = MetaContext()
+        self._meta_context = self._meta_contexts[fory_id]
         
         # Register type and get definition
         self._type_id = self._meta_context.register_class(type_cls)
@@ -272,8 +277,8 @@ class CompatibleSerializer(CrossLanguageCompatibleSerializer):
     def write(self, buffer: Buffer, value: Any):
         """Write object to buffer"""
         try:
-            # Write schema hash for verification
-            buffer.write_int32(self._type_def.schema_hash)
+            # Write schema hash for verification (use varint64 to handle large values)
+            buffer.write_varint64(self._type_def.schema_hash)
             
             # Write all fields in order
             for field in self._type_def.field_infos:
@@ -288,7 +293,7 @@ class CompatibleSerializer(CrossLanguageCompatibleSerializer):
         """Read object from buffer"""
         try:
             # Read schema hash
-            remote_schema_hash = buffer.read_int32()
+            remote_schema_hash = buffer.read_varint64()
             local_schema_hash = self._type_def.schema_hash
             
             field_values = {}
