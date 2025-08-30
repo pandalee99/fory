@@ -259,7 +259,7 @@ class CompatibleSerializer(CrossLanguageCompatibleSerializer):
         self._type_cls = type_cls
         
         # Get or create meta context
-        if not hasattr(fory, 'meta_context'):
+        if not hasattr(fory, 'meta_context') or fory.meta_context is None:
             fory.meta_context = MetaContext()
         self._meta_context = fory.meta_context
         
@@ -585,12 +585,15 @@ class CompatibleSerializer(CrossLanguageCompatibleSerializer):
 try:
     from pyfory.lib import mmh3
 except ImportError:
-    # Fallback implementation
-    import hashlib
-    class _MMH3Fallback:
-        @staticmethod
-        def hash_buffer(data: bytes, signed=True) -> tuple:
-            h = hashlib.md5(data).digest()
-            result = int.from_bytes(h[:8], 'little', signed=False)
-            return (result if not signed else result - 2**64 if result >= 2**63 else result, 0)
-    mmh3 = _MMH3Fallback()
+    try:
+        import mmh3
+    except ImportError:
+        # Fallback implementation
+        import hashlib
+        class _MMH3Fallback:
+            @staticmethod
+            def hash_buffer(data: bytes, signed=True) -> tuple:
+                h = hashlib.md5(data).digest()
+                result = int.from_bytes(h[:8], 'little', signed=False)
+                return (result if not signed else result - 2**64 if result >= 2**63 else result, 0)
+        mmh3 = _MMH3Fallback()
