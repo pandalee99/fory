@@ -108,28 +108,30 @@ public class Example {
 
 ## ForyBuilder options
 
-| Option Name                         | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | Default Value                                                  |
-| ----------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
-| `timeRefIgnored`                    | Whether to ignore reference tracking of all time types registered in `TimeSerializers` and subclasses of those types when ref tracking is enabled. If ignored, ref tracking of every time type can be enabled by invoking `Fory#registerSerializer(Class, Serializer)`. For example, `fory.registerSerializer(Date.class, new DateSerializer(fory, true))`. Note that enabling ref tracking should happen before serializer codegen of any types which contain time fields. Otherwise, those fields will still skip ref tracking. | `true`                                                         |
-| `compressInt`                       | Enables or disables int compression for smaller size.                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | `true`                                                         |
-| `compressLong`                      | Enables or disables long compression for smaller size.                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | `true`                                                         |
-| `compressString`                    | Enables or disables string compression for smaller size.                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | `false`                                                        |
-| `classLoader`                       | The classloader should not be updated; Fory caches class metadata. Use `LoaderBinding` or `ThreadSafeFory` for classloader updates.                                                                                                                                                                                                                                                                                                                                                                                               | `Thread.currentThread().getContextClassLoader()`               |
-| `compatibleMode`                    | Type forward/backward compatibility config. Also Related to `checkClassVersion` config. `SCHEMA_CONSISTENT`: Class schema must be consistent between serialization peer and deserialization peer. `COMPATIBLE`: Class schema can be different between serialization peer and deserialization peer. They can add/delete fields independently. [See more](#class-inconsistency-and-class-version-check).                                                                                                                            | `CompatibleMode.SCHEMA_CONSISTENT`                             |
-| `checkClassVersion`                 | Determines whether to check the consistency of the class schema. If enabled, Fory checks, writes, and checks consistency using the `classVersionHash`. It will be automatically disabled when `CompatibleMode#COMPATIBLE` is enabled. Disabling is not recommended unless you can ensure the class won't evolve.                                                                                                                                                                                                                  | `false`                                                        |
-| `checkJdkClassSerializable`         | Enables or disables checking of `Serializable` interface for classes under `java.*`. If a class under `java.*` is not `Serializable`, Fory will throw an `UnsupportedOperationException`.                                                                                                                                                                                                                                                                                                                                         | `true`                                                         |
-| `registerGuavaTypes`                | Whether to pre-register Guava types such as `RegularImmutableMap`/`RegularImmutableList`. These types are not public API, but seem pretty stable.                                                                                                                                                                                                                                                                                                                                                                                 | `true`                                                         |
-| `requireClassRegistration`          | Disabling may allow unknown classes to be deserialized, potentially causing security risks.                                                                                                                                                                                                                                                                                                                                                                                                                                       | `true`                                                         |
-| `suppressClassRegistrationWarnings` | Whether to suppress class registration warnings. The warnings can be used for security audit, but may be annoying, this suppression will be enabled by default.                                                                                                                                                                                                                                                                                                                                                                   | `true`                                                         |
-| `metaShareEnabled`                  | Enables or disables meta share mode.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | `true` if `CompatibleMode.Compatible` is set, otherwise false. |
-| `scopedMetaShareEnabled`            | Scoped meta share focuses on a single serialization process. Metadata created or identified during this process is exclusive to it and is not shared with by other serializations.                                                                                                                                                                                                                                                                                                                                                | `true` if `CompatibleMode.Compatible` is set, otherwise false. |
-| `metaCompressor`                    | Set a compressor for meta compression. Note that the passed MetaCompressor should be thread-safe. By default, a `Deflater` based compressor `DeflaterMetaCompressor` will be used. Users can pass other compressor such as `zstd` for better compression rate.                                                                                                                                                                                                                                                                    | `DeflaterMetaCompressor`                                       |
-| `deserializeNonexistentClass`       | Enables or disables deserialization/skipping of data for non-existent classes.                                                                                                                                                                                                                                                                                                                                                                                                                                                    | `true` if `CompatibleMode.Compatible` is set, otherwise false. |
-| `codeGenEnabled`                    | Disabling may result in faster initial serialization but slower subsequent serializations.                                                                                                                                                                                                                                                                                                                                                                                                                                        | `true`                                                         |
-| `asyncCompilationEnabled`           | If enabled, serialization uses interpreter mode first and switches to JIT serialization after async serializer JIT for a class is finished.                                                                                                                                                                                                                                                                                                                                                                                       | `false`                                                        |
-| `scalaOptimizationEnabled`          | Enables or disables Scala-specific serialization optimization.                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | `false`                                                        |
-| `copyRef`                           | When disabled, the copy performance will be better. But fory deep copy will ignore circular and shared reference. Same reference of an object graph will be copied into different objects in one `Fory#copy`.                                                                                                                                                                                                                                                                                                                     | `true`                                                         |
-| `serializeEnumByName`               | When Enabled, fory serialize enum by name instead of ordinal.                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | `false`                                                        |
+| Option Name                 | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | Default Value                                    |
+| --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
+| `timeRefIgnored`            | Whether to ignore reference tracking of all time types registered in `TimeSerializers` and subclasses of those types when ref tracking is enabled. If ignored, ref tracking of every time type can be enabled by invoking `Fory#registerSerializer(Class, Serializer)`. For example, `fory.registerSerializer(Date.class, new DateSerializer(fory, true))`. Note that enabling ref tracking should happen before serializer codegen of any types which contain time fields. Otherwise, those fields will still skip ref tracking. | `true`                                           |
+| `compressInt`               | Enables or disables int compression for smaller size.                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | `true`                                           |
+| `compressLong`              | Enables or disables long compression for smaller size.                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | `true`                                           |
+| `compressString`            | Enables or disables string compression for smaller size.                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | `false`                                          |
+| `classLoader`               | The classloader should not be updated; Fory caches class metadata. Use `LoaderBinding` or `ThreadSafeFory` for classloader updates.                                                                                                                                                                                                                                                                                                                                                                                               | `Thread.currentThread().getContextClassLoader()` |
+| `compatibleMode`            | Type forward/backward compatibility config. Also Related to `checkClassVersion` config. `SCHEMA_CONSISTENT`: Class schema must be consistent between serialization peer and deserialization peer. `COMPATIBLE`: Class schema can be different between serialization peer and deserialization peer. They can add/delete fields independently. [See more](#class-inconsistency-and-class-version-check).                                                                                                                            | `CompatibleMode.SCHEMA_CONSISTENT`               |
+| `checkClassVersion`         | Determines whether to check the consistency of the class schema. If enabled, Fory checks, writes, and checks consistency using the `classVersionHash`. It will be automatically disabled when `CompatibleMode#COMPATIBLE` is enabled. Disabling is not recommended unless you can ensure the class won't evolve.                                                                                                                                                                                                                  | `false`                                          |
+| `checkJdkClassSerializable` | Enables or disables checking of `Serializable` interface for classes under `java.*`. If a class under `java.*` is not `Serializable`, Fory will throw an `UnsupportedOperationException`.                                                                                                                                                                                                                                                                                                                                         | `true`                                           |
+| `registerGuavaTypes`        | Whether to pre-register Guava types such as `RegularImmutableMap`/`RegularImmutableList`. These types are not public API, but seem pretty stable.                                                                                                                                                                                                                                                                                                                                                                                 | `true`                                           |
+| `requireClassRegistration`  | Disabling may allow unknown classes to be deserialized, potentially causing security risks.                                                                                                                                                                                                                                                                                                                                                                                                                                       | `true`                                           |
+| `requireClassRegistration`  | Set max depth for deserialization, when depth exceeds, an exception will be thrown. This can be used to refuse deserialization DDOS attack.                                                                                                                                                                                                                                                                                                                                                                                       | `50`                                             |
+
+| `suppressClassRegistrationWarnings` | Whether to suppress class registration warnings. The warnings can be used for security audit, but may be annoying, this suppression will be enabled by default. | `true` |
+| `metaShareEnabled` | Enables or disables meta share mode. | `true` if `CompatibleMode.Compatible` is set, otherwise false. |
+| `scopedMetaShareEnabled` | Scoped meta share focuses on a single serialization process. Metadata created or identified during this process is exclusive to it and is not shared with by other serializations. | `true` if `CompatibleMode.Compatible` is set, otherwise false. |
+| `metaCompressor` | Set a compressor for meta compression. Note that the passed MetaCompressor should be thread-safe. By default, a `Deflater` based compressor `DeflaterMetaCompressor` will be used. Users can pass other compressor such as `zstd` for better compression rate. | `DeflaterMetaCompressor` |
+| `deserializeNonexistentClass` | Enables or disables deserialization/skipping of data for non-existent classes. | `true` if `CompatibleMode.Compatible` is set, otherwise false. |
+| `codeGenEnabled` | Disabling may result in faster initial serialization but slower subsequent serializations. | `true` |
+| `asyncCompilationEnabled` | If enabled, serialization uses interpreter mode first and switches to JIT serialization after async serializer JIT for a class is finished. | `false` |
+| `scalaOptimizationEnabled` | Enables or disables Scala-specific serialization optimization. | `false` |
+| `copyRef` | When disabled, the copy performance will be better. But fory deep copy will ignore circular and shared reference. Same reference of an object graph will be copied into different objects in one `Fory#copy`. | `true` |
+| `serializeEnumByName` | When Enabled, fory serialize enum by name instead of ordinal. | `false` |
 
 ## Advanced Usage
 
@@ -308,8 +310,8 @@ fory.registerSerializer(Foo.class, new FooSerializer(fory));
 
 ### Implement Collection Serializer
 
-Similar to maps, when implementing a serializer for a custom Collection type, you must extend `CollectionSerializer` or `AbstractCollectionSerializer`.
-The key difference between these two is that `AbstractCollectionSerializer` can serialize a class which has a collection-like structure but is not a java Collection subtype.
+Similar to maps, when implementing a serializer for a custom Collection type, you must extend `CollectionSerializer` or `CollectionLikeSerializer`.
+The key difference between these two is that `CollectionLikeSerializer` can serialize a class which has a collection-like structure but is not a java Collection subtype.
 
 For collection serializer, this is a special parameter `supportCodegenHook` needs be configured:
 
@@ -433,7 +435,7 @@ class IntList extends AbstractCollection<Integer> {
     }
 }
 
-class IntListSerializer extends AbstractCollectionSerializer<IntList> {
+class IntListSerializer extends CollectionLikeSerializer<IntList> {
     public IntListSerializer(Fory fory) {
         // Disable JIT since we're handling serialization directly
         super(fory, IntList.class, false);
@@ -547,7 +549,7 @@ Sometimes you may want to implement a serializer for a type that behaves like a 
 
 The key principles for collection-like type serialization are:
 
-1. Extend `AbstractCollectionSerializer` for custom collection-like types
+1. Extend `CollectionLikeSerializer` for custom collection-like types
 2. Enable JIT optimization with `supportCodegenHook`
 3. Provide efficient element access through views
 4. Maintain proper size tracking
@@ -643,7 +645,7 @@ class CollectionView extends AbstractCollection<Object> {
     }
 }
 
-class CustomCollectionSerializer extends AbstractCollectionSerializer<CustomCollectionLike> {
+class CustomCollectionSerializer extends CollectionLikeSerializer<CustomCollectionLike> {
     public CustomCollectionSerializer(Fory fory) {
         super(fory, CustomCollectionLike.class, true);
     }
@@ -699,7 +701,7 @@ Note that this implementation provides better performance at the cost of flexibi
 
 ### Implement Map Serializer
 
-When implementing a serializer for a custom Map type, you must extend `MapSerializer` or `AbstractMapSerializer`. The key difference between these two is that `AbstractMapSerializer` can serialize a class which has a map-like structure but is not a java Map subtype.
+When implementing a serializer for a custom Map type, you must extend `MapSerializer` or `MapLikeSerializer`. The key difference between these two is that `MapLikeSerializer` can serialize a class which has a map-like structure but is not a java Map subtype.
 
 Similar to collection serializer, this is a special parameter `supportCodegenHook` needs be configured:
 
@@ -797,7 +799,7 @@ class FixedValueMap extends AbstractMap<String, Integer> {
     }
 }
 
-class FixedValueMapSerializer extends AbstractMapSerializer<FixedValueMap> {
+class FixedValueMapSerializer extends MapLikeSerializer<FixedValueMap> {
     public FixedValueMapSerializer(Fory fory) {
         // Disable codegen since we're handling serialization directly
         super(fory, FixedValueMap.class, false);
@@ -900,7 +902,7 @@ Sometimes you may want to implement a serializer for a type that behaves like a 
 
 The key principles for map-like type serialization are:
 
-1. Extend `AbstractMapSerializer` for custom collection-like types
+1. Extend `MapLikeSerializer` for custom collection-like types
 2. Enable JIT optimization with `supportCodegenHook`
 3. Provide efficient element access through views
 4. Maintain proper size tracking
@@ -1028,7 +1030,7 @@ class MapView extends AbstractMap<Object, Object> {
     }
 }
 
-class CustomMapLikeSerializer extends AbstractMapSerializer<CustomMapLike> {
+class CustomMapLikeSerializer extends MapLikeSerializer<CustomMapLike> {
     public CustomMapLikeSerializer(Fory fory) {
         super(fory, CustomMapLike.class, true);
     }
@@ -1082,14 +1084,94 @@ fory.registerSerializer(CustomCollection.class, new CustomCollectionSerializer<>
 
 Note that when implementing custom map or collection serializers:
 
-1. Always extend the appropriate base class (`MapSerializer`/`AbstractMapSerializer` for maps, `CollectionSerializer`/`AbstractCollectionSerializer` for collections)
+1. Always extend the appropriate base class (`MapSerializer`/`MapLikeSerializer` for maps, `CollectionSerializer`/`CollectionLikeSerializer` for collections)
 2. Consider the impact of `supportCodegenHook` on performance and functionality
 3. Properly handle reference tracking if needed
 4. Implement proper size management using `setNumElements` and `getAndClearNumElements` when `supportCodegenHook` is `true`
 
 Besides registering serializes, one can also implement `java.io.Externalizable` for a class to customize serialization logic, such type will be serialized by fory `ExternalizableSerializer`.
 
-### Security & Class Registration
+### Memory Allocation Customization
+
+Fory provides a `MemoryAllocator` interface that allows you to customize how memory buffers are allocated and grown during serialization operations. This can be useful for performance optimization, memory pooling, or debugging memory usage.
+
+#### MemoryAllocator Interface
+
+The `MemoryAllocator` interface defines two key methods:
+
+```java
+public interface MemoryAllocator {
+  /**
+   * Allocates a new MemoryBuffer with the specified initial capacity.
+   */
+  MemoryBuffer allocate(int initialCapacity);
+
+  /**
+   * Grows an existing buffer to accommodate the new capacity.
+   * The implementation must grow the buffer in-place by modifying
+   * the existing buffer instance.
+   */
+  MemoryBuffer grow(MemoryBuffer buffer, int newCapacity);
+}
+```
+
+#### Using Custom Memory Allocators
+
+You can set a global memory allocator that will be used by all `MemoryBuffer` instances:
+
+```java
+// Create a custom allocator
+MemoryAllocator customAllocator = new MemoryAllocator() {
+  @Override
+  public MemoryBuffer allocate(int initialCapacity) {
+    // Add extra capacity for debugging or pooling
+    return MemoryBuffer.fromByteArray(new byte[initialCapacity + 100]);
+  }
+
+  @Override
+  public MemoryBuffer grow(MemoryBuffer buffer, int newCapacity) {
+    if (newCapacity <= buffer.size()) {
+      return buffer;
+    }
+
+    // Custom growth strategy - add 100% extra capacity
+    int newSize = (int) (newCapacity * 2);
+    byte[] data = new byte[newSize];
+    buffer.copyToUnsafe(0, data, Platform.BYTE_ARRAY_OFFSET, buffer.size());
+    buffer.initHeapBuffer(data, 0, data.length);
+    return buffer;
+  }
+};
+
+// Set the custom allocator globally
+MemoryBuffer.setGlobalAllocator(customAllocator);
+
+// All subsequent MemoryBuffer allocations will use your custom allocator
+Fory fory = Fory.builder().withLanguage(Language.JAVA).build();
+byte[] bytes = fory.serialize(someObject); // Uses custom allocator
+```
+
+#### Default Memory Allocator Behavior
+
+The default allocator uses the following growth strategy:
+
+- For buffers smaller than `BUFFER_GROW_STEP_THRESHOLD` (100MB): multiply capacity by 2
+- For larger buffers: multiply capacity by 1.5 (capped at `Integer.MAX_VALUE - 8`)
+
+This provides a balance between avoiding frequent reallocations and preventing excessive memory usage.
+
+#### Use Cases
+
+Custom memory allocators are useful for:
+
+- **Memory Pooling**: Reuse allocated buffers to reduce GC pressure
+- **Performance Tuning**: Use different growth strategies based on your workload
+- **Debugging**: Add logging or tracking to monitor memory usage
+- **Off-heap Memory**: Integrate with off-heap memory management systems
+
+### Security
+
+#### Class Registration
 
 `ForyBuilder#requireClassRegistration` can be used to disable class registration, this will allow to deserialize objects
 unknown types,
@@ -1138,6 +1220,12 @@ Fory also provided a `org.apache.fory.resolver.AllowListChecker` which is allowe
 simplify
 the customization of class check mechanism. You can use this checker or implement more sophisticated checker by
 yourself.
+
+#### Limit max deserization depth
+
+Fory also provides a `ForyBuilder#withMaxDepth` to limit max deserialization depth. The default max depth is 50.
+
+If max depth is reached, Fory will throw `ForyException`. This can be used to prevent malicious data from causing stack overflow or other issues.
 
 ### Register class by name
 

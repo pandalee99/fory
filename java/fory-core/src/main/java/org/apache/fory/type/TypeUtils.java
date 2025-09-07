@@ -20,6 +20,7 @@
 package org.apache.fory.type;
 
 import java.lang.reflect.Array;
+import java.lang.reflect.Field;
 import java.lang.reflect.GenericArrayType;
 import java.lang.reflect.Modifier;
 import java.lang.reflect.ParameterizedType;
@@ -30,12 +31,27 @@ import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
 import java.sql.Date;
+import java.sql.Time;
 import java.sql.Timestamp;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.LocalTime;
+import java.time.MonthDay;
+import java.time.OffsetDateTime;
+import java.time.OffsetTime;
+import java.time.Period;
+import java.time.Year;
+import java.time.YearMonth;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
+import java.time.ZonedDateTime;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Calendar;
 import java.util.Collection;
+import java.util.GregorianCalendar;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
@@ -48,6 +64,8 @@ import java.util.OptionalDouble;
 import java.util.OptionalInt;
 import java.util.OptionalLong;
 import java.util.Set;
+import java.util.TimeZone;
+import java.util.WeakHashMap;
 import java.util.stream.Collectors;
 import org.apache.fory.collection.IdentityMap;
 import org.apache.fory.collection.Tuple2;
@@ -619,46 +637,52 @@ public class TypeUtils {
         || ctx.getCustomTypeRegistry().isExtraSupportedType(typeRef)) {
       return false;
     }
-    // since we need to access class in generated code in our package, the class must be public
     // if ReflectionUtils.hasNoArgConstructor(cls) return false, we use Unsafe to create object.
-    if (Modifier.isPublic(cls.getModifiers())) {
-      // bean class can be static nested class, but can't be not a non-static inner class
-      if (cls.getEnclosingClass() != null && !Modifier.isStatic(cls.getModifiers())) {
-        return false;
-      }
-      TypeResolutionContext newTypePath = ctx.appendTypePath(typeRef);
-      if (cls == Object.class) {
-        // return false for typeToken that point to un-specialized generic type.
-        return false;
-      }
-      boolean maybe =
-          !SUPPORTED_TYPES.contains(typeRef)
-              && !typeRef.isArray()
-              && !cls.isEnum()
-              && !ITERABLE_TYPE.isSupertypeOf(typeRef)
-              && !MAP_TYPE.isSupertypeOf(typeRef);
-      if (maybe) {
-        for (Descriptor d : Descriptor.getDescriptors(cls)) {
-          TypeRef<?> t = d.getTypeRef();
-          // do field modifiers and getter/setter validation here, not in getDescriptors.
-          // If Modifier.isFinal(d.getModifiers()), use reflection
-          // private field that doesn't have getter/setter will be handled by reflection.
-          TypeRef<?> replacementType =
-              ctx.getCustomTypeRegistry().replacementTypeFor(cls, t.getRawType());
-          if (replacementType != null) {
-            t = replacementType;
-          }
-          if (!isSupported(t, newTypePath)) {
-            return false;
-          }
+    // bean class can be static nested class, but can't be not a non-static inner class
+    if (cls.getEnclosingClass() != null && !Modifier.isStatic(cls.getModifiers())) {
+      return false;
+    }
+    TypeResolutionContext newTypePath = ctx.appendTypePath(typeRef);
+    if (cls == Object.class) {
+      // return false for typeToken that point to un-specialized generic type.
+      return false;
+    }
+    boolean maybe =
+        !SUPPORTED_TYPES.contains(typeRef)
+            && !typeRef.isArray()
+            && !cls.isEnum()
+            && !ITERABLE_TYPE.isSupertypeOf(typeRef)
+            && !MAP_TYPE.isSupertypeOf(typeRef);
+    if (maybe) {
+      for (Descriptor d : Descriptor.getDescriptors(cls)) {
+        TypeRef<?> t = d.getTypeRef();
+        // do field modifiers and getter/setter validation here, not in getDescriptors.
+        // If Modifier.isFinal(d.getModifiers()), use reflection
+        // private field that doesn't have getter/setter will be handled by reflection.
+        TypeRef<?> replacementType =
+            ctx.getCustomTypeRegistry().replacementTypeFor(cls, t.getRawType());
+        if (replacementType != null) {
+          t = replacementType;
         }
-        return true;
-      } else {
-        return false;
+        if (!isSupported(t, newTypePath)) {
+          return false;
+        }
       }
+      return true;
     } else {
       return false;
     }
+  }
+
+  /**
+   * Check if a class is one of {@link Optional}, {@link OptionalInt}, {@link OptionalLong}, or
+   * {@link OptionalDouble}.
+   */
+  public static boolean isOptionalType(Class<?> type) {
+    return type == Optional.class
+        || type == OptionalInt.class
+        || type == OptionalLong.class
+        || type == OptionalDouble.class;
   }
 
   private static boolean isSynthesizableInterface(Class<?> cls) {
@@ -827,5 +851,62 @@ public class TypeUtils {
     } else {
       return pkg + "." + className;
     }
+  }
+
+  private static Set<Class<?>> leafTypes = new HashSet<>();
+
+  static {
+    leafTypes.addAll(sortedPrimitiveClasses);
+    leafTypes.addAll(sortedBoxedClasses);
+    leafTypes.add(String.class);
+    leafTypes.addAll(
+        Arrays.asList(
+            java.util.Date.class,
+            java.sql.Date.class,
+            Time.class,
+            Timestamp.class,
+            LocalDate.class,
+            LocalTime.class,
+            LocalDateTime.class,
+            Instant.class,
+            Duration.class,
+            ZoneId.class,
+            ZoneOffset.class,
+            ZonedDateTime.class,
+            Year.class,
+            YearMonth.class,
+            MonthDay.class,
+            Period.class,
+            OffsetTime.class,
+            OffsetDateTime.class,
+            Calendar.class,
+            GregorianCalendar.class,
+            TimeZone.class));
+  }
+
+  private static final WeakHashMap<Class<?>, Boolean> hasExpandableLeafsCache = new WeakHashMap<>();
+
+  public static synchronized boolean hasExpandableLeafs(Class<?> cls) {
+    return hasExpandableLeafsCache.computeIfAbsent(
+        cls,
+        k -> {
+          if (cls.isEnum()) {
+            return false;
+          }
+          if (leafTypes.contains(cls)) {
+            return false;
+          }
+          List<Field> fields = ReflectionUtils.getFields(cls, true);
+          if (fields.isEmpty()) {
+            return false;
+          }
+          for (Field field : fields) {
+            Class<?> fieldType = field.getType();
+            if (!leafTypes.contains(fieldType) && !fieldType.isEnum()) {
+              return true;
+            }
+          }
+          return false;
+        });
   }
 }

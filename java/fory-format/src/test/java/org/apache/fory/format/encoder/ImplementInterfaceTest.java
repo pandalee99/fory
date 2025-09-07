@@ -22,10 +22,14 @@ package org.apache.fory.format.encoder;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
+import java.util.OptionalDouble;
+import java.util.OptionalInt;
+import java.util.OptionalLong;
 import java.util.TreeSet;
 import lombok.Data;
 import org.apache.arrow.vector.types.pojo.Field;
 import org.apache.fory.annotation.ForyField;
+import org.apache.fory.annotation.Ignore;
 import org.apache.fory.format.row.binary.BinaryArray;
 import org.apache.fory.format.row.binary.BinaryRow;
 import org.apache.fory.format.type.DataTypes;
@@ -141,41 +145,101 @@ public class ImplementInterfaceTest {
 
   public interface OptionalType {
     Optional<String> f1();
+
+    OptionalInt f2();
+
+    OptionalLong f3();
+
+    OptionalDouble f4();
   }
 
   static class OptionalTypeImpl implements OptionalType {
-    private final Optional<String> f1;
-
-    OptionalTypeImpl(final Optional<String> f1) {
-      this.f1 = f1;
-    }
+    Optional<String> f1;
+    OptionalInt f2;
+    OptionalLong f3;
+    OptionalDouble f4;
 
     @Override
     public Optional<String> f1() {
       return f1;
     }
+
+    @Override
+    public OptionalInt f2() {
+      return f2;
+    }
+
+    @Override
+    public OptionalLong f3() {
+      return f3;
+    }
+
+    @Override
+    public OptionalDouble f4() {
+      return f4;
+    }
   }
 
   @Test
   public void testNullOptional() {
-    final OptionalType bean1 = new OptionalTypeImpl(null);
+    final OptionalType bean1 = new OptionalTypeImpl();
     final RowEncoder<OptionalType> encoder = Encoders.bean(OptionalType.class);
     final BinaryRow row = encoder.toRow(bean1);
     final MemoryBuffer buffer = MemoryUtils.wrap(row.toBytes());
     row.pointTo(buffer, 0, buffer.size());
     final OptionalType deserializedBean = encoder.fromRow(row);
     Assert.assertEquals(deserializedBean.f1(), Optional.empty());
+    Assert.assertEquals(deserializedBean.f2(), OptionalInt.empty());
+    Assert.assertEquals(deserializedBean.f3(), OptionalLong.empty());
+    Assert.assertEquals(deserializedBean.f4(), OptionalDouble.empty());
   }
 
   @Test
   public void testPresentOptional() {
-    final OptionalType bean1 = new OptionalTypeImpl(Optional.of("42"));
+    final OptionalTypeImpl bean1 = new OptionalTypeImpl();
+    bean1.f1 = Optional.of("42");
     final RowEncoder<OptionalType> encoder = Encoders.bean(OptionalType.class);
     final BinaryRow row = encoder.toRow(bean1);
     final MemoryBuffer buffer = MemoryUtils.wrap(row.toBytes());
     row.pointTo(buffer, 0, buffer.size());
     final OptionalType deserializedBean = encoder.fromRow(row);
     Assert.assertEquals(deserializedBean.f1(), Optional.of("42"));
+  }
+
+  @Test
+  public void testPresentOptionalInteger() {
+    final OptionalTypeImpl bean1 = new OptionalTypeImpl();
+    bean1.f2 = OptionalInt.of(42);
+    final RowEncoder<OptionalType> encoder = Encoders.bean(OptionalType.class);
+    final BinaryRow row = encoder.toRow(bean1);
+    final MemoryBuffer buffer = MemoryUtils.wrap(row.toBytes());
+    row.pointTo(buffer, 0, buffer.size());
+    final OptionalType deserializedBean = encoder.fromRow(row);
+    Assert.assertEquals(deserializedBean.f2(), OptionalInt.of(42));
+  }
+
+  @Test
+  public void testPresentOptionalLong() {
+    final OptionalTypeImpl bean1 = new OptionalTypeImpl();
+    bean1.f3 = OptionalLong.of(42);
+    final RowEncoder<OptionalType> encoder = Encoders.bean(OptionalType.class);
+    final BinaryRow row = encoder.toRow(bean1);
+    final MemoryBuffer buffer = MemoryUtils.wrap(row.toBytes());
+    row.pointTo(buffer, 0, buffer.size());
+    final OptionalType deserializedBean = encoder.fromRow(row);
+    Assert.assertEquals(deserializedBean.f3(), OptionalLong.of(42));
+  }
+
+  @Test
+  public void testPresentOptionalDouble() {
+    final OptionalTypeImpl bean1 = new OptionalTypeImpl();
+    bean1.f4 = OptionalDouble.of(42.42);
+    final RowEncoder<OptionalType> encoder = Encoders.bean(OptionalType.class);
+    final BinaryRow row = encoder.toRow(bean1);
+    final MemoryBuffer buffer = MemoryUtils.wrap(row.toBytes());
+    row.pointTo(buffer, 0, buffer.size());
+    final OptionalType deserializedBean = encoder.fromRow(row);
+    Assert.assertEquals(deserializedBean.f4(), OptionalDouble.of(42.42));
   }
 
   public static class Id<T> {
@@ -375,5 +439,62 @@ public class ImplementInterfaceTest {
     final ListLazyElemOuter deserializedBean = encoder.fromRow(row);
     Assert.assertEquals(deserializedBean.f1().get(2).f1(), 42);
     Assert.assertEquals(deserializedBean.f1().get(3), null);
+  }
+
+  public interface IgnoredMethods {
+    int f1();
+
+    @Ignore
+    default int doubled() {
+      return doubled(f1());
+    }
+
+    IgnoredMethods withF1(int f1);
+
+    private int doubled(final int n) {
+      return n * 2;
+    }
+  }
+
+  static class IgnoredMethodsImpl implements IgnoredMethods {
+    private final int f1;
+
+    IgnoredMethodsImpl(final int f1) {
+      this.f1 = f1;
+    }
+
+    @Override
+    public int f1() {
+      return f1;
+    }
+
+    @Override
+    public int doubled() {
+      return f1() * 3;
+    }
+
+    @Override
+    public IgnoredMethods withF1(final int f1) {
+      return new IgnoredMethodsImpl(f1);
+    }
+  }
+
+  @Test
+  public void testIgnoredMethods() {
+    final IgnoredMethods bean1 = new IgnoredMethodsImpl(2112);
+    final RowEncoder<IgnoredMethods> encoder = Encoders.bean(IgnoredMethods.class);
+    Assert.assertEquals(encoder.schema().getFields().size(), 1);
+    final BinaryRow row = encoder.toRow(bean1);
+    final MemoryBuffer buffer = MemoryUtils.wrap(row.toBytes());
+    row.pointTo(buffer, 0, buffer.size());
+    final IgnoredMethods deserializedBean = encoder.fromRow(row);
+    Assert.assertEquals(deserializedBean.f1(), 2112);
+    Assert.assertEquals(deserializedBean.doubled(), 2112 * 2);
+
+    try {
+      deserializedBean.withF1(100);
+      Assert.fail();
+    } catch (final UnsupportedOperationException expected) {
+    }
   }
 }

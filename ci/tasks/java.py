@@ -17,34 +17,142 @@
 
 import logging
 import os
+import subprocess
+import re
 from . import common
 
+
+def get_jdk_major_version():
+    try:
+        # Run the 'java -version' command
+        result = subprocess.run(["java", "-version"], capture_output=True, text=True)
+        output = result.stderr  # java -version outputs to stderr
+
+        # Use regex to find the version string
+        match = re.search(r'version "([^"]+)"', output)
+        if not match:
+            return None
+
+        version_string = match.group(1)
+
+        # Parse the version string
+        version_parts = version_string.split(".")
+        if version_parts[0] == "1":
+            # Java 8 or earlier
+            return int(version_parts[1])
+        else:
+            # Java 9 or later
+            return int(version_parts[0])
+
+    except Exception:
+        return None
+
+
 # JDK versions
-JDKS = [
-    "zulu21.28.85-ca-jdk21.0.0-linux_x64",
-    "zulu17.44.17-ca-crac-jdk17.0.8-linux_x64",
-    "zulu15.46.17-ca-jdk15.0.10-linux_x64",
-    "zulu13.54.17-ca-jdk13.0.14-linux_x64",
-    "zulu11.66.15-ca-jdk11.0.20-linux_x64",
-    "zulu8.72.0.17-ca-jdk8.0.382-linux_x64",
-]
+JDKS = {
+    "8": "zulu8.72.0.17-ca-jdk8.0.382-linux_x64",
+    "11": "zulu11.66.15-ca-jdk11.0.20-linux_x64",
+    "17": "zulu17.44.17-ca-crac-jdk17.0.8-linux_x64",
+    "21": "zulu21.28.85-ca-jdk21.0.0-linux_x64",
+    "24": "zulu24.32.13-ca-fx-jdk24.0.2-linux_x64",
+}
 
 
 def install_jdks():
     """Download and install JDKs."""
+    logging.info("Downloading and installing JDKs")
     common.cd_project_subdir("")  # Go to the project root
-    for jdk in JDKS:
+    for jdk in JDKS.values():
+        if os.path.exists(os.path.join(common.PROJECT_ROOT_DIR, jdk)):
+            logging.info(f"JDK {jdk} already exists")
+            continue
         common.exec_cmd(
             f"wget -q https://cdn.azul.com/zulu/bin/{jdk}.tar.gz -O {jdk}.tar.gz"
         )
         common.exec_cmd(f"tar zxf {jdk}.tar.gz")
+    logging.info("Creating toolchains.xml")
+    create_toolchains_xml(JDKS)
+    logging.info("JDKs downloaded and installed successfully")
+
+
+def create_toolchains_xml(jdk_mappings):
+    """Create toolchains.xml file in ~/.m2/ directory."""
+    import os
+    import xml.etree.ElementTree as ET
+    from xml.dom import minidom
+
+    # Create ~/.m2 directory if it doesn't exist
+    m2_dir = os.path.expanduser("~/.m2")
+    os.makedirs(m2_dir, exist_ok=True)
+
+    # Create the root element
+    toolchains = ET.Element("toolchains")
+
+    for version, jdk_name in jdk_mappings.items():
+        toolchain = ET.SubElement(toolchains, "toolchain")
+
+        # Set type
+        type_elem = ET.SubElement(toolchain, "type")
+        type_elem.text = "jdk"
+
+        # Set provides
+        provides = ET.SubElement(toolchain, "provides")
+        version_elem = ET.SubElement(provides, "version")
+        version_elem.text = version
+        vendor_elem = ET.SubElement(provides, "vendor")
+        vendor_elem.text = "azul"
+
+        # Set configuration
+        configuration = ET.SubElement(toolchain, "configuration")
+        jdk_home = ET.SubElement(configuration, "jdkHome")
+        jdk_home.text = os.path.abspath(os.path.join(common.PROJECT_ROOT_DIR, jdk_name))
+
+    # Create pretty XML string
+    rough_string = ET.tostring(toolchains, "unicode")
+    reparsed = minidom.parseString(rough_string)
+    pretty_xml = reparsed.toprettyxml(indent="  ")
+
+    # Add proper XML header with encoding
+    xml_header = '<?xml version="1.0" encoding="UTF8"?>\n'
+    pretty_xml = (
+        xml_header + pretty_xml.split("\n", 1)[1]
+    )  # Remove the default header and add our custom one
+
+    # Write to ~/.m2/toolchains.xml
+    toolchains_path = os.path.join(m2_dir, "toolchains.xml")
+    with open(toolchains_path, "w", encoding="utf-8") as f:
+        f.write(pretty_xml)
+
+    logging.info(f"Created toolchains.xml at {toolchains_path}")
+    logging.info("Toolchains configuration:")
+    for version, jdk_name in jdk_mappings.items():
+        jdk_path = os.path.join(common.PROJECT_ROOT_DIR, jdk_name)
+        logging.info(f"  JDK {version}: {jdk_path}")
+    # print toolchains.xml
+    with open(toolchains_path, "r", encoding="utf-8") as f:
+        logging.info(f.read())
+
+
+def install_fory():
+    """Install Fory."""
+    # Always install jdks and create toolchains.xml to ensure proper JDK environment
+    if get_jdk_major_version() == 8:
+        install_jdks()
+        java_home = os.path.join(common.PROJECT_ROOT_DIR, JDKS["11"])
+        os.environ["JAVA_HOME"] = java_home
+        os.environ["PATH"] = f"{java_home}/bin:{os.environ.get('PATH', '')}"
+    common.cd_project_subdir("java")
+    common.exec_cmd("mvn -T16 --batch-mode --no-transfer-progress install -DskipTests")
 
 
 def run_java8():
     """Run Java 8 tests."""
     logging.info("Executing fory java tests with Java 8")
+    install_jdks()
     common.cd_project_subdir("java")
-    common.exec_cmd("mvn -T16 --batch-mode --no-transfer-progress test")
+    common.exec_cmd(
+        "mvn -T16 --batch-mode --no-transfer-progress test -pl '!:fory-format,!:fory-testsuite'"
+    )
     logging.info("Executing fory java tests succeeds")
 
 
@@ -103,7 +211,9 @@ def run_integration_tests():
     logging.info("Executing fory integration tests")
 
     common.cd_project_subdir("java")
-    common.exec_cmd("mvn -T10 -B --no-transfer-progress clean install -DskipTests")
+    common.exec_cmd(
+        "mvn -T10 -B --no-transfer-progress clean install -DskipTests -pl '!:fory-format,!:fory-testsuite'"
+    )
 
     logging.info("benchmark tests")
     common.cd_project_subdir("java/benchmark")
@@ -114,7 +224,7 @@ def run_integration_tests():
     logging.info("latest_jdk_tests: JDK 21")
 
     # Set Java 21 as the current JDK
-    java_home = os.path.join(common.PROJECT_ROOT_DIR, JDKS[0])
+    java_home = os.path.join(common.PROJECT_ROOT_DIR, JDKS["21"])
     os.environ["JAVA_HOME"] = java_home
     os.environ["PATH"] = f"{java_home}/bin:{os.environ.get('PATH', '')}"
 
@@ -135,7 +245,7 @@ def run_integration_tests():
 
     # First round: Generate serialized data files
     logging.info("First round: Generate serialized data files for each JDK version")
-    for jdk in JDKS:
+    for jdk in JDKS.values():
         java_home = os.path.join(common.PROJECT_ROOT_DIR, jdk)
         os.environ["JAVA_HOME"] = java_home
         os.environ["PATH"] = f"{java_home}/bin:{os.environ.get('PATH', '')}"
@@ -147,7 +257,7 @@ def run_integration_tests():
 
     # Second round: Test cross-JDK compatibility
     logging.info("Second round: Test cross-JDK compatibility")
-    for jdk in JDKS:
+    for jdk in JDKS.values():
         java_home = os.path.join(common.PROJECT_ROOT_DIR, jdk)
         os.environ["JAVA_HOME"] = java_home
         os.environ["PATH"] = f"{java_home}/bin:{os.environ.get('PATH', '')}"
@@ -165,7 +275,9 @@ def run_graalvm_test():
     logging.info("Start GraalVM tests")
 
     common.cd_project_subdir("java")
-    common.exec_cmd("mvn -T10 -B --no-transfer-progress clean install -DskipTests")
+    common.exec_cmd(
+        "mvn -T10 -B --no-transfer-progress clean install -DskipTests -pl '!:fory-format,!:fory-testsuite'"
+    )
 
     logging.info("Start to build graalvm native image")
     common.cd_project_subdir("integration_tests/graalvm_tests")
@@ -178,24 +290,46 @@ def run_graalvm_test():
     logging.info("Execute graalvm tests succeed!")
 
 
-def run(java_version=None):
+def run_release():
+    """Release to Maven Central."""
+    logging.info("Starting release to Maven Central with Java")
+    common.cd_project_subdir("java")
+
+    # Clean and install without tests first
+    logging.info("Cleaning and installing dependencies")
+    common.exec_cmd("mvn -T10 -B --no-transfer-progress clean install -DskipTests")
+
+    # Deploy to Maven Central
+    logging.info("Deploying to Maven Central")
+    common.exec_cmd(
+        "mvn -T10 -B --no-transfer-progress clean deploy -Dgpg.skip -DskipTests -Papache-release"
+    )
+
+    logging.info("Release to Maven Central completed successfully")
+
+
+def run(version=None, release=False, install_jdks=False, install_fory=False):
     """Run Java CI tasks based on the specified Java version."""
-    if java_version == "8":
+    if install_jdks:
+        globals()["install_jdks"]()
+    if install_fory:
+        globals()["install_fory"]()
+    if release:
+        logging.info("Release mode enabled - will release to Maven Repository")
+        run_release()
+    elif version == "8":
         run_java8()
-    elif java_version == "11":
+    elif version == "11":
         run_java11()
-    elif java_version == "17":
+    elif version == "17":
         run_jdk17_plus("17")
-    elif java_version == "21":
+    elif version == "21":
         run_jdk17_plus("21")
-    elif java_version == "24":
+    elif version == "24":
         run_jdk17_plus("24")
-    elif java_version == "windows_java21":
+    elif version == "windows_java21":
         run_windows_java21()
-    elif java_version == "integration_tests":
+    elif version == "integration_tests":
         run_integration_tests()
-    elif java_version == "graalvm":
+    elif version == "graalvm":
         run_graalvm_test()
-    else:
-        # Default to Java 17 if no version specified
-        run_jdk17_plus("17")
