@@ -15,59 +15,25 @@
 # specific language governing permissions and limitations
 # under the License.
 
-# Nanobind extensions
-genrule(
-    name = "nanobind_math_ops",
+load("@nanobind_bazel//:build_defs.bzl", "nanobind_extension")
+
+# Nanobind extensions using official nanobind-bazel (cross-platform ready!)
+nanobind_extension(
+    name = "math_ops",
     srcs = [
         "src/math_ops.cpp",
     ],
-    outs = [
-        "math_ops.so",
-    ],
-    cmd = """
-        set -e
-        NANOBIND_DIR=$$(python -c "import nanobind; print(nanobind.get_cmake_dir() + '/../..')")
-        PYTHON_INCLUDE=$$(python -c "import sysconfig; print(sysconfig.get_path('include'))")
-        PYTHON_LIB=$$(python -c "import sysconfig; print(sysconfig.get_config_var('LIBDIR'))")
-        
-        g++ -O3 -Wall -shared -std=c++17 -fPIC \
-            -I"$$NANOBIND_DIR/include" \
-            -I"$$PYTHON_INCLUDE" \
-            $(location src/math_ops.cpp) \
-            -o $@ \
-            -L"$$PYTHON_LIB" -lpython3.12
-    """,
-    local = 1,
-    tags = ["no-cache"],
     visibility = ["//visibility:public"],
 )
 
-genrule(
-    name = "nanobind_buffer_ops",
+nanobind_extension(
+    name = "buffer_ops", 
     srcs = [
         "src/buffer_ops.cpp",
         "src/buffer.cpp",
+    ],
+    hdrs = [
         "src/buffer.hpp",
     ],
-    outs = [
-        "buffer_ops.so",
-    ],
-    cmd = """
-        set -e
-        NANOBIND_DIR=$$(python -c "import nanobind; print(nanobind.get_cmake_dir() + '/../..')")
-        PYTHON_INCLUDE=$$(python -c "import sysconfig; print(sysconfig.get_path('include'))")
-        PYTHON_LIB=$$(python -c "import sysconfig; print(sysconfig.get_config_var('LIBDIR'))")
-        
-        g++ -O3 -Wall -shared -std=c++17 -fPIC \
-            -I"$$NANOBIND_DIR/include" \
-            -I"$$PYTHON_INCLUDE" \
-            -Isrc \
-            $(location src/buffer_ops.cpp) \
-            $(location src/buffer.cpp) \
-            -o $@ \
-            -L"$$PYTHON_LIB" -lpython3.12
-    """,
-    local = 1,
-    tags = ["no-cache"],
     visibility = ["//visibility:public"],
 )

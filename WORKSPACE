@@ -42,6 +42,14 @@ http_archive(
     build_file = "//cpp/fory/thirdparty:BUILD",
 )
 
+# Add nanobind-bazel for cross-platform nanobind support
+http_archive(
+    name = "nanobind_bazel",
+    urls = ["https://github.com/nicholasjng/nanobind-bazel/archive/refs/tags/v2.8.0.tar.gz"],
+    sha256 = "63c517c5d921214604c787e61b20b89c2213bbac9ba80b35ba570ac1b1432457",
+    strip_prefix = "nanobind-bazel-2.8.0",
+)
+
 bazel_skylib_workspace()
 python_configure(name="local_config_python")
 pyarrow_configure(name="local_config_pyarrow")

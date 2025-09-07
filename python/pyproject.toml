@@ -60,7 +60,7 @@ all = ["pyarrow"]
 dev = ["ruff"]
 
 [tool.setuptools]
-packages = ["pyfory", "pyfory.format", "pyfory.lib", "pyfory.lib.mmh3", "pyfory.meta"]
+packages = ["pyfory", "pyfory.format", "pyfory.lib", "pyfory.lib.mmh3", "pyfory.meta", "pyfory.nanobind_extensions"]
 include-package-data = true
 zip-safe = false
 
@@ -68,6 +68,7 @@ zip-safe = false
 "pyfory" = ["**/*.pxd", "**/*.pyx", "**/*.pxd", "*.so", "*.dylib", "*.dll", "*.pyd"]
 "pyfory.format" = ["**/*.pxd", "**/*.pyx", "**/*.pxd", "*.so", "*.dylib", "*.dll", "*.pyd"]
 "pyfory.lib.mmh3" = ["**/*.pxd", "**/*.pyx", "**/*.pxd", "*.so", "*.dylib", "*.dll", "*.pyd"]
+"pyfory.nanobind_extensions" = ["*.so", "*.dylib", "*.dll", "*.pyd"]
 
 [tool.setuptools.dynamic]
 version = {attr = "pyfory.__version__"}

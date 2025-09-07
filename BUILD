@@ -97,6 +97,8 @@ genrule(
         ":python/pyfory/lib/mmh3/mmh3.so",
         ":python/pyfory/format/_format.so",
         ":python/pyfory/_serialization.so",
+        "//python/pyfory/nanobind_extensions:math_ops",
+        "//python/pyfory/nanobind_extensions:buffer_ops",
     ],
     outs = [
         "cp_fory_py_generated.out",
@@ -112,11 +114,15 @@ genrule(
             cp -f $(location python/pyfory/lib/mmh3/mmh3.so) "$$WORK_DIR/python/pyfory/lib/mmh3/mmh3.pyd"
             cp -f $(location python/pyfory/format/_format.so) "$$WORK_DIR/python/pyfory/format/_format.pyd"
             cp -f $(location python/pyfory/_serialization.so) "$$WORK_DIR/python/pyfory/_serialization.pyd"
+            cp -f $(location //python/pyfory/nanobind_extensions:math_ops) "$$WORK_DIR/python/pyfory/nanobind_extensions/math_ops.pyd"
+            cp -f $(location //python/pyfory/nanobind_extensions:buffer_ops) "$$WORK_DIR/python/pyfory/nanobind_extensions/buffer_ops.pyd"
         else
             cp -f $(location python/pyfory/_util.so) "$$WORK_DIR/python/pyfory"
             cp -f $(location python/pyfory/lib/mmh3/mmh3.so) "$$WORK_DIR/python/pyfory/lib/mmh3"
             cp -f $(location python/pyfory/format/_format.so) "$$WORK_DIR/python/pyfory/format"
             cp -f $(location python/pyfory/_serialization.so) "$$WORK_DIR/python/pyfory"
+            cp -f $(location //python/pyfory/nanobind_extensions:math_ops) "$$WORK_DIR/python/pyfory/nanobind_extensions"
+            cp -f $(location //python/pyfory/nanobind_extensions:buffer_ops) "$$WORK_DIR/python/pyfory/nanobind_extensions"
         fi
         echo $$(date) > $@
     """,
