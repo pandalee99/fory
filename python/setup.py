@@ -18,6 +18,7 @@
 import os
 import platform
 import subprocess
+import sys
 from os.path import abspath, join as pjoin
 
 from setuptools import setup

@@ -1,5 +1,24 @@
 # Licensed to the Apache Software Foundation (ASF) under one
-# or more contributor license agreements.  See the NOTICE file
+# or more contributor license aggenrule(
+    name = "nanobind_math_ops",
+    outs = ["python/pyfory/nanobind_extensions/math_ops.so"],
+    cmd = """
+        set -e
+        PYTHON_INCLUDE=$$(python3 -c "import sysconfig; print(sysconfig.get_path('include'))")
+        NANOBIND_INCLUDE=$$(python3 -c "import nanobind; print(nanobind.include_dir())")
+        NANOBIND_SRC=$$(python3 -c "import nanobind; import os; print(os.path.join(os.path.dirname(nanobind.__file__), 'src'))")
+        NANOBIND_EXT=$$(python3 -c "import nanobind; import os; print(os.path.join(os.path.dirname(nanobind.__file__), 'ext/robin_map/include'))")
+        # Compile the nanobind extension for macOS
+        g++ -O3 -Wall -shared -std=c++17 -fPIC \
+            -undefined dynamic_lookup \
+            -I"$$PYTHON_INCLUDE" \
+            -I"$$NANOBIND_INCLUDE" \
+            -I"$$NANOBIND_EXT" \
+            python/pyfory/nanobind_extensions/src/math_ops.cpp \
+            "$$NANOBIND_SRC/nb_combined.cpp" \
+            -o $@
+    """,
+)OTICE file
 # distributed with this work for additional information
 # regarding copyright ownership.  The ASF licenses this file
 # to you under the Apache License, Version 2.0 (the
@@ -93,7 +112,6 @@ pyx_library(
 # Nanobind extensions built using genrule (similar to pip install approach)
 genrule(
     name = "nanobind_math_ops",
-    srcs = ["python/pyfory/nanobind_extensions/src/math_ops.cpp"],
     outs = ["python/pyfory/nanobind_extensions/math_ops.so"],
     cmd = """
         set -e
@@ -102,24 +120,19 @@ genrule(
         NANOBIND_SRC=$$(python3 -c "import nanobind; import os; print(os.path.join(os.path.dirname(nanobind.__file__), 'src'))")
         NANOBIND_EXT=$$(python3 -c "import nanobind; import os; print(os.path.join(os.path.dirname(nanobind.__file__), 'ext/robin_map/include'))")
         # Compile the nanobind extension for macOS
-        g++ -O3 -Wall -shared -std=c++17 -fPIC \\
-            -undefined dynamic_lookup \\
-            -I"$$PYTHON_INCLUDE" \\
-            -I"$$NANOBIND_INCLUDE" \\
-            -I"$$NANOBIND_EXT" \\
-            $(location python/pyfory/nanobind_extensions/src/math_ops.cpp) \\
-            "$$NANOBIND_SRC/nb_combined.cpp" \\
-            -o $@
+        g++ -O3 -Wall -shared -std=c++17 -fPIC 
+        -undefined dynamic_lookup 
+        -I"$$PYTHON_INCLUDE" 
+        -I"$$NANOBIND_INCLUDE" 
+        -I"$$NANOBIND_EXT" 
+        python/pyfory/nanobind_extensions/src/math_ops.cpp 
+        "$$NANOBIND_SRC/nb_combined.cpp" 
+        -o $@
     """,
 )
 
 genrule(
     name = "nanobind_buffer_ops",
-    srcs = [
-        "python/pyfory/nanobind_extensions/src/buffer_ops.cpp",
-        "python/pyfory/nanobind_extensions/src/buffer.cpp",
-        "python/pyfory/nanobind_extensions/src/buffer.hpp",
-    ],
     outs = ["python/pyfory/nanobind_extensions/buffer_ops.so"],
     cmd = """
         set -e
@@ -128,15 +141,14 @@ genrule(
         NANOBIND_SRC=$$(python3 -c "import nanobind; import os; print(os.path.join(os.path.dirname(nanobind.__file__), 'src'))")
         NANOBIND_EXT=$$(python3 -c "import nanobind; import os; print(os.path.join(os.path.dirname(nanobind.__file__), 'ext/robin_map/include'))")
         # Compile the nanobind extension for macOS
-        g++ -O3 -Wall -shared -std=c++17 -fPIC \\
-            -undefined dynamic_lookup \\
-            -I"$$PYTHON_INCLUDE" \\
-            -I"$$NANOBIND_INCLUDE" \\
-            -I"$$NANOBIND_EXT" \\
-            -Ipython/pyfory/nanobind_extensions/src \\
-            $(location python/pyfory/nanobind_extensions/src/buffer_ops.cpp) \\
-            $(location python/pyfory/nanobind_extensions/src/buffer.cpp) \\
-            "$$NANOBIND_SRC/nb_combined.cpp" \\
+        g++ -O3 -Wall -shared -std=c++17 -fPIC \
+            -undefined dynamic_lookup \
+            -I"$$PYTHON_INCLUDE" \
+            -I"$$NANOBIND_INCLUDE" \
+            -I"$$NANOBIND_EXT" \
+            python/pyfory/nanobind_extensions/src/buffer_ops.cpp \
+            python/pyfory/nanobind_extensions/src/buffer.cpp \
+            "$$NANOBIND_SRC/nb_combined.cpp" \
             -o $@
     """,
 )
