@@ -46,7 +46,6 @@ class BinaryDistribution(Distribution):
         super().__init__(attrs=attrs)
         if BAZEL_BUILD_EXT:
             cwd_path = os.path.normpath(project_dir)
-            print("Running 'bazel clean --expunge'...")
             subprocess.check_call(["bazel", "clean", "--expunge"], cwd=cwd_path)
 
             bazel_args = ["bazel", "build", "-s"]
