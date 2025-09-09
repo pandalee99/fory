@@ -25,6 +25,9 @@ from setuptools.dist import Distribution
 
 DEBUG = os.environ.get("FORY_DEBUG", "False").lower() == "true"
 BAZEL_BUILD_EXT = os.environ.get("BAZEL_BUILD_EXT", "True").lower() == "true"
+BAZEL_VERSION = os.environ.get("BAZEL_VERSION", "8.4.0")
+
+print(f"Using Bazel version: {BAZEL_VERSION}")
 
 if DEBUG:
     os.environ["CFLAGS"] = "-O0"
@@ -46,6 +49,10 @@ class BinaryDistribution(Distribution):
         super().__init__(attrs=attrs)
         if BAZEL_BUILD_EXT:
             bazel_args = ["bazel", "build", "-s"]
+            
+            # Add Bazel 8.4.0 compatibility flags
+            bazel_args += ["--enable_workspace", "--noenable_bzlmod"]
+            
             arch = platform.machine().lower()
             if arch in ("x86_64", "amd64"):
                 bazel_args += ["--config=x86_64"]

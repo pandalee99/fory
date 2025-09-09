@@ -19,6 +19,17 @@
 build --enable_platform_specific_config
 
 ###############################################################################
+# Bazel 8.4.0 Compatibility Settings
+###############################################################################
+# Enable WORKSPACE mode and disable Bzlmod for transition period
+build --enable_workspace
+build --noenable_bzlmod
+
+# Java toolchain for Bazel 8.4.0 compatibility
+build --java_runtime_version=remotejdk_11
+build --tool_java_runtime_version=remotejdk_11
+
+###############################################################################
 # On       Windows, provide: BAZEL_SH, and BAZEL_LLVM (if using clang-cl)
 # On all platforms, provide: PYTHON3_BIN_PATH=python
 ###############################################################################

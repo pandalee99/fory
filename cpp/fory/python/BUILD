@@ -16,7 +16,7 @@
 # under the License.
 
 load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
-load("@com_github_grpc_grpc//bazel:cython_library.bzl", "pyx_library")
+load("//bazel:cython_library.bzl", "pyx_library")
 
 cc_library(
     name = "_pyfory",

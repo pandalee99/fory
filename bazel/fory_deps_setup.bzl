@@ -118,35 +118,30 @@ def setup_deps():
     # Fix @platforms error, see https://groups.google.com/g/bazel-discuss/c/iQyt08ZaNek
     http_archive(
         name = "bazel_skylib",
-        sha256 = "74d544d96f4a5bb630d465ca8bbcfe231e3594e5aae57e1edbf17a6eb3ca2506",
+        sha256 = "bc283cdfcd526a52c3201279cda4bc298652efa898b10b4db0837dc51652756f",
         urls = [
-            "https://mirror.bazel.build/github.com/bazelbuild/bazel-skylib/releases/download/1.3.0/bazel-skylib-1.3.0.tar.gz",
-            "https://github.com/bazelbuild/bazel-skylib/releases/download/1.3.0/bazel-skylib-1.3.0.tar.gz",
+            "https://mirror.bazel.build/github.com/bazelbuild/bazel-skylib/releases/download/1.7.1/bazel-skylib-1.7.1.tar.gz",
+            "https://github.com/bazelbuild/bazel-skylib/releases/download/1.7.1/bazel-skylib-1.7.1.tar.gz",
         ],
     )
     http_archive(
         name = "rules_python",
-        sha256 = "9fcf91dbcc31fde6d1edb15f117246d912c33c36f44cf681976bd886538deba6",
-        strip_prefix = "rules_python-0.8.0",
-        url = "https://github.com/bazelbuild/rules_python/archive/refs/tags/0.8.0.tar.gz",
+        sha256 = "f2e80f97f9c0b82e2489e61e725df1e6bdaf16c4dacf5e26b95668787164baff",
+        strip_prefix = "rules_python-1.6.1",
+        url = "https://github.com/bazelbuild/rules_python/releases/download/1.6.1/rules_python-1.6.1.tar.gz",
     )
-    auto_http_archive(
-        name = "com_github_grpc_grpc",
-        # NOTE: If you update this, also update @boringssl's hash.
-        url = "https://github.com/grpc/grpc/archive/refs/tags/v1.46.6.tar.gz",
-        sha256 = "6514b3e6eab9e9c7017304512d4420387a47b1a9c5caa986643692977ed44e8a",
-        patches = [
-            "//bazel:grpc-cython-copts.patch",
-            "//bazel:grpc-python.patch",
-        ],
+    http_archive(
+        name = "rules_cc",
+        sha256 = "f4aadd8387f381033a9ad0500443a52a0cea5f8ad1ede4369d3c614eb7b2682e",
+        strip_prefix = "rules_cc-0.0.15",
+        urls = ["https://github.com/bazelbuild/rules_cc/releases/download/0.0.15/rules_cc-0.0.15.tar.gz"],
     )
-    # leary cython failed with: `found 'CKeyValueMetadata'`
-    # see https://github.com/apache/arrow/issues/28629
+    # Updated Cython for our custom Cython rules
     auto_http_archive(
         name = "cython",
-        build_file = "@com_github_grpc_grpc//third_party:cython.BUILD",
-        url = "https://github.com/cython/cython/releases/download/3.1.1/cython-3.1.1.tar.gz",
-        sha256 = "505ccd413669d5132a53834d792c707974248088c4f60c497deb1b416e366397",
+        build_file = "//bazel:cython.BUILD",
+        url = "https://github.com/cython/cython/releases/download/3.0.11/cython-3.0.11.tar.gz",
+        sha256 = "7146dd2af8682b4ca61331851e6aebce9fe5158e75300343f80c07ca80b1faff",
     )
     auto_http_archive(
         name = "com_google_googletest",
@@ -155,10 +150,10 @@ def setup_deps():
     )
     auto_http_archive(
         name = "com_google_absl",
-        sha256 = "5366d7e7fa7ba0d915014d387b66d0d002c03236448e1ba9ef98122c13b35c36",
-        strip_prefix = "abseil-cpp-20230125.3",
+        sha256 = "3c743204df78366ad2eaf236d6631d83f6bc928d1705dd0000b872e53b73dc6a",
+        strip_prefix = "abseil-cpp-20240116.2",
         urls = [
-            "https://github.com/abseil/abseil-cpp/archive/20230125.3.tar.gz",
+            "https://github.com/abseil/abseil-cpp/archive/20240116.2.tar.gz",
         ],
     )
     http_archive(
