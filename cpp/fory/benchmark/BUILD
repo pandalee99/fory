@@ -2,8 +2,8 @@ load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
 
 cc_library(
     name = "fory_benchmark",
-    srcs = glob(["*.cc"], exclude=["benchmark*.cc"]),
-    hdrs = glob(["*.h"]),
+    srcs = glob(["*.cc"], exclude=["benchmark*.cc"], allow_empty=True),
+    hdrs = glob(["*.h"], allow_empty=True),
     strip_include_prefix = "/cpp",
     alwayslink = True,
     linkstatic = True,

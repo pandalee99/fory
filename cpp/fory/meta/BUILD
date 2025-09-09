@@ -2,7 +2,7 @@ load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
 
 cc_library(
     name = "fory_meta",
-    srcs = glob(["*.cc"], exclude=["*test.cc"]),
+    srcs = glob(["*.cc"], exclude=["*test.cc"], allow_empty = True),
     hdrs = glob(["*.h"]),
     strip_include_prefix = "/cpp",
     visibility = ["//visibility:public"],

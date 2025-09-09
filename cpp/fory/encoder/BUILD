@@ -2,8 +2,8 @@ load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
 
 cc_library(
     name = "fory_encoder",
-    srcs = glob(["*.cc"], exclude=["*test.cc"]),
-    hdrs = glob(["*.h"]),
+    srcs = glob(["*.cc"], exclude=["*test.cc"], allow_empty=True),
+    hdrs = glob(["*.h"], allow_empty=True),
     strip_include_prefix = "/cpp",
     deps = [
       "@local_config_pyarrow//:arrow",

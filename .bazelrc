@@ -18,6 +18,9 @@
 # Must be first. Enables build:windows, build:linux, build:macos, build:freebsd, build:openbsd
 build --enable_platform_specific_config
 
+common --enable_bzlmod=false
+common --enable_workspace
+
 ###############################################################################
 # On       Windows, provide: BAZEL_SH, and BAZEL_LLVM (if using clang-cl)
 # On all platforms, provide: PYTHON3_BIN_PATH=python

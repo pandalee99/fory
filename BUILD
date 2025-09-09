@@ -15,21 +15,20 @@
 # specific language governing permissions and limitations
 # under the License.
 
-load("@com_github_grpc_grpc//bazel:cython_library.bzl", "pyx_library")
+load("@rules_python//python:defs.bzl", "py_library")
 load("@compile_commands_extractor//:refresh_compile_commands.bzl", "refresh_compile_commands")
+load("//bazel:cython_library.bzl", "pyx_library")
 
 
 pyx_library(
     name = "_util",
-    srcs = glob([
-        "python/pyfory/includes/*.pxd",
-        "python/pyfory/_util.pxd",
+    srcs = [
         "python/pyfory/_util.pyx",
         "python/pyfory/__init__.py",
+    ] + glob([
+        "python/pyfory/includes/*.pxd",
+        "python/pyfory/_util.pxd",
     ]),
-    cc_kwargs = dict(
-        linkstatic = 1,
-    ),
     deps = [
         "//cpp/fory/util:fory_util",
     ],
@@ -37,14 +36,12 @@ pyx_library(
 
 pyx_library(
     name = "mmh3",
-    srcs = glob([
-        "python/pyfory/lib/mmh3/*.pxd",
-        "python/pyfory/lib/mmh3/*.pyx",
+    srcs = [
+        "python/pyfory/lib/mmh3/mmh3.pyx",
         "python/pyfory/lib/mmh3/__init__.py",
+    ] + glob([
+        "python/pyfory/lib/mmh3/*.pxd",
     ]),
-    cc_kwargs = dict(
-        linkstatic = 1,
-    ),
     deps = [
         "//cpp/fory/thirdparty:libmmh3",
     ],
@@ -52,15 +49,13 @@ pyx_library(
 
 pyx_library(
     name = "_serialization",
-    srcs = glob([
-        "python/pyfory/includes/*.pxd",
-        "python/pyfory/_util.pxd",
+    srcs = [
         "python/pyfory/_serialization.pyx",
         "python/pyfory/__init__.py",
+    ] + glob([
+        "python/pyfory/includes/*.pxd",
+        "python/pyfory/_util.pxd",
     ]),
-    cc_kwargs = dict(
-        linkstatic = 1,
-    ),
     deps = [
         "//cpp/fory/util:fory_util",
         "//cpp/fory/type:fory_type",
@@ -71,18 +66,15 @@ pyx_library(
 
 pyx_library(
     name = "_format",
-    srcs = glob([
+    srcs = [
+        "python/pyfory/format/_format.pyx",
         "python/pyfory/__init__.py",
+        "python/pyfory/format/__init__.py",
+    ] + glob([
         "python/pyfory/includes/*.pxd",
         "python/pyfory/_util.pxd",
-        "python/pyfory/*.pxi",
-        "python/pyfory/format/_format.pyx",
-        "python/pyfory/format/__init__.py",
         "python/pyfory/format/*.pxi",
     ]),
-    cc_kwargs = dict(
-        linkstatic = 1,
-    ),
     deps = [
         "//cpp/fory:fory",
         "@local_config_pyarrow//:python_numpy_headers",
@@ -93,10 +85,10 @@ pyx_library(
 genrule(
     name = "cp_fory_so",
     srcs = [
-        ":python/pyfory/_util.so",
-        ":python/pyfory/lib/mmh3/mmh3.so",
-        ":python/pyfory/format/_format.so",
-        ":python/pyfory/_serialization.so",
+        ":mmh3.so",
+        # ":_util.so", 
+        # ":_format.so",
+        # ":_serialization.so",
     ],
     outs = [
         "cp_fory_py_generated.out",
@@ -106,17 +98,19 @@ genrule(
         set -x
         WORK_DIR=$$(pwd)
         u_name=`uname -s`
+        # Copy from the srcs to the output directories
+        mkdir -p "$$WORK_DIR/python/pyfory/lib/mmh3"
         if [ "$${u_name: 0: 4}" == "MING" ] || [ "$${u_name: 0: 4}" == "MSYS" ]
         then
-            cp -f $(location python/pyfory/_util.so) "$$WORK_DIR/python/pyfory/_util.pyd"
-            cp -f $(location python/pyfory/lib/mmh3/mmh3.so) "$$WORK_DIR/python/pyfory/lib/mmh3/mmh3.pyd"
-            cp -f $(location python/pyfory/format/_format.so) "$$WORK_DIR/python/pyfory/format/_format.pyd"
-            cp -f $(location python/pyfory/_serialization.so) "$$WORK_DIR/python/pyfory/_serialization.pyd"
+            # Windows
+            if [ -f "$(location :mmh3.so)" ]; then
+                cp -f "$(location :mmh3.so)" "$$WORK_DIR/python/pyfory/lib/mmh3/mmh3.pyd"
+            fi
         else
-            cp -f $(location python/pyfory/_util.so) "$$WORK_DIR/python/pyfory"
-            cp -f $(location python/pyfory/lib/mmh3/mmh3.so) "$$WORK_DIR/python/pyfory/lib/mmh3"
-            cp -f $(location python/pyfory/format/_format.so) "$$WORK_DIR/python/pyfory/format"
-            cp -f $(location python/pyfory/_serialization.so) "$$WORK_DIR/python/pyfory"
+            # Unix/Linux/macOS
+            if [ -f "$(location :mmh3.so)" ]; then
+                cp -f "$(location :mmh3.so)" "$$WORK_DIR/python/pyfory/lib/mmh3/"
+            fi
         fi
         echo $$(date) > $@
     """,
