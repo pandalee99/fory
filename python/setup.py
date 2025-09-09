@@ -45,6 +45,10 @@ class BinaryDistribution(Distribution):
     def __init__(self, attrs=None):
         super().__init__(attrs=attrs)
         if BAZEL_BUILD_EXT:
+            cwd_path = os.path.normpath(project_dir)
+            print("Running 'bazel clean --expunge'...")
+            subprocess.check_call(["bazel", "clean", "--expunge"], cwd=cwd_path)
+
             bazel_args = ["bazel", "build", "-s"]
             arch = platform.machine().lower()
             if arch in ("x86_64", "amd64"):
@@ -52,8 +56,6 @@ class BinaryDistribution(Distribution):
             elif arch in ("aarch64", "arm64"):
                 bazel_args += ["--copt=-fsigned-char"]
             bazel_args += ["//:cp_fory_so"]
-            # Ensure Windows path compatibility
-            cwd_path = os.path.normpath(project_dir)
             subprocess.check_call(bazel_args, cwd=cwd_path)
 
     def has_ext_modules(self):
