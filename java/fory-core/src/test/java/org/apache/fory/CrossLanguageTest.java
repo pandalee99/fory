@@ -831,4 +831,63 @@ public class CrossLanguageTest extends ForyTestBase {
     Assert.assertEquals(xserDe(fory, a), a);
     structRoundBack(fory, a, "test_enum_field");
   }
+
+  @Test
+  public void testCrossLanguageMetaShare() throws Exception {
+    Fory fory =
+        Fory.builder()
+            .withLanguage(Language.XLANG)
+            .withRefTracking(true)
+            .withCompatibleMode(CompatibleMode.COMPATIBLE)
+            .requireClassRegistration(false)
+            .build();
+    fory.register(ComplexObject2.class, "test.ComplexObject2");
+    
+    ComplexObject2 obj = new ComplexObject2();
+    obj.f1 = true;
+    obj.f2 = new HashMap<>(ImmutableMap.of((byte) -1, 2));
+    
+    // Test with meta share enabled
+    byte[] serialized = fory.serialize(obj);
+    Assert.assertEquals(fory.deserialize(serialized), obj);
+    
+    structRoundBack(fory, obj, "test_cross_language_meta_share");
+  }
+
+  @Test
+  public void testCrossLanguageMetaShareComplex() throws Exception {
+    Fory fory =
+        Fory.builder()
+            .withLanguage(Language.XLANG)
+            .withRefTracking(true)
+            .withCompatibleMode(CompatibleMode.COMPATIBLE)
+            .requireClassRegistration(false)
+            .build();
+    fory.register(ComplexObject1.class, "test.ComplexObject1");
+    fory.register(ComplexObject2.class, "test.ComplexObject2");
+    
+    ComplexObject2 obj2 = new ComplexObject2();
+    obj2.f1 = true;
+    obj2.f2 = ImmutableMap.of((byte) -1, 2);
+    
+    ComplexObject1 obj = new ComplexObject1();
+    obj.f1 = obj2;
+    obj.f2 = "meta_share_test";
+    obj.f3 = Arrays.asList("compatible", "mode");
+    obj.f4 = ImmutableMap.of((byte) 1, 2);
+    obj.f5 = Byte.MAX_VALUE;
+    obj.f6 = Short.MAX_VALUE;
+    obj.f7 = Integer.MAX_VALUE;
+    obj.f8 = Long.MAX_VALUE;
+    obj.f9 = 1.0f / 2;
+    obj.f10 = 1 / 3.0;
+    obj.f11 = new short[] {(short) 1, (short) 2};
+    obj.f12 = ImmutableList.of((short) -1, (short) 4);
+    
+    // Test with meta share enabled
+    byte[] serialized = fory.serialize(obj);
+    Assert.assertEquals(fory.deserialize(serialized), obj);
+    
+    structRoundBack(fory, obj, "test_cross_language_meta_share_complex");
+  }
 }
