@@ -241,7 +241,6 @@ def build_field_infos(type_resolver, cls):
 def build_field_type(type_resolver, field_name: str, type_hint, visitor):
     """Build field type from type hint."""
     type_ids = infer_field(field_name, type_hint, visitor)
-    print(f"=??????????=> {field_name, type_hint, visitor, type_ids}")
     return build_field_type_from_type_ids(type_resolver, field_name, type_ids, visitor)
 
 
