@@ -684,7 +684,7 @@ def test_cross_language_meta_share(data_file_path):
     @dataclass
     class ComplexObject2:
         f1: Any
-        f2: Dict[int, int]  # Use plain int types to avoid type annotation issues
+        f2: Dict[pyfory.Int8Type, pyfory.Int32Type]  # Use exact types to match Java Map<Byte, Integer>
     
     fory.register_type(ComplexObject2, namespace="test", typename="ComplexObject2")
     
@@ -723,22 +723,22 @@ def test_cross_language_meta_share_complex(data_file_path):
     @dataclass
     class ComplexObject2:
         f1: Any
-        f2: Dict[int, int]
+        f2: Dict[pyfory.Int8Type, pyfory.Int32Type]
     
     @dataclass  
     class ComplexObject1:
         f1: Any
         f2: str
         f3: List[str] 
-        f4: Dict[int, int]
-        f5: int
-        f6: int
-        f7: int
-        f8: int
-        f9: float
-        f10: float
-        f11: List[int]  # Simplified from array
-        f12: List[int]
+        f4: Dict[pyfory.Int8Type, pyfory.Int32Type]
+        f5: pyfory.Int8Type
+        f6: pyfory.Int16Type
+        f7: pyfory.Int32Type
+        f8: pyfory.Int64Type
+        f9: pyfory.Float32Type
+        f10: pyfory.Float64Type
+        f11: pyfory.Int16ArrayType
+        f12: List[pyfory.Int16Type]
     
     fory.register_type(ComplexObject1, namespace="test", typename="ComplexObject1")
     fory.register_type(ComplexObject2, namespace="test", typename="ComplexObject2")
