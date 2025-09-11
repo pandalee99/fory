@@ -753,7 +753,7 @@ def test_cross_language_meta_share_complex(data_file_path):
     debug_print(f"Deserialized complex object: {obj}")
 
     # Verify the nested object structure
-    assert hasattr(obj, 'f1') and hasattr(obj.f1, 'f1') and hasattr(obj.f1, 'f2')
+    assert hasattr(obj, "f1") and hasattr(obj.f1, "f1") and hasattr(obj.f1, "f2")
     assert obj.f1.f1 is True
     assert isinstance(obj.f1.f2, dict)
     assert obj.f2 == "meta_share_test"
