@@ -680,56 +680,56 @@ def test_oob_buffer(in_band_file_path, out_of_band_file_path):
 def test_cross_language_meta_share(data_file_path):
     """Test cross-language meta sharing with ComplexObject2."""
     fory = pyfory.Fory(language=pyfory.Language.XLANG, compatible=True, ref_tracking=True)
-    
+
     @dataclass
     class ComplexObject2:
         f1: Any
-        f2: Dict[pyfory.Int8Type, pyfory.Int32Type]  # Use exact types to match Java Map<Byte, Integer>
-    
+        f2: Dict[pyfory.Int8Type, pyfory.Int32Type]
+
     fory.register_type(ComplexObject2, namespace="test", typename="ComplexObject2")
-    
+
     with open(data_file_path, "rb") as f:
         data_bytes = f.read()
-    
+
     debug_print(f"Reading data of length {len(data_bytes)} from {data_file_path}")
-    
+
     # Deserialize Java-generated data with meta share
     obj = fory.deserialize(data_bytes)
     debug_print(f"Deserialized object: {obj}")
-    
+
     # Verify the object structure
     assert obj.f1 is True  # Boolean value
     assert isinstance(obj.f2, dict)
     assert obj.f2[-1] == 2  # Dict[Int8, Int32] with key=-1, value=2
-    
+
     # Serialize back with meta share
     new_serialized = fory.serialize(obj)
     debug_print(f"Re-serialized data length: {len(new_serialized)}")
-    
+
     # Verify round-trip
     round_trip_obj = fory.deserialize(new_serialized)
     assert round_trip_obj == obj
-    
+
     # Write back for Java to verify
     with open(data_file_path, "wb") as f:
         f.write(new_serialized)
 
 
-@cross_language_test  
+@cross_language_test
 def test_cross_language_meta_share_complex(data_file_path):
     """Test cross-language meta sharing with complex nested objects."""
     fory = pyfory.Fory(language=pyfory.Language.XLANG, compatible=True, ref_tracking=True)
-    
+
     @dataclass
     class ComplexObject2:
         f1: Any
         f2: Dict[pyfory.Int8Type, pyfory.Int32Type]
-    
-    @dataclass  
+
+    @dataclass
     class ComplexObject1:
         f1: Any
         f2: str
-        f3: List[str] 
+        f3: List[str]
         f4: Dict[pyfory.Int8Type, pyfory.Int32Type]
         f5: pyfory.Int8Type
         f6: pyfory.Int16Type
@@ -739,34 +739,34 @@ def test_cross_language_meta_share_complex(data_file_path):
         f10: pyfory.Float64Type
         f11: pyfory.Int16ArrayType
         f12: List[pyfory.Int16Type]
-    
+
     fory.register_type(ComplexObject1, namespace="test", typename="ComplexObject1")
     fory.register_type(ComplexObject2, namespace="test", typename="ComplexObject2")
-    
+
     with open(data_file_path, "rb") as f:
         data_bytes = f.read()
-    
+
     debug_print(f"Reading complex data of length {len(data_bytes)} from {data_file_path}")
-    
+
     # Deserialize Java-generated complex object with meta share
     obj = fory.deserialize(data_bytes)
     debug_print(f"Deserialized complex object: {obj}")
-    
+
     # Verify the nested object structure
     assert hasattr(obj, 'f1') and hasattr(obj.f1, 'f1') and hasattr(obj.f1, 'f2')
     assert obj.f1.f1 is True
     assert isinstance(obj.f1.f2, dict)
     assert obj.f2 == "meta_share_test"
     assert obj.f3 == ["compatible", "mode"]
-    
+
     # Serialize back with meta share
     new_serialized = fory.serialize(obj)
     debug_print(f"Re-serialized complex data length: {len(new_serialized)}")
-    
+
     # Verify round-trip
     round_trip_obj = fory.deserialize(new_serialized)
     assert round_trip_obj == obj
-    
+
     # Write back for Java to verify
     with open(data_file_path, "wb") as f:
         f.write(new_serialized)
