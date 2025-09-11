@@ -847,15 +847,15 @@ public class CrossLanguageTest extends ForyTestBase {
             .requireClassRegistration(false)
             .build();
     fory.register(ComplexObject2.class, "test.ComplexObject2");
-    
+
     ComplexObject2 obj = new ComplexObject2();
     obj.f1 = true;
     obj.f2 = new HashMap<>(ImmutableMap.of((byte) -1, 2));
-    
+
     // Test with meta share enabled
     byte[] serialized = fory.serialize(obj);
     Assert.assertEquals(fory.deserialize(serialized), obj);
-    
+
     structRoundBack(fory, obj, "test_cross_language_meta_share");
   }
 
@@ -870,11 +870,11 @@ public class CrossLanguageTest extends ForyTestBase {
             .build();
     fory.register(ComplexObject1.class, "test.ComplexObject1");
     fory.register(ComplexObject2.class, "test.ComplexObject2");
-    
+
     ComplexObject2 obj2 = new ComplexObject2();
     obj2.f1 = true;
     obj2.f2 = ImmutableMap.of((byte) -1, 2);
-    
+
     ComplexObject1 obj = new ComplexObject1();
     obj.f1 = obj2;
     obj.f2 = "meta_share_test";
@@ -888,11 +888,11 @@ public class CrossLanguageTest extends ForyTestBase {
     obj.f10 = 1 / 3.0;
     obj.f11 = new short[] {(short) 1, (short) 2};
     obj.f12 = ImmutableList.of((short) -1, (short) 4);
-    
+
     // Test with meta share enabled
     byte[] serialized = fory.serialize(obj);
     Assert.assertEquals(fory.deserialize(serialized), obj);
-    
+
     structRoundBack(fory, obj, "test_cross_language_meta_share_complex");
   }
 }
