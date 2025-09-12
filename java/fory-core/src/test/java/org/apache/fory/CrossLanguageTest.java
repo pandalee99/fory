@@ -953,14 +953,14 @@ public class CrossLanguageTest extends ForyTestBase {
             .build();
     
     fory.register(CompatTestV1.class, "test.CompatTest");
-    
+
     CompatTestV1 objV1 = new CompatTestV1();
     objV1.name = "Schema Evolution Test";
     objV1.age = 42;
-    
+
     // Serialize with V1 schema
     Assert.assertEquals(fory.deserialize(fory.serialize(objV1)), objV1);
-    
+
     structRoundBack(fory, objV1, "test_schema_evolution");
   }
 
@@ -974,17 +974,17 @@ public class CrossLanguageTest extends ForyTestBase {
             .withCompatibleMode(CompatibleMode.COMPATIBLE)
             .requireClassRegistration(false)
             .build();
-    
+
     fory.register(CompatTestV2.class, "test.CompatTest");
     
     CompatTestV2 objV2 = new CompatTestV2();
     objV2.name = "Bob";
     objV2.age = 30;
     objV2.email = "bob@example.com";
-    
+
     // Serialize with V2 schema
     Assert.assertEquals(fory.deserialize(fory.serialize(objV2)), objV2);
-    
+
     // Test: old version (V1) reads new version (V2) data
     // Expected: V1 should successfully read name and age, ignoring email
     structBackwardCompatibility(fory, objV2, "test_backward_compatibility");
@@ -1002,16 +1002,16 @@ public class CrossLanguageTest extends ForyTestBase {
             .build();
     
     fory.register(CompatTestV3.class, "test.CompatTest");
-    
+
     CompatTestV3 objV3 = new CompatTestV3();
     objV3.name = "Charlie";
     objV3.age = 35;
     objV3.email = "charlie@example.com";
     objV3.active = true;
-    
+
     // Serialize with V3 schema (reordered fields)
     Assert.assertEquals(fory.deserialize(fory.serialize(objV3)), objV3);
-    
+
     structRoundBack(fory, objV3, "test_field_reordering_compatibility");
   }
 
@@ -1031,24 +1031,24 @@ public class CrossLanguageTest extends ForyTestBase {
             .withCompatibleMode(CompatibleMode.COMPATIBLE)
             .requireClassRegistration(false)
             .build();
-    
+
     fory.register(CompatContainer.class, "test.CompatContainer");
     fory.register(CompatTestV1.class, "test.CompatTestV1");
     fory.register(CompatTestV2.class, "test.CompatTestV2");
-    
+
     CompatTestV1 v1 = new CompatTestV1();
     v1.name = "Old Format";
     v1.age = 20;
-    
+
     CompatTestV2 v2 = new CompatTestV2();
     v2.name = "New Format";
     v2.age = 25;
     v2.email = "new@example.com";
-    
+
     CompatContainer container = new CompatContainer();
     container.oldObject = v1;
     container.newObject = v2;
-    
+
     structRoundBack(fory, container, "test_cross_version_compatibility");
   }
 }
