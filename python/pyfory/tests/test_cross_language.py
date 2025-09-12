@@ -876,7 +876,7 @@ def test_field_reordering_compatibility(data_file_path):
     assert obj.age == 35
     assert obj.name == "Charlie"
     assert obj.email == "charlie@example.com"
-    assert obj.active == True
+    assert obj.active
 
     # Serialize back with V3 schema
     new_serialized = fory.serialize(obj)
