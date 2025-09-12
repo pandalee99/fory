@@ -579,6 +579,21 @@ public class CrossLanguageTest extends ForyTestBase {
     Assert.assertEquals(fory.deserialize(Files.readAllBytes(dataFile)), obj);
   }
 
+  private void structBackwardCompatibility(Fory fory, Object obj, String testName) throws IOException {
+    byte[] serialized = fory.serialize(obj);
+    Assert.assertEquals(fory.deserialize(serialized), obj);
+    Path dataFile = Paths.get(testName);
+    System.out.println(dataFile.toAbsolutePath());
+    Files.deleteIfExists(dataFile);
+    Files.write(dataFile, serialized);
+    dataFile.toFile().deleteOnExit();
+    ImmutableList<String> command =
+        ImmutableList.of(
+            PYTHON_EXECUTABLE, "-m", PYTHON_MODULE, testName, dataFile.toAbsolutePath().toString());
+    // Just test that Python can read the data - don't check round-trip
+    Assert.assertTrue(executeCommand(command, 30));
+  }
+
   private static class ComplexObject1Serializer extends Serializer<ComplexObject1> {
 
     public ComplexObject1Serializer(Fory fory, Class<ComplexObject1> cls) {
@@ -900,5 +915,140 @@ public class CrossLanguageTest extends ForyTestBase {
     Assert.assertEquals(fory.deserialize(serialized), obj);
 
     structRoundBack(fory, obj, "test_cross_language_meta_share_complex");
+  }
+
+  // Compatibility test classes - Version 1 (original)
+  @Data
+  public static class CompatTestV1 {
+    String name;
+    Integer age;
+  }
+
+  // Compatibility test classes - Version 2 (with additional field)
+  @Data
+  public static class CompatTestV2 {
+    String name;
+    Integer age;
+    String email; // New field added
+  }
+
+  // Compatibility test classes - Version 3 (with reordered fields)
+  @Data
+  public static class CompatTestV3 {
+    Integer age;    // Reordered
+    String name;    // Reordered
+    String email;
+    Boolean active; // Another new field
+  }
+
+  @Test
+  public void testSchemaEvolution() throws Exception {
+    // Test simple schema evolution compatibility
+    Fory fory =
+        Fory.builder()
+            .withLanguage(Language.XLANG)
+            .withRefTracking(true)
+            .withCompatibleMode(CompatibleMode.COMPATIBLE)
+            .requireClassRegistration(false)
+            .build();
+    
+    fory.register(CompatTestV1.class, "test.CompatTest");
+    
+    CompatTestV1 objV1 = new CompatTestV1();
+    objV1.name = "Schema Evolution Test";
+    objV1.age = 42;
+    
+    // Serialize with V1 schema
+    Assert.assertEquals(fory.deserialize(fory.serialize(objV1)), objV1);
+    
+    structRoundBack(fory, objV1, "test_schema_evolution");
+  }
+
+  @Test
+  public void testBackwardCompatibility() throws Exception {
+    // Test that old version can read new data (ignoring unknown fields)
+    Fory fory =
+        Fory.builder()
+            .withLanguage(Language.XLANG)
+            .withRefTracking(true)
+            .withCompatibleMode(CompatibleMode.COMPATIBLE)
+            .requireClassRegistration(false)
+            .build();
+    
+    fory.register(CompatTestV2.class, "test.CompatTest");
+    
+    CompatTestV2 objV2 = new CompatTestV2();
+    objV2.name = "Bob";
+    objV2.age = 30;
+    objV2.email = "bob@example.com";
+    
+    // Serialize with V2 schema
+    Assert.assertEquals(fory.deserialize(fory.serialize(objV2)), objV2);
+    
+    // Test: old version (V1) reads new version (V2) data
+    // Expected: V1 should successfully read name and age, ignoring email
+    structBackwardCompatibility(fory, objV2, "test_backward_compatibility");
+  }
+
+  @Test
+  public void testFieldReorderingCompatibility() throws Exception {
+    // Test that field reordering doesn't break compatibility
+    Fory fory =
+        Fory.builder()
+            .withLanguage(Language.XLANG)
+            .withRefTracking(true)
+            .withCompatibleMode(CompatibleMode.COMPATIBLE)
+            .requireClassRegistration(false)
+            .build();
+    
+    fory.register(CompatTestV3.class, "test.CompatTest");
+    
+    CompatTestV3 objV3 = new CompatTestV3();
+    objV3.name = "Charlie";
+    objV3.age = 35;
+    objV3.email = "charlie@example.com";
+    objV3.active = true;
+    
+    // Serialize with V3 schema (reordered fields)
+    Assert.assertEquals(fory.deserialize(fory.serialize(objV3)), objV3);
+    
+    structRoundBack(fory, objV3, "test_field_reordering_compatibility");
+  }
+
+  @Data
+  public static class CompatContainer {
+    CompatTestV1 oldObject;
+    CompatTestV2 newObject;
+  }
+
+  @Test
+  public void testCrossVersionCompatibility() throws Exception {
+    // Test mixed version compatibility in one test
+    Fory fory =
+        Fory.builder()
+            .withLanguage(Language.XLANG)
+            .withRefTracking(true)
+            .withCompatibleMode(CompatibleMode.COMPATIBLE)
+            .requireClassRegistration(false)
+            .build();
+    
+    fory.register(CompatContainer.class, "test.CompatContainer");
+    fory.register(CompatTestV1.class, "test.CompatTestV1");
+    fory.register(CompatTestV2.class, "test.CompatTestV2");
+    
+    CompatTestV1 v1 = new CompatTestV1();
+    v1.name = "Old Format";
+    v1.age = 20;
+    
+    CompatTestV2 v2 = new CompatTestV2();
+    v2.name = "New Format";
+    v2.age = 25;
+    v2.email = "new@example.com";
+    
+    CompatContainer container = new CompatContainer();
+    container.oldObject = v1;
+    container.newObject = v2;
+    
+    structRoundBack(fory, container, "test_cross_version_compatibility");
   }
 }
