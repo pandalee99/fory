@@ -111,7 +111,9 @@ def encode_typedef(type_resolver, cls):
         if len(splits) == 1:
             splits.insert(0, "")
         namespace, typename = splits
-    return TypeDef(namespace, typename, cls, type_id, field_infos, binary, is_compressed)
+
+    result = TypeDef(namespace, typename, cls, type_id, field_infos, binary, is_compressed)
+    return result
 
 
 def prepend_header(buffer: bytes, is_compressed: bool, has_fields_meta: bool):

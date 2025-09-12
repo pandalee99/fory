@@ -378,6 +378,7 @@ class TypeResolver:
                     type_id = TypeId.NAMED_STRUCT if type_id is None else ((type_id << 8) + TypeId.STRUCT)
         elif not internal:
             type_id = TypeId.NAMED_EXT if type_id is None else ((type_id << 8) + TypeId.EXT)
+
         return self.__register_type(
             cls,
             type_id=type_id,
@@ -420,8 +421,17 @@ class TypeResolver:
         internal: bool = False,
     ):
         dynamic_type = type_id is not None and type_id < 0
-        if not internal and serializer is None:
+        # In metashare mode, for struct types, we want to keep serializer=None
+        # so that _set_typeinfo will be called to create the TypeDef-based serializer
+        should_create_serializer = (
+            not internal
+            and serializer is None
+            and not (self.meta_share and typename is not None and type_id is not None and is_struct_type(type_id & 0xFF))
+        )
+
+        if should_create_serializer:
             serializer = self._create_serializer(cls)
+
         if typename is None:
             typeinfo = TypeInfo(cls, type_id, serializer, None, None, dynamic_type)
         else:
@@ -514,8 +524,12 @@ class TypeResolver:
         if is_struct_type(type_id):
             if self.meta_share:
                 type_def = encode_typedef(self, typeinfo.cls)
-                typeinfo.serializer = type_def.create_serializer(self)
-                typeinfo.type_def = type_def
+                if type_def is not None:
+                    typeinfo.serializer = type_def.create_serializer(self)
+                    typeinfo.type_def = type_def
+                else:
+                    # Fallback to regular serializer
+                    typeinfo.serializer = DataClassSerializer(self.fory, typeinfo.cls, xlang=not self.fory.is_py)
             else:
                 typeinfo.serializer = DataClassSerializer(self.fory, typeinfo.cls, xlang=not self.fory.is_py)
         else:
