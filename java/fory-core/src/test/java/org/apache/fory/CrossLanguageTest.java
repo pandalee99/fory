@@ -579,7 +579,8 @@ public class CrossLanguageTest extends ForyTestBase {
     Assert.assertEquals(fory.deserialize(Files.readAllBytes(dataFile)), obj);
   }
 
-  private void structBackwardCompatibility(Fory fory, Object obj, String testName) throws IOException {
+  private void structBackwardCompatibility(Fory fory, Object obj, String testName)
+      throws IOException {
     byte[] serialized = fory.serialize(obj);
     Assert.assertEquals(fory.deserialize(serialized), obj);
     Path dataFile = Paths.get(testName);
@@ -935,8 +936,8 @@ public class CrossLanguageTest extends ForyTestBase {
   // Compatibility test classes - Version 3 (with reordered fields)
   @Data
   public static class CompatTestV3 {
-    Integer age;    // Reordered
-    String name;    // Reordered
+    Integer age; // Reordered
+    String name; // Reordered
     String email;
     Boolean active; // Another new field
   }
@@ -951,7 +952,7 @@ public class CrossLanguageTest extends ForyTestBase {
             .withCompatibleMode(CompatibleMode.COMPATIBLE)
             .requireClassRegistration(false)
             .build();
-    
+
     fory.register(CompatTestV1.class, "test.CompatTest");
 
     CompatTestV1 objV1 = new CompatTestV1();
@@ -976,7 +977,7 @@ public class CrossLanguageTest extends ForyTestBase {
             .build();
 
     fory.register(CompatTestV2.class, "test.CompatTest");
-    
+
     CompatTestV2 objV2 = new CompatTestV2();
     objV2.name = "Bob";
     objV2.age = 30;
@@ -1000,7 +1001,7 @@ public class CrossLanguageTest extends ForyTestBase {
             .withCompatibleMode(CompatibleMode.COMPATIBLE)
             .requireClassRegistration(false)
             .build();
-    
+
     fory.register(CompatTestV3.class, "test.CompatTest");
 
     CompatTestV3 objV3 = new CompatTestV3();
