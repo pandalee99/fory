@@ -215,8 +215,8 @@ type ComplexObject1 struct {
 	F8  int64
 	F9  float32
 	F10 float64
-	F11 [2]int16
-	F12 fory.Int16Slice
+	F11 []int16         // Primitive slice - should be serialized as INT16_ARRAY
+	F12 fory.Int16Slice // Typed slice - should be serialized as LIST
 }
 
 type ComplexObject2 struct {
@@ -257,7 +257,7 @@ func TestSerializeComplexStruct(t *testing.T) {
 	obj.F8 = fory.MaxInt64
 	obj.F9 = 1.0 / 2
 	obj.F10 = 1 / 3.0
-	obj.F11 = [2]int16{1, 2}
+	obj.F11 = []int16{1, 2}
 	obj.F12 = []int16{-1, 4}
 
 	structRoundBack(t, fory_, obj, "test_serialize_complex_struct")

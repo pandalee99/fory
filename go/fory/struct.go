@@ -148,9 +148,13 @@ func createStructFieldInfos(f *Fory, type_ reflect.Type) (structFieldsInfo, erro
 			sliceType := reflect.SliceOf(elemType)
 			fieldSerializer = f.typeResolver.typeToSerializers[sliceType]
 		} else if field.Type.Kind() == reflect.Slice {
-			// If the field is a concrete slice type, dynamically create a valid serializer
-			// so it has the potential and capability to use readSameTypes function.
-			if field.Type.Elem().Kind() != reflect.Interface {
+			// Check if there's a predefined serializer for this slice type
+			if predefinedTypeInfo, exists := f.typeResolver.typesInfo[field.Type]; exists {
+				// Use predefined serializer (e.g., int16ArraySerializer for []int16)
+				fieldSerializer = predefinedTypeInfo.Serializer
+			} else if field.Type.Elem().Kind() != reflect.Interface {
+				// If the field is a concrete slice type, dynamically create a valid serializer
+				// so it has the potential and capability to use readSameTypes function.
 				fieldSerializer = sliceSerializer{
 					f.typeResolver.typesInfo[field.Type.Elem()],
 				}
@@ -363,13 +367,20 @@ func computeFieldHash(hash int32, fieldInfo *fieldInfo, typeResolver *typeResolv
 		} else {
 			tid := s.TypeId()
 			/*
-			   For struct fields declared with concrete slice types,
-			   use typeID = LIST uniformly for hash calculation to align cross-language behavior,
-			   while using the concrete slice type serializer for array and slice serialization.
-			   These two approaches do not conflict.
+			   For struct fields declared with primitive slice/array types,
+			   use the corresponding array typeID for hash calculation to align cross-language behavior.
+			   For generic slice types ([]int, []interface{}), use LIST typeID.
+			   This ensures []int16 maps to INT16_ARRAY while []int maps to LIST.
 			*/
-			if fieldInfo.type_.Kind() == reflect.Slice {
-				tid = LIST
+			if fieldInfo.type_.Kind() == reflect.Slice || fieldInfo.type_.Kind() == reflect.Array {
+				if isPrimitiveSliceOrArrayType(fieldInfo.type_) {
+					// Use the actual serializer's TypeID for primitive types
+					// e.g., []int16 -> INT16_ARRAY, []int32 -> INT32_ARRAY
+					tid = s.TypeId()
+				} else {
+					// Use LIST for generic slice types like []int, []interface{}
+					tid = LIST
+				}
 			}
 			if tid < 0 {
 				id = -int32(tid)
@@ -384,4 +395,49 @@ func computeFieldHash(hash int32, fieldInfo *fieldInfo, typeResolver *typeResolv
 		newHash /= 7
 	}
 	return int32(newHash), nil
+}
+
+// Debug function to print field hash calculation details
+func debugFieldHash(fieldInfo *fieldInfo) {
+	fmt.Printf("Field: %v, Type: %v, Kind: %v\n",
+		fieldInfo.fieldIndex, fieldInfo.type_, fieldInfo.type_.Kind())
+	if fieldInfo.type_.Kind() == reflect.Slice || fieldInfo.type_.Kind() == reflect.Array {
+		fmt.Printf("  Element type: %v, Element kind: %v\n",
+			fieldInfo.type_.Elem(), fieldInfo.type_.Elem().Kind())
+		fmt.Printf("  Type name: %v\n", fieldInfo.type_.Name())
+		fmt.Printf("  isPrimitiveSliceOrArrayType: %v\n", isPrimitiveSliceOrArrayType(fieldInfo.type_))
+		if fieldInfo.serializer != nil {
+			fmt.Printf("  Serializer TypeId: %v\n", fieldInfo.serializer.TypeId())
+		}
+	}
+}
+
+// isPrimitiveSliceOrArrayType checks if the type is a slice or array of primitive types
+// that should be serialized as arrays rather than lists.
+// Returns true for: []int16, []int32, []int64, []float32, []float64, []bool, [n]int16, etc.
+// Returns false for: []int, []interface{}, fory.Int16Slice, custom slice types
+func isPrimitiveSliceOrArrayType(t reflect.Type) bool {
+	if t.Kind() != reflect.Slice && t.Kind() != reflect.Array {
+		return false
+	}
+
+	// Check if this is a named type (like fory.Int16Slice) - these should use LIST
+	if t.Name() != "" {
+		return false
+	}
+
+	elem := t.Elem()
+	switch elem.Kind() {
+	case reflect.Int16, reflect.Int32, reflect.Int64:
+		return true
+	case reflect.Float32, reflect.Float64:
+		return true
+	case reflect.Bool:
+		return true
+	case reflect.Int, reflect.Int8:
+		// int and int8 are considered generic types, use LIST serialization
+		return false
+	default:
+		return false
+	}
 }
