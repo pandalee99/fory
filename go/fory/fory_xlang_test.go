@@ -111,13 +111,14 @@ func TestXLangSerializer(t *testing.T) {
 	set.Add(list...)
 	require.Nil(t, fory_.Serialize(buffer, set, nil))
 
-	// test primitive arrays
+	// test primitive arrays - aligned with Java CrossLanguageTest (excluding int8 for now)
 	require.Nil(t, fory_.Serialize(buffer, []bool{true, false}, nil))
-	require.Nil(t, fory_.Serialize(buffer, []int16{1, fory.MaxInt16}, nil))
-	require.Nil(t, fory_.Serialize(buffer, []int32{1, fory.MaxInt32}, nil))
-	require.Nil(t, fory_.Serialize(buffer, []int64{1, fory.MaxInt64}, nil))
-	require.Nil(t, fory_.Serialize(buffer, []float32{1.0, 2.0}, nil))
-	require.Nil(t, fory_.Serialize(buffer, []float64{1.0, 2.0}, nil))
+	// require.Nil(t, fory_.Serialize(buffer, []int8{1, fory.MaxInt8}, nil))  // TODO: Check Python support
+	require.Nil(t, fory_.Serialize(buffer, []int16{1, fory.MaxInt16}, nil)) // short[] in Java
+	require.Nil(t, fory_.Serialize(buffer, []int32{1, fory.MaxInt32}, nil)) // int[] in Java
+	require.Nil(t, fory_.Serialize(buffer, []int64{1, fory.MaxInt64}, nil)) // long[] in Java
+	require.Nil(t, fory_.Serialize(buffer, []float32{1.0, 2.0}, nil))       // float[] in Java
+	require.Nil(t, fory_.Serialize(buffer, []float64{1.0, 2.0}, nil))       // double[] in Java
 
 	check := func(buf *fory.ByteBuffer) {
 		values := []interface{}{
