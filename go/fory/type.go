@@ -424,7 +424,7 @@ func (r *typeResolver) initialize() {
 		{byteSliceType, byteSliceSerializer{}},
 		// Map basic type slices to proper array types for xlang compatibility
 		{boolSliceType, boolArraySerializer{}},
-		{int16SliceType, int16ArraySerializer{}}, 
+		{int16SliceType, int16ArraySerializer{}},
 		{int32SliceType, int32ArraySerializer{}},
 		{int64SliceType, int64ArraySerializer{}},
 		{float32SliceType, float32ArraySerializer{}},
