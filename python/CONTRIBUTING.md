@@ -10,7 +10,7 @@ cd python
 # For Python versions less than 3.13, numpy 2 is not currently supported.
 pip uninstall -y numpy
 # Install necessary environment for Python.
-pip install pyarrow Cython wheel pytest
+pip install pyarrow Cython wheel pytest pandas
 pip install -v -e .
 ```
 
