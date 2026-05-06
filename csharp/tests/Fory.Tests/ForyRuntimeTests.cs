@@ -257,6 +257,19 @@ public sealed class ForyRuntimeTests
     private const ulong StringEncodingUtf8 = 2;
 
     [Fact]
+    public void BuilderDefaultsToCompatibleUnlessExplicitlySet()
+    {
+        ForyRuntime defaultRuntime = ForyRuntime.Builder().Build();
+        ForyRuntime compatibleWithVersionCheck = ForyRuntime.Builder().Compatible(true).CheckStructVersion(true).Build();
+        ForyRuntime explicitSchemaConsistent = ForyRuntime.Builder().Compatible(false).Build();
+
+        Assert.True(defaultRuntime.Config.Compatible);
+        Assert.False(defaultRuntime.Config.CheckStructVersion);
+        Assert.False(compatibleWithVersionCheck.Config.CheckStructVersion);
+        Assert.False(explicitSchemaConsistent.Config.Compatible);
+    }
+
+    [Fact]
     public void PrimitiveRoundTrip()
     {
         ForyRuntime fory = ForyRuntime.Builder().Build();
@@ -826,7 +839,7 @@ public sealed class ForyRuntimeTests
     [Fact]
     public void MacroFieldOrderFollowsForyRules()
     {
-        ForyRuntime fory = ForyRuntime.Builder().CheckStructVersion(true).Build();
+        ForyRuntime fory = ForyRuntime.Builder().Compatible(false).CheckStructVersion(true).Build();
         fory.Register<FieldOrder>(300);
 
         FieldOrder value = new() { Z = "tail", A = 123_456_789, B = 17, C = 99 };
