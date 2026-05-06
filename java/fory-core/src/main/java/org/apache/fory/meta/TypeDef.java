@@ -34,6 +34,7 @@ import java.util.Objects;
 import java.util.stream.Collectors;
 import org.apache.fory.builder.MetaSharedCodecBuilder;
 import org.apache.fory.config.ForyBuilder;
+import org.apache.fory.exception.DeserializationException;
 import org.apache.fory.logging.Logger;
 import org.apache.fory.logging.LoggerFactory;
 import org.apache.fory.memory.MemoryBuffer;
@@ -69,11 +70,11 @@ import org.apache.fory.util.StringUtils;
 public class TypeDef implements Serializable {
   private static final Logger LOG = LoggerFactory.getLogger(TypeDef.class);
 
-  static final int COMPRESS_META_FLAG = 0b1 << 9;
-  static final int HAS_FIELDS_META_FLAG = 0b1 << 8;
+  static final int COMPRESS_META_FLAG = 0b1 << 8;
+  static final long RESERVED_META_FLAGS = 0b111L << 9;
   // low 8 bits
   static final int META_SIZE_MASKS = 0xff;
-  static final int NUM_HASH_BITS = 50;
+  static final int NUM_HASH_BITS = 52;
 
   // TODO use field offset to sort field, which will hit l1-cache more. Since
   // `objectFieldOffset` is not part of jvm-specification, it may change between different jdk
@@ -101,30 +102,33 @@ public class TypeDef implements Serializable {
 
   private final ClassSpec classSpec;
   private final List<FieldInfo> fieldsInfo;
-  private final boolean hasFieldsMeta;
   // Unique id for class def. If class def are same between processes, then the id will
   // be same too.
   private final long id;
   private final byte[] encoded;
 
-  TypeDef(
-      ClassSpec classSpec,
-      List<FieldInfo> fieldsInfo,
-      boolean hasFieldsMeta,
-      long id,
-      byte[] encoded) {
+  TypeDef(ClassSpec classSpec, List<FieldInfo> fieldsInfo, long id, byte[] encoded) {
     this.classSpec = classSpec;
     this.fieldsInfo = fieldsInfo;
-    this.hasFieldsMeta = hasFieldsMeta;
     this.id = id;
     this.encoded = encoded;
   }
 
   public static void skipTypeDef(MemoryBuffer buffer, long id) {
+    // Header-cache hits intentionally treat the current body as opaque bytes and skip by the size
+    // in
+    // the current header. Parsed TypeDefs are published to the cache only after successful body
+    // parse
+    // and 52-bit body-hash validation; cache hits must not reparse or rehash that body.
     int size = (int) (id & META_SIZE_MASKS);
     if (size == META_SIZE_MASKS) {
-      size += buffer.readVarUInt32Small14();
+      int extendedSize = buffer.readVarUInt32Small14();
+      if (extendedSize < 0 || extendedSize > Integer.MAX_VALUE - size) {
+        throw new DeserializationException("Invalid TypeDef metadata size " + extendedSize);
+      }
+      size += extendedSize;
     }
+    buffer.checkReadableBytes(size);
     buffer.increaseReaderIndex(size);
   }
 
@@ -144,11 +148,6 @@ public class TypeDef implements Serializable {
   /** Contain all fields info including all parent classes. */
   public List<FieldInfo> getFieldsInfo() {
     return fieldsInfo;
-  }
-
-  /** Returns ext meta for the class. */
-  public boolean hasFieldsMeta() {
-    return hasFieldsMeta;
   }
 
   /**
@@ -179,6 +178,10 @@ public class TypeDef implements Serializable {
         || classSpec.typeId == Types.NAMED_COMPATIBLE_STRUCT;
   }
 
+  public boolean isStructSchemaKind() {
+    return Types.isStructType(classSpec.typeId);
+  }
+
   public int getUserTypeId() {
     Preconditions.checkArgument(!isNamed(), "Named types don't have user type id");
     return classSpec.userTypeId;
@@ -190,8 +193,7 @@ public class TypeDef implements Serializable {
       return false;
     }
     TypeDef typeDef = (TypeDef) o;
-    return hasFieldsMeta == typeDef.hasFieldsMeta
-        && id == typeDef.id
+    return id == typeDef.id
         && Objects.equals(classSpec, typeDef.classSpec)
         && Objects.equals(fieldsInfo, typeDef.fieldsInfo);
   }
@@ -209,8 +211,6 @@ public class TypeDef implements Serializable {
         + '\''
         + ", fieldsInfo="
         + fieldsInfo
-        + ", hasFieldsMeta="
-        + hasFieldsMeta
         + ", id="
         + id
         + '}';
@@ -429,17 +429,12 @@ public class TypeDef implements Serializable {
       return TypeDefEncoder.buildTypeDef((XtypeResolver) resolver, cls);
     }
     return NativeTypeDefEncoder.buildTypeDef(
-        (ClassResolver) resolver, cls, buildFields(resolver, cls, resolveParent), true);
+        (ClassResolver) resolver, cls, buildFields(resolver, cls, resolveParent));
   }
 
   /** Build class definition from fields of class. */
   static TypeDef buildTypeDef(ClassResolver classResolver, Class<?> type, List<Field> fields) {
-    return buildTypeDef(classResolver, type, fields, true);
-  }
-
-  public static TypeDef buildTypeDef(
-      ClassResolver classResolver, Class<?> type, List<Field> fields, boolean hasFieldsMeta) {
-    return NativeTypeDefEncoder.buildTypeDef(classResolver, type, fields, hasFieldsMeta);
+    return NativeTypeDefEncoder.buildTypeDef(classResolver, type, fields);
   }
 
   public TypeDef replaceRootClassTo(TypeResolver resolver, Class<?> targetCls) {
@@ -460,6 +455,6 @@ public class TypeDef implements Serializable {
           (XtypeResolver) resolver, targetCls, fieldInfos);
     }
     return NativeTypeDefEncoder.buildTypeDefWithFieldInfos(
-        (ClassResolver) resolver, targetCls, fieldInfos, hasFieldsMeta);
+        (ClassResolver) resolver, targetCls, fieldInfos);
   }
 }

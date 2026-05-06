@@ -19,7 +19,11 @@
 
 import { BinaryReader } from "./reader";
 import { BinaryWriter } from "./writer";
-import { MetaString, MetaStringDecoder, MetaStringEncoder } from "./meta/MetaString";
+import {
+  MetaString,
+  MetaStringDecoder,
+  MetaStringEncoder,
+} from "./meta/MetaString";
 import { InnerFieldInfo, TypeMeta } from "./meta/TypeMeta";
 import { Type, TypeInfo } from "./typeInfo";
 import { Config, RefFlags, Serializer, TypeId } from "./type";
@@ -38,8 +42,7 @@ type TypeResolverLike = {
 class MetaStringBytes {
   dynamicWriteStringId = -1;
 
-  constructor(public bytes: MetaString) {
-  }
+  constructor(public bytes: MetaString) {}
 }
 
 export class RefWriter {
@@ -61,8 +64,7 @@ export class RefWriter {
 export class RefReader {
   private readObjects: any[] = [];
 
-  constructor(private reader: BinaryReader) {
-  }
+  constructor(private reader: BinaryReader) {}
 
   reset() {
     this.readObjects = [];
@@ -197,7 +199,7 @@ export class WriteContext {
     if (size > this._maxCollectionSize) {
       throw new Error(
         `Collection size ${size} exceeds maxCollectionSize ${this._maxCollectionSize}. `
-        + "The data may be malicious, or increase maxCollectionSize if needed."
+        + "The data may be malicious, or increase maxCollectionSize if needed.",
       );
     }
   }
@@ -206,7 +208,7 @@ export class WriteContext {
     if (size > this._maxBinarySize) {
       throw new Error(
         `Binary size ${size} exceeds maxBinarySize ${this._maxBinarySize}. `
-        + "The data may be malicious, or increase maxBinarySize if needed."
+        + "The data may be malicious, or increase maxBinarySize if needed.",
       );
     }
   }
@@ -382,6 +384,8 @@ export class WriteContext {
 }
 
 export class ReadContext {
+  private static readonly MAX_CACHED_TYPE_META = 8192;
+
   readonly reader: BinaryReader;
   readonly refReader: RefReader;
   readonly metaStringReader: MetaStringReader;
@@ -389,6 +393,7 @@ export class ReadContext {
   private typeMeta: TypeMeta[] = [];
   /** Persistent cross-message cache keyed by 8-byte type meta header. */
   private typeMetaCache: Map<bigint, TypeMeta> = new Map();
+
   private _depth = 0;
   private _maxDepth: number;
   private _maxBinarySize: number;
@@ -423,7 +428,7 @@ export class ReadContext {
     if (this._depth > this._maxDepth) {
       throw new Error(
         `Deserialization depth limit exceeded: ${this._depth} > ${this._maxDepth}. `
-        + "The data may be malicious, or increase maxDepth if needed."
+        + "The data may be malicious, or increase maxDepth if needed.",
       );
     }
   }
@@ -436,7 +441,7 @@ export class ReadContext {
     if (size > this._maxCollectionSize) {
       throw new Error(
         `Collection size ${size} exceeds maxCollectionSize ${this._maxCollectionSize}. `
-        + "The data may be malicious, or increase maxCollectionSize if needed."
+        + "The data may be malicious, or increase maxCollectionSize if needed.",
       );
     }
   }
@@ -445,7 +450,7 @@ export class ReadContext {
     if (size > this._maxBinarySize) {
       throw new Error(
         `Binary size ${size} exceeds maxBinarySize ${this._maxBinarySize}. `
-        + "The data may be malicious, or increase maxBinarySize if needed."
+        + "The data may be malicious, or increase maxBinarySize if needed.",
       );
     }
   }
@@ -477,27 +482,51 @@ export class ReadContext {
     const cached = this.typeMetaCache.get(header);
     let typeMeta: TypeMeta;
     if (cached) {
+      // Header-cache hits intentionally skip without rehashing. Entries reach this cache only
+      // after a successful TypeMeta parse and 52-bit body-hash validation. The current body
+      // size still comes from the current header bytes, not from the cached TypeMeta.
       TypeMeta.skipBody(this.reader, header);
       typeMeta = cached;
     } else {
       typeMeta = TypeMeta.fromBytesAfterHeader(this.reader, header);
-      this.typeMetaCache.set(header, typeMeta);
+      if (this.typeMetaCache.size < ReadContext.MAX_CACHED_TYPE_META) {
+        this.typeMetaCache.set(header, typeMeta);
+      }
     }
     this.typeMeta[dynamicTypeId] = typeMeta;
     return typeMeta;
   }
 
-  private fieldInfoToTypeInfo(fieldInfo: InnerFieldInfo, fallbackTypeInfo?: TypeInfo): TypeInfo {
+  private fieldInfoToTypeInfo(
+    fieldInfo: InnerFieldInfo,
+    fallbackTypeInfo?: TypeInfo,
+  ): TypeInfo {
     switch (fieldInfo.typeId) {
       case TypeId.MAP:
         return Type.map(
-          this.fieldInfoToTypeInfo(fieldInfo.options!.key!, fallbackTypeInfo?.options?.key),
-          this.fieldInfoToTypeInfo(fieldInfo.options!.value!, fallbackTypeInfo?.options?.value)
+          this.fieldInfoToTypeInfo(
+            fieldInfo.options!.key!,
+            fallbackTypeInfo?.options?.key,
+          ),
+          this.fieldInfoToTypeInfo(
+            fieldInfo.options!.value!,
+            fallbackTypeInfo?.options?.value,
+          ),
         );
       case TypeId.LIST:
-        return Type.list(this.fieldInfoToTypeInfo(fieldInfo.options!.inner!, fallbackTypeInfo?.options?.inner));
+        return Type.list(
+          this.fieldInfoToTypeInfo(
+            fieldInfo.options!.inner!,
+            fallbackTypeInfo?.options?.inner,
+          ),
+        );
       case TypeId.SET:
-        return Type.set(this.fieldInfoToTypeInfo(fieldInfo.options!.key!, fallbackTypeInfo?.options?.key));
+        return Type.set(
+          this.fieldInfoToTypeInfo(
+            fieldInfo.options!.key!,
+            fallbackTypeInfo?.options?.key,
+          ),
+        );
       default: {
         // Remote TypeMeta only carries the nested user-defined type kind, not the
         // concrete named type or custom serializer identity. Reuse the local field
@@ -508,13 +537,19 @@ export class ReadContext {
           if (fallbackTypeInfo) {
             return fallbackTypeInfo.clone();
           }
-          const serializer = this.typeResolver.getSerializerById(fieldInfo.typeId, fieldInfo.userTypeId);
+          const serializer = this.typeResolver.getSerializerById(
+            fieldInfo.typeId,
+            fieldInfo.userTypeId,
+          );
           if (serializer) {
             return serializer.getTypeInfo().clone();
           }
           return Type.any();
         }
-        const serializer = this.typeResolver.getSerializerById(fieldInfo.typeId, fieldInfo.userTypeId);
+        const serializer = this.typeResolver.getSerializerById(
+          fieldInfo.typeId,
+          fieldInfo.userTypeId,
+        );
         if (serializer) {
           return serializer.getTypeInfo().clone();
         }
@@ -536,7 +571,10 @@ export class ReadContext {
         const named = `${typeMeta.getNs()}$${typeMeta.getTypeName()}`;
         original = this.typeResolver.getSerializerByName(named);
       } else {
-        original = this.typeResolver.getSerializerById(typeId, typeMeta.getUserTypeId());
+        original = this.typeResolver.getSerializerById(
+          typeId,
+          typeMeta.getUserTypeId(),
+        );
       }
     }
     let typeInfo: TypeInfo;
@@ -545,17 +583,25 @@ export class ReadContext {
     } else if (!TypeId.isNamedType(typeId)) {
       typeInfo = Type.struct(typeMeta.getUserTypeId());
     } else {
-      typeInfo = Type.struct({ typeName: typeMeta.getTypeName(), namespace: typeMeta.getNs() });
+      typeInfo = Type.struct({
+        typeName: typeMeta.getTypeName(),
+        namespace: typeMeta.getNs(),
+      });
     }
     const localProps = original?.getTypeInfo().options?.props;
-    const props = Object.fromEntries(typeMeta.remapFieldNames(localProps).map((fieldInfo) => {
-      const localFieldTypeInfo = localProps?.[fieldInfo.getFieldName()];
-      const fieldTypeInfo = this.fieldInfoToTypeInfo(fieldInfo, localFieldTypeInfo)
-        .setNullable(fieldInfo.nullable)
-        .setTrackingRef(fieldInfo.trackingRef)
-        .setId(fieldInfo.fieldId);
-      return [fieldInfo.getFieldName(), fieldTypeInfo];
-    }));
+    const props = Object.fromEntries(
+      typeMeta.remapFieldNames(localProps).map((fieldInfo) => {
+        const localFieldTypeInfo = localProps?.[fieldInfo.getFieldName()];
+        const fieldTypeInfo = this.fieldInfoToTypeInfo(
+          fieldInfo,
+          localFieldTypeInfo,
+        )
+          .setNullable(fieldInfo.nullable)
+          .setTrackingRef(fieldInfo.trackingRef)
+          .setId(fieldInfo.fieldId);
+        return [fieldInfo.getFieldName(), fieldTypeInfo];
+      }),
+    );
     typeInfo.options = {
       ...typeInfo.options,
       props,

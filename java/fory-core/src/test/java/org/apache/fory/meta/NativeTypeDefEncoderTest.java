@@ -23,15 +23,20 @@ import static org.apache.fory.meta.NativeTypeDefEncoder.buildFieldsInfo;
 import static org.apache.fory.meta.NativeTypeDefEncoder.getClassFields;
 
 import java.io.Serializable;
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 import lombok.Data;
 import org.apache.fory.Fory;
 import org.apache.fory.annotation.ForyField;
+import org.apache.fory.exception.DeserializationException;
 import org.apache.fory.memory.MemoryBuffer;
 import org.apache.fory.resolver.ClassResolver;
+import org.apache.fory.serializer.ObjectStreamSerializer;
 import org.apache.fory.test.bean.BeanA;
 import org.apache.fory.test.bean.MapFields;
 import org.apache.fory.test.bean.Struct;
+import org.apache.fory.type.Types;
 import org.testng.Assert;
 import org.testng.annotations.Test;
 
@@ -44,7 +49,7 @@ public class NativeTypeDefEncoderTest {
     List<FieldInfo> fieldsInfo = buildFieldsInfo((ClassResolver) fory.getTypeResolver(), type);
     MemoryBuffer buffer =
         NativeTypeDefEncoder.encodeTypeDef(
-            (ClassResolver) fory.getTypeResolver(), type, getClassFields(type, fieldsInfo), true);
+            (ClassResolver) fory.getTypeResolver(), type, getClassFields(type, fieldsInfo));
     TypeDef typeDef = TypeDef.readTypeDef(fory.getTypeResolver(), buffer);
     Assert.assertEquals(typeDef.getClassName(), type.getName());
     Assert.assertEquals(typeDef.getFieldsInfo().size(), type.getDeclaredFields().length);
@@ -98,6 +103,87 @@ public class NativeTypeDefEncoderTest {
   }
 
   @Data
+  public static class NaturalExtTypeWithFields implements Serializable {
+    private static final long serialVersionUID = 1L;
+    private int value;
+  }
+
+  @Test
+  public void testFieldMetadataTypeDefUsesStructKindForNaturalExtSerializer() {
+    Fory fory =
+        Fory.builder()
+            .withXlang(false)
+            .withMetaShare(true)
+            .withCompatible(true)
+            .requireClassRegistration(false)
+            .build();
+    ClassResolver resolver = (ClassResolver) fory.getTypeResolver();
+    fory.registerSerializer(
+        NaturalExtTypeWithFields.class,
+        new ObjectStreamSerializer(resolver, NaturalExtTypeWithFields.class));
+
+    TypeDef typeDef = TypeDef.buildTypeDef(resolver, NaturalExtTypeWithFields.class);
+    Assert.assertTrue(typeDef.isStructSchemaKind());
+
+    TypeDef decoded =
+        TypeDef.readTypeDef(resolver, MemoryBuffer.fromByteArray(typeDef.getEncoded()));
+    Assert.assertEquals(decoded, typeDef);
+  }
+
+  @Test
+  public void testEmptyTypeDefKeepsNaturalExtKind() {
+    Fory fory =
+        Fory.builder()
+            .withXlang(false)
+            .withMetaShare(true)
+            .withCompatible(true)
+            .requireClassRegistration(false)
+            .build();
+    ClassResolver resolver = (ClassResolver) fory.getTypeResolver();
+    fory.getTypeResolver().getTypeInfo(java.util.ArrayList.class);
+
+    TypeDef typeDef =
+        NativeTypeDefEncoder.buildTypeDefWithFieldInfos(
+            resolver, java.util.ArrayList.class, Collections.emptyList());
+    Assert.assertEquals(typeDef.getClassSpec().typeId, Types.NAMED_EXT);
+
+    TypeDef decoded =
+        TypeDef.readTypeDef(resolver, MemoryBuffer.fromByteArray(typeDef.getEncoded()));
+    Assert.assertEquals(decoded, typeDef);
+  }
+
+  @Test
+  public void testDecodeRejectsKnownClassWithForgedRootKind() {
+    Fory fory =
+        Fory.builder()
+            .withXlang(false)
+            .withMetaShare(true)
+            .withCompatible(true)
+            .requireClassRegistration(false)
+            .build();
+    ClassResolver resolver = (ClassResolver) fory.getTypeResolver();
+    fory.getTypeResolver().getTypeInfo(java.util.ArrayList.class);
+
+    TypeDef typeDef =
+        NativeTypeDefEncoder.buildTypeDefWithFieldInfos(
+            resolver, java.util.ArrayList.class, Collections.emptyList());
+    byte[] encoded = typeDef.getEncoded();
+    MemoryBuffer encodedBuffer = MemoryBuffer.fromByteArray(encoded);
+    long header = encodedBuffer.readInt64();
+    Assert.assertEquals(header & TypeDef.COMPRESS_META_FLAG, 0L);
+    Assert.assertEquals((int) (header & TypeDef.META_SIZE_MASKS), encoded.length - Long.BYTES);
+
+    byte[] body = Arrays.copyOfRange(encoded, Long.BYTES, encoded.length);
+    body[0] =
+        (byte) ((NativeTypeDefEncoder.nativeKindCode(Types.NAMED_STRUCT) << 4) | (body[0] & 0x0f));
+    MemoryBuffer malformedBody = MemoryBuffer.newHeapBuffer(body.length);
+    malformedBody.writeBytes(body);
+    MemoryBuffer malformed = NativeTypeDefEncoder.prependHeader(malformedBody, false);
+    Assert.assertThrows(
+        DeserializationException.class, () -> TypeDef.readTypeDef(resolver, malformed));
+  }
+
+  @Data
   public static
   class TestClassLengthTestClassLengthTestClassLengthTestClassLengthTestClassLengthTestClassLengthTestClassLength
       implements Serializable {
@@ -116,12 +202,95 @@ public class NativeTypeDefEncoderTest {
   public void testPrependHeader() {
     MemoryBuffer inputBuffer = MemoryBuffer.newHeapBuffer(TypeDef.META_SIZE_MASKS + 1);
     inputBuffer.writerIndex(TypeDef.META_SIZE_MASKS + 1);
-    MemoryBuffer outputBuffer = NativeTypeDefEncoder.prependHeader(inputBuffer, true, false);
+    MemoryBuffer outputBuffer = NativeTypeDefEncoder.prependHeader(inputBuffer, true);
 
     long header = outputBuffer.readInt64();
     Assert.assertEquals(header & TypeDef.META_SIZE_MASKS, TypeDef.META_SIZE_MASKS);
     Assert.assertEquals(header & TypeDef.COMPRESS_META_FLAG, TypeDef.COMPRESS_META_FLAG);
-    Assert.assertEquals(header & TypeDef.HAS_FIELDS_META_FLAG, 0);
+  }
+
+  @Test
+  public void testDecodeRejectsReservedGlobalBits() {
+    Fory fory = Fory.builder().withMetaShare(true).build();
+    TypeDef typeDef = TypeDef.buildTypeDef(fory.getTypeResolver(), Foo1.class);
+    MemoryBuffer encoded = MemoryBuffer.fromByteArray(typeDef.getEncoded());
+    long header = encoded.readInt64();
+
+    MemoryBuffer malformed = MemoryBuffer.newHeapBuffer(typeDef.getEncoded().length);
+    malformed.writeInt64(header | TypeDef.RESERVED_META_FLAGS);
+    malformed.writeBytes(
+        typeDef.getEncoded(), Long.BYTES, typeDef.getEncoded().length - Long.BYTES);
+    Assert.assertThrows(
+        DeserializationException.class,
+        () -> TypeDef.readTypeDef(fory.getTypeResolver(), malformed));
+  }
+
+  @Test
+  public void testDecodeRejectsTrailingTypeDefBodyBytes() {
+    Fory fory = Fory.builder().withMetaShare(true).build();
+    TypeDef typeDef = TypeDef.buildTypeDef(fory.getTypeResolver(), Foo1.class);
+    MemoryBuffer encoded = MemoryBuffer.fromByteArray(typeDef.getEncoded());
+    long header = encoded.readInt64();
+    long size = header & TypeDef.META_SIZE_MASKS;
+    Assert.assertTrue(size < TypeDef.META_SIZE_MASKS);
+
+    MemoryBuffer malformed = MemoryBuffer.newHeapBuffer(typeDef.getEncoded().length + 1);
+    malformed.writeInt64((header & ~TypeDef.META_SIZE_MASKS) | (size + 1));
+    malformed.writeBytes(
+        typeDef.getEncoded(), Long.BYTES, typeDef.getEncoded().length - Long.BYTES);
+    malformed.writeByte(0);
+    Assert.assertThrows(
+        DeserializationException.class,
+        () -> TypeDef.readTypeDef(fory.getTypeResolver(), malformed));
+  }
+
+  @Test
+  public void testDecodeRejectsParsedTypeDefWithMismatchedHash() {
+    Fory fory = Fory.builder().withMetaShare(true).build();
+    TypeDef typeDef = TypeDef.buildTypeDef(fory.getTypeResolver(), Foo1.class);
+    MemoryBuffer encoded = MemoryBuffer.fromByteArray(typeDef.getEncoded());
+    long header = encoded.readInt64();
+    Assert.assertEquals(header & TypeDef.COMPRESS_META_FLAG, 0);
+
+    byte[] malformed = corruptEncodedBody(typeDef, "f1");
+    Assert.assertThrows(
+        DeserializationException.class,
+        () -> TypeDef.readTypeDef(fory.getTypeResolver(), MemoryBuffer.fromByteArray(malformed)));
+  }
+
+  @Test
+  public void testDecodeRejectsHashConsistentMalformedTypeDefBody() {
+    Fory fory = Fory.builder().withMetaShare(true).build();
+    MemoryBuffer body = MemoryBuffer.newHeapBuffer(1);
+    body.writeByte(0);
+    MemoryBuffer encoded = NativeTypeDefEncoder.prependHeader(body, false);
+    Assert.assertThrows(
+        RuntimeException.class, () -> TypeDef.readTypeDef(fory.getTypeResolver(), encoded));
+  }
+
+  private static byte[] corruptEncodedBody(TypeDef typeDef, String needle) {
+    byte[] malformed = typeDef.getEncoded().clone();
+    byte[] needleBytes = Encoders.encodeFieldName(needle).getBytes();
+    int index = indexOf(malformed, needleBytes, Long.BYTES);
+    Assert.assertTrue(index >= Long.BYTES);
+    malformed[index + needleBytes.length - 1] ^= 1;
+    return malformed;
+  }
+
+  private static int indexOf(byte[] bytes, byte[] needle, int fromIndex) {
+    for (int i = fromIndex; i <= bytes.length - needle.length; i++) {
+      boolean match = true;
+      for (int j = 0; j < needle.length; j++) {
+        if (bytes[i + j] != needle[j]) {
+          match = false;
+          break;
+        }
+      }
+      if (match) {
+        return i;
+      }
+    }
+    return -1;
   }
 
   @Test

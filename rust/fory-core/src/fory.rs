@@ -24,7 +24,7 @@ use crate::resolver::RefMode;
 use crate::resolver::TypeResolver;
 use crate::serializer::ForyDefault;
 use crate::serializer::{Serializer, StructSerializer};
-use crate::type_id::config_flags::{IS_CROSS_LANGUAGE_FLAG, IS_NULL_FLAG};
+use crate::type_id::config_flags::{IS_CROSS_LANGUAGE_FLAG, IS_OUT_OF_BAND_FLAG};
 use crate::type_id::SIZE_OF_REF_AND_TYPE;
 use std::cell::UnsafeCell;
 use std::mem;
@@ -167,6 +167,20 @@ impl ForyBuilder {
     /// ```
     pub fn compress_string(mut self, compress_string: bool) -> Self {
         self.config.compress_string = compress_string;
+        self
+    }
+
+    /// Enables or disables checked UTF-8 string reads.
+    ///
+    /// Checked reads validate UTF-8 payload bytes before constructing Rust `String` values.
+    /// Disabling this keeps the faster unchecked construction path and must only be used when
+    /// serialized bytes are trusted to contain valid UTF-8 strings.
+    ///
+    /// # Default
+    ///
+    /// The default value is `true`.
+    pub fn check_string_read(mut self, check_string_read: bool) -> Self {
+        self.config.check_string_read = check_string_read;
         self
     }
 
@@ -440,6 +454,11 @@ impl Fory {
     /// `true` if meta string compression is enabled, `false` otherwise.
     pub fn is_compress_string(&self) -> bool {
         self.config.compress_string
+    }
+
+    /// Returns whether UTF-8 string payload validation is enabled.
+    pub fn is_check_string_read(&self) -> bool {
+        self.config.check_string_read
     }
 
     /// Returns whether metadata sharing is enabled.
@@ -738,20 +757,17 @@ impl Fory {
         record: &T,
         context: &mut WriteContext,
     ) -> Result<(), Error> {
-        let is_none = record.fory_is_none();
-        self.write_head::<T>(is_none, &mut context.writer);
-        if !is_none {
-            // Use RefMode based on config:
-            // - If track_ref is enabled, use RefMode::Tracking for the root object
-            // - Otherwise, use RefMode::NullOnly which writes NOT_NULL_VALUE_FLAG
-            let ref_mode = if self.config.track_ref {
-                RefMode::Tracking
-            } else {
-                RefMode::NullOnly
-            };
-            // TypeMeta is written inline during serialization (streaming protocol)
-            <T as Serializer>::fory_write(record, context, ref_mode, true, false)?;
-        }
+        self.write_head::<T>(&mut context.writer);
+        // Use RefMode based on config:
+        // - If track_ref is enabled, use RefMode::Tracking for the root object
+        // - Otherwise, use RefMode::NullOnly which writes NOT_NULL_VALUE_FLAG
+        let ref_mode = if self.config.track_ref {
+            RefMode::Tracking
+        } else {
+            RefMode::NullOnly
+        };
+        // TypeMeta is written inline during serialization (streaming protocol)
+        <T as Serializer>::fory_write(record, context, ref_mode, true, false)?;
         Ok(())
     }
 
@@ -991,16 +1007,14 @@ impl Fory {
 
     /// Writes the serialization header to the writer.
     #[inline(always)]
-    pub fn write_head<T: Serializer>(&self, is_none: bool, writer: &mut Writer) {
+    pub fn write_head<T: Serializer>(&self, writer: &mut Writer) {
         const HEAD_SIZE: usize = 10;
         writer.reserve(T::fory_reserved_space() + SIZE_OF_REF_AND_TYPE + HEAD_SIZE);
-        let mut bitmap: u8 = 0;
-        if self.config.xlang {
-            bitmap |= IS_CROSS_LANGUAGE_FLAG;
-        }
-        if is_none {
-            bitmap |= IS_NULL_FLAG;
-        }
+        let bitmap = if self.config.xlang {
+            IS_CROSS_LANGUAGE_FLAG
+        } else {
+            0
+        };
         writer.write_u8(bitmap);
     }
 
@@ -1153,10 +1167,7 @@ impl Fory {
         &self,
         context: &mut ReadContext,
     ) -> Result<T, Error> {
-        let is_none = self.read_head(&mut context.reader)?;
-        if is_none {
-            return Ok(T::fory_default());
-        }
+        self.read_head(&mut context.reader)?;
         // Use RefMode based on config:
         // - If track_ref is enabled, use RefMode::Tracking for the root object
         // - Otherwise, use RefMode::NullOnly
@@ -1172,17 +1183,31 @@ impl Fory {
     }
 
     #[inline(always)]
-    fn read_head(&self, reader: &mut Reader) -> Result<bool, Error> {
+    fn read_head(&self, reader: &mut Reader) -> Result<(), Error> {
         let bitmap = reader.read_u8()?;
-        let peer_is_xlang = (bitmap & IS_CROSS_LANGUAGE_FLAG) != 0;
+        let expected = if self.config.xlang {
+            IS_CROSS_LANGUAGE_FLAG
+        } else {
+            0
+        };
+        if bitmap != expected {
+            return self.read_head_slow(bitmap, expected);
+        }
+        Ok(())
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn read_head_slow(&self, bitmap: u8, expected: u8) -> Result<(), Error> {
+        const KNOWN_FLAGS: u8 = IS_CROSS_LANGUAGE_FLAG | IS_OUT_OF_BAND_FLAG;
         ensure!(
-            self.config.xlang == peer_is_xlang,
+            (bitmap & !KNOWN_FLAGS) == 0 && (bitmap & IS_OUT_OF_BAND_FLAG) == 0,
+            Error::invalid_data("unsupported root header bitmap")
+        );
+        ensure!(
+            (bitmap & IS_CROSS_LANGUAGE_FLAG) == (expected & IS_CROSS_LANGUAGE_FLAG),
             Error::invalid_data("header bitmap mismatch at xlang bit")
         );
-        let is_none = (bitmap & IS_NULL_FLAG) != 0;
-        if is_none {
-            return Ok(true);
-        }
-        Ok(false)
+        Ok(())
     }
 }

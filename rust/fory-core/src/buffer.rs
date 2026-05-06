@@ -951,6 +951,19 @@ impl<'a> Reader<'a> {
     #[inline(always)]
     pub fn read_utf8_string(&mut self, len: usize) -> Result<String, Error> {
         self.check_bound(len)?;
+        let src = &self.bf[self.cursor..self.cursor + len];
+        // Rust is the only runtime that checks UTF-8 string payloads by default; other runtimes
+        // preserve their platform replacement behavior for invalid byte sequences.
+        let string =
+            std::str::from_utf8(src).map_err(|_| Error::encoding_error("invalid UTF-8 string"))?;
+        let string = string.to_owned();
+        self.move_next(len);
+        Ok(string)
+    }
+
+    #[inline(always)]
+    pub fn read_utf8_string_unchecked(&mut self, len: usize) -> Result<String, Error> {
+        self.check_bound(len)?;
         // don't use simd for memory copy, copy_non_overlapping is faster
         unsafe {
             let mut vec = Vec::with_capacity(len);
@@ -960,7 +973,6 @@ impl<'a> Reader<'a> {
             std::ptr::copy_nonoverlapping(src, dst, len);
             vec.set_len(len);
             self.move_next(len);
-            // SAFETY: Assuming valid UTF-8 bytes (responsibility of serialization protocol)
             Ok(String::from_utf8_unchecked(vec))
         }
     }

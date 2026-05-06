@@ -21,14 +21,12 @@ public sealed class ReadContext
 {
     private const int MaxParsedTypeMetaEntries = 8192;
 
-    private readonly record struct CachedTypeMetaEntry(TypeMeta TypeMeta, int SkipBytesAfterHeader);
-
     private readonly ReusableArray<TypeMeta> _readTypeMetas = new();
-    private readonly Dictionary<ulong, CachedTypeMetaEntry> _cachedTypeMetasByHeader = [];
+    private readonly Dictionary<ulong, TypeMeta> _cachedTypeMetasByHeader = [];
     private TypeMeta? _firstReadTypeMeta;
     private bool _hasFirstReadTypeMeta;
     private ulong _lastMetaHeader;
-    private CachedTypeMetaEntry _lastTypeMeta;
+    private TypeMeta? _lastTypeMeta;
     private bool _hasLastMetaHeader;
 
     private readonly List<MetaString> _readMetaStrings = [];
@@ -135,40 +133,46 @@ public sealed class ReadContext
             $"type meta index gap: index={index}, count={_readTypeMetas.Count + 1}");
     }
 
-    internal bool TryGetCachedReadTypeMeta(ulong header, out TypeMeta typeMeta, out int skipBytesAfterHeader)
+    internal bool TryGetCachedReadTypeMeta(ulong header, out TypeMeta typeMeta)
     {
-        if (_hasLastMetaHeader && _lastMetaHeader == header)
+        if (_hasLastMetaHeader && _lastMetaHeader == header && _lastTypeMeta is not null)
         {
-            typeMeta = _lastTypeMeta.TypeMeta;
-            skipBytesAfterHeader = _lastTypeMeta.SkipBytesAfterHeader;
+            typeMeta = _lastTypeMeta;
             return true;
         }
 
-        if (_cachedTypeMetasByHeader.TryGetValue(header, out CachedTypeMetaEntry cached))
+        if (_cachedTypeMetasByHeader.TryGetValue(header, out TypeMeta? cached) && cached is not null)
         {
             _lastMetaHeader = header;
             _lastTypeMeta = cached;
             _hasLastMetaHeader = true;
-            typeMeta = cached.TypeMeta;
-            skipBytesAfterHeader = cached.SkipBytesAfterHeader;
+            typeMeta = cached;
             return true;
         }
 
         typeMeta = null!;
-        skipBytesAfterHeader = 0;
         return false;
     }
 
-    internal void CacheReadTypeMeta(ulong header, TypeMeta typeMeta, int skipBytesAfterHeader)
+    internal void CacheReadTypeMeta(ulong header, TypeMeta typeMeta)
     {
-        CachedTypeMetaEntry cached = new(typeMeta, skipBytesAfterHeader);
-        _lastMetaHeader = header;
-        _lastTypeMeta = cached;
-        _hasLastMetaHeader = true;
-        if (_cachedTypeMetasByHeader.Count < MaxParsedTypeMetaEntries)
+        if (_cachedTypeMetasByHeader.TryGetValue(header, out TypeMeta? existing) && existing is not null)
         {
-            _cachedTypeMetasByHeader.TryAdd(header, cached);
+            _lastMetaHeader = header;
+            _lastTypeMeta = existing;
+            _hasLastMetaHeader = true;
+            return;
         }
+
+        if (_cachedTypeMetasByHeader.Count >= MaxParsedTypeMetaEntries)
+        {
+            return;
+        }
+
+        _lastMetaHeader = header;
+        _lastTypeMeta = typeMeta;
+        _hasLastMetaHeader = true;
+        _cachedTypeMetasByHeader.TryAdd(header, typeMeta);
     }
 
     internal MetaString? GetReadMetaString(int index)
@@ -198,20 +202,20 @@ public sealed class ReadContext
         }
 
         ulong header = Reader.ReadUInt64();
-        if (TryGetCachedReadTypeMeta(header, out TypeMeta cachedTypeMeta, out int skipBytesAfterHeader))
+        if (TryGetCachedReadTypeMeta(header, out TypeMeta cachedTypeMeta))
         {
-            Reader.Skip(skipBytesAfterHeader);
+            // Header-cache hits intentionally skip without rehashing. Entries reach this cache only
+            // after a successful TypeMeta parse and 52-bit body-hash validation. The current body
+            // size still comes from the current header bytes, not from the cached TypeMeta.
+            TypeMeta.SkipBody(Reader, header);
             StoreReadTypeMeta(cachedTypeMeta, index);
             return cachedTypeMeta;
         }
 
-        int headerStartCursor = Reader.Cursor - sizeof(ulong);
         Reader.MoveBack(sizeof(ulong));
         TypeMeta typeMeta = TypeMeta.Decode(Reader);
-        int consumedTypeMetaBytes = Reader.Cursor - headerStartCursor;
-        int parsedSkipBytesAfterHeader = consumedTypeMetaBytes - sizeof(ulong);
         StoreReadTypeMeta(typeMeta, index);
-        CacheReadTypeMeta(header, typeMeta, parsedSkipBytesAfterHeader);
+        CacheReadTypeMeta(header, typeMeta);
         return typeMeta;
     }
 

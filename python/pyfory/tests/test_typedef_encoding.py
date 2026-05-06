@@ -20,7 +20,7 @@ Tests for xlang TypeDef implementation.
 """
 
 import array
-from dataclasses import dataclass
+from dataclasses import dataclass, make_dataclass
 from typing import List, Dict
 
 import pytest
@@ -34,8 +34,14 @@ from pyfory.meta.typedef import (
     CollectionFieldType,
     MapFieldType,
     DynamicFieldType,
+    FIELD_NAME_ENCODINGS,
+    COMPRESS_META_FLAG,
 )
-from pyfory.meta.typedef_encoder import encode_typedef
+from pyfory.meta.typedef_encoder import (
+    FIELD_NAME_ENCODER,
+    encode_typedef,
+    prepend_header,
+)
 from pyfory.meta.typedef_decoder import decode_typedef
 from pyfory.types import TypeId
 from pyfory import Fory
@@ -189,6 +195,88 @@ def test_encode_decode_typedef():
             assert field.field_type.is_nullable == typedef.fields[i].field_type.is_nullable
 
 
+def test_decode_typedef_rejects_parsed_body_with_mismatched_hash():
+    fory = Fory(xlang=True)
+    fory.register(SimpleTypeDef, namespace="example", typename="SimpleTypeDef")
+    typedef = encode_typedef(fory.type_resolver, SimpleTypeDef)
+    malformed = _corrupt_encoded_field_name(typedef, "value")
+
+    with pytest.raises(ValueError, match="Invalid TypeDef metadata hash"):
+        decode_typedef(Buffer(malformed), fory.type_resolver)
+
+
+def test_decode_typedef_rejects_hash_consistent_malformed_body():
+    fory = Fory(xlang=True)
+    encoded = prepend_header(b"\x00", False)
+
+    with pytest.raises(Exception):
+        decode_typedef(Buffer(encoded), fory.type_resolver)
+
+
+def test_decode_typedef_rejects_compressed_xlang_metadata():
+    fory = Fory(xlang=True)
+    fory.register(SimpleTypeDef, namespace="example", typename="SimpleTypeDef")
+    typedef = encode_typedef(fory.type_resolver, SimpleTypeDef)
+    source = Buffer(typedef.encoded)
+    header = source.read_int64()
+    malformed = Buffer.allocate(len(typedef.encoded))
+    malformed.write_int64(header | COMPRESS_META_FLAG)
+    malformed.write_bytes(typedef.encoded[8:])
+
+    with pytest.raises(ValueError, match="Compressed xlang TypeDef"):
+        decode_typedef(Buffer(malformed.to_bytes()), fory.type_resolver)
+
+
+def test_id_registered_typedef_extended_field_count_header():
+    many_fields_type = make_dataclass("ManyTypeDefFields", [(f"field_{i}", int) for i in range(32)])
+    fory = Fory(xlang=True)
+    fory.register(many_fields_type, type_id=701)
+    typedef = encode_typedef(fory.type_resolver, many_fields_type)
+    body_offset = _typedef_body_offset(typedef.encoded)
+
+    assert typedef.encoded[body_offset] & 0x1F == 0x1F
+    assert typedef.encoded[body_offset] & 0x20 == 0
+    decoded_typedef = decode_typedef(Buffer(typedef.encoded), fory.type_resolver)
+    assert len(decoded_typedef.fields) == 32
+
+
+def test_meta_shared_typedef_cache_is_bounded():
+    fory = Fory(xlang=True, compatible=True)
+    fory.register(SimpleTypeDef, namespace="example", typename="SimpleTypeDef")
+    resolver = fory.type_resolver
+    read_and_build = getattr(resolver, "_read_and_build_type_info", None)
+    if read_and_build is None:
+        pytest.skip("pure-Python resolver internals are not exposed by this runtime")
+    typedef = encode_typedef(resolver, SimpleTypeDef)
+    header_buffer = Buffer(typedef.encoded)
+    header = header_buffer.read_int64()
+    for i in range(8192):
+        resolver._meta_shared_type_info[i] = object()
+
+    typeinfo = read_and_build(Buffer(typedef.encoded))
+
+    assert typeinfo.type_def.type_id == typedef.type_id
+    assert header not in resolver._meta_shared_type_info
+    assert len(resolver._meta_shared_type_info) == 8192
+
+
+def _corrupt_encoded_field_name(typedef, field_name):
+    malformed = bytearray(typedef.encoded)
+    needle = FIELD_NAME_ENCODER.encode(field_name, FIELD_NAME_ENCODINGS).encoded_data
+    index = bytes(malformed).find(needle, 8)
+    assert index >= 8
+    malformed[index + len(needle) - 1] ^= 1
+    return bytes(malformed)
+
+
+def _typedef_body_offset(encoded):
+    buffer = Buffer(encoded)
+    header = buffer.read_int64()
+    if header & 0xFF == 0xFF:
+        buffer.read_var_uint32()
+    return buffer.get_reader_index()
+
+
 def test_nested_container_typedef_preserves_declared_encoding():
     fory = Fory(xlang=True)
     fory.register(NestedEncodingTypeDef, namespace="example", typename="NestedEncodingTypeDef")
@@ -231,7 +319,11 @@ def test_python_array_typehint_lowering_keeps_list_schema_distinct():
 
 def test_python_array_typehint_rejects_scalar_encoding_modifier():
     fory = Fory(xlang=True)
-    fory.register(InvalidArrayModifierTypeDef, namespace="example", typename="InvalidArrayModifierTypeDef")
+    fory.register(
+        InvalidArrayModifierTypeDef,
+        namespace="example",
+        typename="InvalidArrayModifierTypeDef",
+    )
     with pytest.raises(TypeError, match="array<T> does not allow scalar encoding modifier"):
         encode_typedef(fory.type_resolver, InvalidArrayModifierTypeDef)
 

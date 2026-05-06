@@ -148,15 +148,19 @@ impl MetaReaderResolver {
                 .as_ref()
                 .filter(|_| self.last_meta_header == meta_header)
             {
+                // Header-cache hits intentionally skip without rehashing. Entries reach this cache
+                // only after a successful TypeMeta parse and 52-bit body-hash validation.
                 self.reading_type_infos.push(type_info.clone());
-                TypeMeta::skip_bytes(reader, meta_header)?;
+                TypeMeta::skip_bytes_for_validated_header(reader, meta_header)?;
                 return Ok(type_info.clone());
             }
             if let Some(type_info) = self.parsed_type_infos.get(&meta_header) {
+                // Header-cache hits intentionally skip without rehashing. Entries reach this cache
+                // only after a successful TypeMeta parse and 52-bit body-hash validation.
                 self.last_meta_header = meta_header;
                 self.last_type_info = Some(type_info.clone());
                 self.reading_type_infos.push(type_info.clone());
-                TypeMeta::skip_bytes(reader, meta_header)?;
+                TypeMeta::skip_bytes_for_validated_header(reader, meta_header)?;
                 Ok(type_info.clone())
             } else {
                 let type_meta = Rc::new(TypeMeta::from_bytes_with_header(
@@ -238,9 +242,9 @@ impl MetaReaderResolver {
                     // avoid malicious type defs to OOM parsed_type_infos
                     self.parsed_type_infos
                         .insert(meta_header, type_info.clone());
+                    self.last_meta_header = meta_header;
+                    self.last_type_info = Some(type_info.clone());
                 }
-                self.last_meta_header = meta_header;
-                self.last_type_info = Some(type_info.clone());
                 self.reading_type_infos.push(type_info.clone());
                 Ok(type_info)
             }
@@ -250,5 +254,60 @@ impl MetaReaderResolver {
     #[inline(always)]
     pub fn reset(&mut self) {
         self.reading_type_infos.clear();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::meta::MetaString;
+    use crate::TypeId;
+
+    #[test]
+    fn parsed_type_info_cache_does_not_publish_after_limit() {
+        let meta = TypeMeta::new(
+            TypeId::STRUCT as u32,
+            9001,
+            MetaString::get_empty().clone(),
+            MetaString::get_empty().clone(),
+            false,
+            vec![],
+        )
+        .unwrap();
+        let type_def = meta.get_bytes().to_vec();
+        let mut header_reader = Reader::new(&type_def);
+        let meta_header = header_reader.read_i64().unwrap();
+
+        let mut resolver = MetaReaderResolver::default();
+        let cached_type_info = Rc::new(TypeInfo::from_remote_meta(
+            Rc::new(TypeMeta::empty().unwrap()),
+            None,
+            None,
+            None,
+        ));
+        let mut header = 0;
+        while resolver.parsed_type_infos.len() < MAX_PARSED_NUM_TYPE_DEFS {
+            if header != meta_header {
+                resolver
+                    .parsed_type_infos
+                    .insert(header, cached_type_info.clone());
+            }
+            header += 1;
+        }
+
+        let mut bytes = vec![];
+        let mut writer = Writer::from_buffer(&mut bytes);
+        writer.write_var_u32(0);
+        writer.write_bytes(&type_def);
+
+        let mut reader = Reader::new(&bytes);
+        let current = resolver
+            .read_type_meta(&mut reader, &TypeResolver::default())
+            .unwrap();
+
+        assert_eq!(current.get_user_type_id(), 9001);
+        assert_eq!(resolver.parsed_type_infos.len(), MAX_PARSED_NUM_TYPE_DEFS);
+        assert!(!resolver.parsed_type_infos.contains_key(&meta_header));
+        assert!(resolver.last_type_info.is_none());
     }
 }

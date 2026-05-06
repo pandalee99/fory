@@ -26,30 +26,109 @@ from pyfory.serialization import Buffer
 from pyfory.type_util import get_homogeneous_tuple_elem_type, infer_field
 from pyfory.meta.metastring import Encoding
 from pyfory.type_util import infer_field_types
+from pyfory.lib.mmh3 import hash_buffer
 
 
 # Constants from the specification
 SMALL_NUM_FIELDS_THRESHOLD = 0b11111
-REGISTER_BY_NAME_FLAG = 0b100000
+REGISTER_BY_NAME_FLAG = 0b00100000
+COMPATIBLE_TYPEDEF_FLAG = 0b01000000
+STRUCT_TYPEDEF_FLAG = 0b10000000
 FIELD_NAME_SIZE_THRESHOLD = 0b1111  # 4-bit threshold for field names
 BIG_NAME_THRESHOLD = 0b111111  # 6-bit threshold for namespace/typename
-COMPRESS_META_FLAG = 0b1 << 9
-HAS_FIELDS_META_FLAG = 0b1 << 8
+COMPRESS_META_FLAG = 0b1 << 8
+RESERVED_META_FLAGS = 0b111 << 9
 META_SIZE_MASKS = 0xFF
-NUM_HASH_BITS = 50
+NUM_HASH_BITS = 52
+TYPEDEF_HASH_SHIFT = 64 - NUM_HASH_BITS
+TYPEDEF_HASH_MASK = ((1 << 64) - 1) ^ ((1 << TYPEDEF_HASH_SHIFT) - 1)
+_INT64_MIN = -(1 << 63)
+_UINT64_MASK = (1 << 64) - 1
 
-NAMESPACE_ENCODINGS = [Encoding.UTF_8, Encoding.ALL_TO_LOWER_SPECIAL, Encoding.LOWER_UPPER_DIGIT_SPECIAL]
-TYPE_NAME_ENCODINGS = [Encoding.UTF_8, Encoding.ALL_TO_LOWER_SPECIAL, Encoding.LOWER_UPPER_DIGIT_SPECIAL, Encoding.FIRST_TO_LOWER_SPECIAL]
+NAMESPACE_ENCODINGS = [
+    Encoding.UTF_8,
+    Encoding.ALL_TO_LOWER_SPECIAL,
+    Encoding.LOWER_UPPER_DIGIT_SPECIAL,
+]
+TYPE_NAME_ENCODINGS = [
+    Encoding.UTF_8,
+    Encoding.ALL_TO_LOWER_SPECIAL,
+    Encoding.LOWER_UPPER_DIGIT_SPECIAL,
+    Encoding.FIRST_TO_LOWER_SPECIAL,
+]
 
 # Field name encoding constants
 FIELD_NAME_ENCODING_UTF8 = 0b00
 FIELD_NAME_ENCODING_ALL_TO_LOWER_SPECIAL = 0b01
 FIELD_NAME_ENCODING_LOWER_UPPER_DIGIT_SPECIAL = 0b10
 FIELD_NAME_ENCODING_TAG_ID = 0b11
-FIELD_NAME_ENCODINGS = [Encoding.UTF_8, Encoding.ALL_TO_LOWER_SPECIAL, Encoding.LOWER_UPPER_DIGIT_SPECIAL]
+FIELD_NAME_ENCODINGS = [
+    Encoding.UTF_8,
+    Encoding.ALL_TO_LOWER_SPECIAL,
+    Encoding.LOWER_UPPER_DIGIT_SPECIAL,
+]
 
 # TAG_ID encoding constants
 TAG_ID_SIZE_THRESHOLD = 0b1111  # 4-bit threshold for tag IDs (0-14 inline, 15 = overflow)
+
+
+def is_struct_typedef_kind(type_id: int) -> bool:
+    return type_id in {
+        TypeId.STRUCT,
+        TypeId.COMPATIBLE_STRUCT,
+        TypeId.NAMED_STRUCT,
+        TypeId.NAMED_COMPATIBLE_STRUCT,
+    }
+
+
+def is_named_typedef_kind(type_id: int) -> bool:
+    return type_id in {
+        TypeId.NAMED_STRUCT,
+        TypeId.NAMED_COMPATIBLE_STRUCT,
+        TypeId.NAMED_ENUM,
+        TypeId.NAMED_EXT,
+        TypeId.NAMED_UNION,
+    }
+
+
+def xlang_non_struct_kind_code(type_id: int) -> int:
+    mapping = {
+        TypeId.ENUM: 0,
+        TypeId.NAMED_ENUM: 1,
+        TypeId.EXT: 2,
+        TypeId.NAMED_EXT: 3,
+        TypeId.TYPED_UNION: 4,
+        TypeId.NAMED_UNION: 5,
+    }
+    try:
+        return mapping[type_id]
+    except KeyError as exc:
+        raise ValueError(f"Unsupported TypeDef kind {type_id}") from exc
+
+
+def xlang_non_struct_type_id(kind_code: int) -> int:
+    mapping = {
+        0: TypeId.ENUM,
+        1: TypeId.NAMED_ENUM,
+        2: TypeId.EXT,
+        3: TypeId.NAMED_EXT,
+        4: TypeId.TYPED_UNION,
+        5: TypeId.NAMED_UNION,
+    }
+    try:
+        return mapping[kind_code]
+    except KeyError as exc:
+        raise ValueError(f"Unsupported TypeDef kind code {kind_code}") from exc
+
+
+def _typedef_header_hash(encoded: bytes) -> int:
+    hash_value = hash_buffer(encoded, 47)[0]
+    shifted = (hash_value << TYPEDEF_HASH_SHIFT) & _UINT64_MASK
+    if shifted >= (1 << 63):
+        shifted -= 1 << 64
+    if shifted != _INT64_MIN and shifted < 0:
+        shifted = -shifted
+    return (shifted & _UINT64_MASK) & TYPEDEF_HASH_MASK
 
 
 class TypeDef:
@@ -146,18 +225,17 @@ class TypeDef:
         return resolved_names
 
     def create_serializer(self, resolver):
-        if self.type_id == TypeId.NAMED_EXT:
-            return resolver.get_type_info_by_name(self.namespace, self.typename).serializer
-        if self.type_id == TypeId.NAMED_ENUM:
-            try:
-                return resolver.get_type_info_by_name(self.namespace, self.typename).serializer
-            except Exception:
-                from pyfory.serializer import NonExistEnumSerializer
+        if not is_struct_typedef_kind(self.type_id):
+            if is_named_typedef_kind(self.type_id):
+                try:
+                    return resolver.get_type_info_by_name(self.namespace, self.typename).serializer
+                except Exception:
+                    if self.type_id == TypeId.NAMED_ENUM:
+                        from pyfory.serializer import NonExistEnumSerializer
 
-                return NonExistEnumSerializer(resolver)
-        if self.type_id == TypeId.NAMED_UNION:
-            return resolver.get_type_info_by_name(self.namespace, self.typename).serializer
-
+                        return NonExistEnumSerializer(resolver)
+                    raise
+            return resolver.get_type_info_by_id(self.type_id, user_type_id=self.user_type_id).serializer
         from pyfory.struct import DataClassSerializer
         from pyfory.struct import FieldInfo as StructFieldInfo
         from pyfory.type_util import get_type_hints, unwrap_optional
@@ -311,7 +389,14 @@ class FieldType:
         return cls.read_with_type(buffer, resolver, xtype_id, is_nullable, is_tracking_ref)
 
     @classmethod
-    def read_with_type(cls, buffer: Buffer, resolver, xtype_id: int, is_nullable: bool, is_tracking_ref: bool):
+    def read_with_type(
+        cls,
+        buffer: Buffer,
+        resolver,
+        xtype_id: int,
+        is_nullable: bool,
+        is_tracking_ref: bool,
+    ):
         user_type_id = NO_USER_TYPE_ID
         if xtype_id in [TypeId.LIST, TypeId.SET]:
             element_type = cls.read(buffer, resolver)
@@ -325,7 +410,13 @@ class FieldType:
         else:
             # For primitive types, determine if they are monomorphic based on the type
             is_monomorphic = not is_polymorphic_type(xtype_id)
-            return FieldType(xtype_id, is_monomorphic, is_nullable, is_tracking_ref, user_type_id=user_type_id)
+            return FieldType(
+                xtype_id,
+                is_monomorphic,
+                is_nullable,
+                is_tracking_ref,
+                user_type_id=user_type_id,
+            )
 
     def create_serializer(self, resolver, type_):
         # Handle list wrapper
@@ -477,7 +568,13 @@ class DynamicFieldType(FieldType):
         is_tracking_ref: bool,
         user_type_id: int = NO_USER_TYPE_ID,
     ):
-        super().__init__(type_id, is_monomorphic, is_nullable, is_tracking_ref, user_type_id=user_type_id)
+        super().__init__(
+            type_id,
+            is_monomorphic,
+            is_nullable,
+            is_tracking_ref,
+            user_type_id=user_type_id,
+        )
 
     def create_serializer(self, resolver, type_):
         # For dynamic field types (UNKNOWN, STRUCT, etc.), default to None so
@@ -633,7 +730,10 @@ def _field_type_assignment(remote_field_type: FieldType, local_field_type: Field
             remote_field_type.value_type,
             local_field_type.value_type,
         )
-        return key_assignable and value_assignable, needs_validation or key_needs_validation or value_needs_validation
+        return (
+            key_assignable and value_assignable,
+            needs_validation or key_needs_validation or value_needs_validation,
+        )
     if _is_bytes_uint8_array_pair(remote_type_id, local_type_id):
         return True, True
     remote_int_domain = _INT_TYPE_DOMAINS.get(remote_type_id)
@@ -836,7 +936,14 @@ def build_field_infos(type_resolver, cls):
         tag_id = fory_meta.id if fory_meta is not None else -1
 
         nullable_map[field_name] = is_nullable
-        field_type = build_field_type_with_ref(type_resolver, field_name, unwrapped_type, visitor, is_nullable, is_tracking_ref)
+        field_type = build_field_type_with_ref(
+            type_resolver,
+            field_name,
+            unwrapped_type,
+            visitor,
+            is_nullable,
+            is_tracking_ref,
+        )
         field_info = FieldInfo(field_name, field_type, cls.__name__, tag_id)
         field_infos.append(field_info)
 
@@ -860,7 +967,14 @@ def build_field_infos(type_resolver, cls):
     return new_field_infos
 
 
-def build_field_type_with_ref(type_resolver, field_name: str, type_hint, visitor, is_nullable=False, is_tracking_ref=True):
+def build_field_type_with_ref(
+    type_resolver,
+    field_name: str,
+    type_hint,
+    visitor,
+    is_nullable=False,
+    is_tracking_ref=True,
+):
     """Build field type from type hint with explicit ref tracking control."""
     type_ids = infer_field(field_name, type_hint, visitor)
     try:
@@ -995,7 +1109,14 @@ def build_field_type(type_resolver, field_name: str, type_hint, visitor, is_null
     """Build field type from type hint."""
     type_ids = infer_field(field_name, type_hint, visitor)
     try:
-        return build_field_type_from_type_ids(type_resolver, field_name, type_ids, visitor, is_nullable, type_hint=type_hint)
+        return build_field_type_from_type_ids(
+            type_resolver,
+            field_name,
+            type_ids,
+            visitor,
+            is_nullable,
+            type_hint=type_hint,
+        )
     except Exception as e:
         raise TypeError(f"Error building field type for field: {field_name} with type hint: {type_hint} in class: {visitor.cls}") from e
 

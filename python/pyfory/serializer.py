@@ -75,6 +75,40 @@ def _check_collection_size(read_context, size, kind):
         raise ValueError(f"{kind} size {size} exceeds the configured limit of {read_context.max_collection_size}")
 
 
+def _is_local_qualname(module_name, qualname):
+    return module_name == "__main__" or "<locals>" in qualname
+
+
+def _is_local_class(cls):
+    return _is_local_qualname(cls.__module__, cls.__qualname__)
+
+
+def _is_local_receiver(obj):
+    cls = obj if isinstance(obj, type) else obj.__class__
+    return _is_local_class(cls)
+
+
+def _is_local_callable(obj):
+    if isinstance(obj, type):
+        return _is_local_class(obj)
+    if isinstance(obj, (types.MethodType, types.BuiltinMethodType)):
+        receiver = getattr(obj, "__self__", None)
+        if receiver is not None and not inspect.ismodule(receiver):
+            return _is_local_receiver(receiver)
+    module_name = getattr(obj, "__module__", "")
+    qualname = getattr(obj, "__qualname__", getattr(obj, "__name__", ""))
+    return _is_local_qualname(module_name, qualname)
+
+
+def _is_bound_method_value(obj):
+    if isinstance(obj, types.MethodType):
+        return True
+    if isinstance(obj, types.BuiltinMethodType):
+        receiver = getattr(obj, "__self__", None)
+        return receiver is not None and not inspect.ismodule(receiver)
+    return False
+
+
 def _validate_function_value(policy, func, is_local):
     if isinstance(func, type):
         result = policy.validate_class(func, is_local=is_local)
@@ -82,6 +116,11 @@ def _validate_function_value(policy, func, is_local):
             func = result
         if isinstance(func, type):
             raise TypeError(f"Function serializer resolved class {func.__module__}.{func.__qualname__}")
+    if _is_bound_method_value(func):
+        result = policy.validate_method(func, is_local=is_local)
+        if result is not None:
+            func = result
+        return func
     if not callable(func):
         raise TypeError(f"Function serializer resolved non-callable object {func!r}")
     result = policy.validate_function(func, is_local=is_local)
@@ -645,7 +684,12 @@ class ForyArrayFieldSerializer(Serializer):
     def _build_ndarray_serializer(self, type_resolver, type_id):
         if np is None:
             return None
-        for dtype, (_itemsize, _format, ftype, dtype_type_id) in Numpy1DArraySerializer.dtypes_dict.items():
+        for dtype, (
+            _itemsize,
+            _format,
+            ftype,
+            dtype_type_id,
+        ) in Numpy1DArraySerializer.dtypes_dict.items():
             if dtype_type_id == type_id:
                 return Numpy1DArraySerializer(type_resolver, ftype, dtype)
         return None
@@ -1082,17 +1126,11 @@ class ReduceSerializer(Serializer):
     def _validate_global_object(self, policy, obj):
         result = None
         if isinstance(obj, type):
-            result = policy.validate_class(obj, is_local=False)
-        elif isinstance(
-            obj,
-            (
-                types.FunctionType,
-                types.BuiltinFunctionType,
-                types.MethodType,
-                types.BuiltinMethodType,
-            ),
-        ):
-            result = policy.validate_function(obj, is_local=False)
+            result = policy.validate_class(obj, is_local=_is_local_class(obj))
+        elif _is_bound_method_value(obj):
+            result = policy.validate_method(obj, is_local=_is_local_callable(obj))
+        elif isinstance(obj, (types.FunctionType, types.BuiltinFunctionType)):
+            result = policy.validate_function(obj, is_local=_is_local_callable(obj))
         if result is not None:
             obj = result
         return obj
@@ -1242,7 +1280,7 @@ class TypeSerializer(Serializer):
         module_name = read_context.read_string()
         qualname = read_context.read_string()
         cls = _resolve_validated_module_qualname(read_context.policy, module_name, qualname)
-        result = read_context.policy.validate_class(cls, is_local=False)
+        result = read_context.policy.validate_class(cls, is_local=_is_local_class(cls))
         if result is not None:
             cls = result
         return cls
@@ -1479,13 +1517,13 @@ class FunctionSerializer(Serializer):
             policy = read_context.policy
             if policy is DEFAULT_POLICY:
                 return getattr(self_obj, method_name)
-            return _resolve_validated_bound_method(policy, self_obj, method_name, is_local=False)
+            return _resolve_validated_bound_method(policy, self_obj, method_name, is_local=_is_local_receiver(self_obj))
 
         if func_type_id == 1:
             module = read_context.read_string()
             qualname = read_context.read_string()
             mod = _resolve_validated_module_qualname(read_context.policy, module, qualname)
-            return _validate_function_value(read_context.policy, mod, is_local=False)
+            return _validate_function_value(read_context.policy, mod, is_local=_is_local_callable(mod))
 
         module = read_context.read_string()
         qualname = read_context.read_string()
@@ -1572,14 +1610,14 @@ class NativeFuncMethodSerializer(Serializer):
         if read_context.read_bool():
             module = read_context.read_string()
             func = _resolve_validated_module_attr(read_context.policy, module, name)
-            func = _validate_function_value(read_context.policy, func, is_local=False)
+            func = _validate_function_value(read_context.policy, func, is_local=_is_local_callable(func))
         else:
             obj = read_context.read_ref()
             policy = read_context.policy
             if policy is DEFAULT_POLICY:
                 func = getattr(obj, name)
             else:
-                func = _resolve_validated_bound_method(policy, obj, name, is_local=False)
+                func = _resolve_validated_bound_method(policy, obj, name, is_local=_is_local_receiver(obj))
         return func
 
 
@@ -1604,9 +1642,12 @@ class MethodSerializer(Serializer):
 
         if self._use_default_policy:
             return getattr(instance, method_name)
-        cls = instance if isinstance(instance, type) else instance.__class__
-        is_local = cls.__module__ == "__main__" or "<locals>" in cls.__qualname__
-        return _resolve_validated_bound_method(read_context.policy, instance, method_name, is_local=is_local)
+        return _resolve_validated_bound_method(
+            read_context.policy,
+            instance,
+            method_name,
+            is_local=_is_local_receiver(instance),
+        )
 
 
 class ObjectSerializer(Serializer):

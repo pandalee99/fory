@@ -52,9 +52,11 @@ const (
 	useStringId             = 1
 	SMALL_STRING_THRESHOLD  = 16
 	// 0xffffffff is reserved for "unset".
-	maxUserTypeID       uint32 = 0xfffffffe
-	invalidUserTypeID   uint32 = 0xffffffff
-	internalTypeIDLimit        = 0xFF
+	maxUserTypeID           uint32 = 0xfffffffe
+	invalidUserTypeID       uint32 = 0xffffffff
+	internalTypeIDLimit            = 0xFF
+	maxCachedTypeDefs              = 8192
+	maxCachedNamedTypeInfos        = 8192
 )
 
 var (
@@ -1633,6 +1635,8 @@ func (r *TypeResolver) readSharedTypeMeta(buffer *ByteBuffer, err *Error) *TypeI
 
 	var td *TypeDef
 	if existingTd, exists := r.defIdToTypeDef[id]; exists {
+		// Header-cache hits intentionally skip without rehashing. Entries reach this cache only
+		// after a successful TypeDef parse and 52-bit body-hash validation.
 		skipTypeDef(buffer, id, err)
 		td = existingTd
 	} else {
@@ -1640,7 +1644,6 @@ func (r *TypeResolver) readSharedTypeMeta(buffer *ByteBuffer, err *Error) *TypeI
 		if err.HasError() {
 			return nil
 		}
-		r.defIdToTypeDef[id] = newTd
 		td = newTd
 	}
 
@@ -1648,6 +1651,9 @@ func (r *TypeResolver) readSharedTypeMeta(buffer *ByteBuffer, err *Error) *TypeI
 	if typeInfoErr != nil {
 		err.SetError(typeInfoErr)
 		return nil
+	}
+	if _, exists := r.defIdToTypeDef[id]; !exists && len(r.defIdToTypeDef) < maxCachedTypeDefs {
+		r.defIdToTypeDef[id] = td
 	}
 
 	context.readTypeInfos = append(context.readTypeInfos, typeInfo)
@@ -2162,7 +2168,9 @@ func (r *TypeResolver) resolveTypeInfoByMetaBytes(nsBytes, typeBytes *MetaString
 
 	nameKey := [2]string{ns, typeName}
 	if typeInfo, exists := r.namedTypeToTypeInfo[nameKey]; exists {
-		r.nsTypeToTypeInfo[compositeKey] = typeInfo
+		if len(r.nsTypeToTypeInfo) < maxCachedNamedTypeInfos {
+			r.nsTypeToTypeInfo[compositeKey] = typeInfo
+		}
 		return typeInfo
 	}
 
