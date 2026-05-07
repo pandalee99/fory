@@ -21,6 +21,10 @@
 //! Fory-owned building blocks that allow generated code to apply field-local and
 //! nested collection configuration without creating wrapper value types.
 
+use super::collection::{
+    read_primitive_array_vec_compatible_mismatch, read_vec_compatible_mismatch,
+    CompatibleListArrayElement,
+};
 use crate::context::{ReadContext, WriteContext};
 use crate::error::Error;
 use crate::meta::FieldType;
@@ -34,10 +38,10 @@ use std::marker::PhantomData;
 use std::rc::Rc;
 use std::sync::Arc;
 
-const TRACKING_REF: u8 = 0b1;
-const HAS_NULL: u8 = 0b10;
-const DECL_ELEMENT_TYPE: u8 = 0b100;
-const IS_SAME_TYPE: u8 = 0b1000;
+pub(super) const TRACKING_REF: u8 = 0b1;
+pub(super) const HAS_NULL: u8 = 0b10;
+pub(super) const DECL_ELEMENT_TYPE: u8 = 0b100;
+pub(super) const IS_SAME_TYPE: u8 = 0b1000;
 
 const TRACKING_KEY_REF: u8 = 0b1;
 const KEY_NULL: u8 = 0b10;
@@ -169,7 +173,7 @@ where
 }
 
 #[inline(always)]
-fn same_numeric_family(local: u32, remote: u32) -> bool {
+pub(super) fn same_numeric_family(local: u32, remote: u32) -> bool {
     matches!(
         (local, remote),
         (type_id::INT32, type_id::INT32 | type_id::VARINT32)
@@ -204,7 +208,7 @@ fn same_numeric_family(local: u32, remote: u32) -> bool {
 }
 
 #[inline(always)]
-fn collection_type_with_fallback_generics(type_id: u32) -> bool {
+pub(super) fn collection_type_with_fallback_generics(type_id: u32) -> bool {
     type_id == type_id::LIST || type_id == type_id::SET || type_id == type_id::MAP
 }
 
@@ -223,7 +227,7 @@ pub fn field_types_compatible(local: &FieldType, remote: &FieldType) -> bool {
 }
 
 #[inline(always)]
-fn generic_field_type<'a>(
+pub(super) fn generic_field_type<'a>(
     field_type: &'a FieldType,
     index: usize,
     owner: &str,
@@ -275,6 +279,7 @@ pub trait Codec<T: 'static>: 'static {
 
     fn read_field(context: &mut ReadContext) -> Result<T, Error>;
 
+    #[inline(always)]
     fn read_compatible(
         context: &mut ReadContext,
         local_field_type: &FieldType,
@@ -1279,6 +1284,24 @@ where
         Self::read_data(context)
     }
 
+    #[inline(always)]
+    fn read_compatible(
+        context: &mut ReadContext,
+        local_field_type: &FieldType,
+        remote_field_type: &FieldType,
+    ) -> Result<Option<Vec<T>>, Error> {
+        if local_field_type.compatible_fingerprint() == remote_field_type.compatible_fingerprint() {
+            return Self::read_field_with_type(context, remote_field_type).map(Some);
+        }
+        if local_field_type.type_id == remote_field_type.type_id
+            && collection_type_with_fallback_generics(local_field_type.type_id)
+            && (local_field_type.generics.is_empty() || remote_field_type.generics.is_empty())
+        {
+            return Self::read_field_with_type(context, remote_field_type).map(Some);
+        }
+        read_vec_compatible_mismatch::<T, C>(context, local_field_type, remote_field_type)
+    }
+
     fn write_data(value: &Vec<T>, context: &mut WriteContext) -> Result<(), Error> {
         let len = value.len();
         context.writer.write_var_u32(len as u32);
@@ -1397,10 +1420,12 @@ where
                 "Type inconsistent, target collection element type is not polymorphic",
             ));
         }
+        let owned_element_type;
         let element_type = if is_declared {
-            generic_field_type(remote_field_type, 0, "list")?.clone()
+            generic_field_type(remote_field_type, 0, "list")?
         } else {
-            C::read_type_info_as_field_type(context)?
+            owned_element_type = C::read_type_info_as_field_type(context)?;
+            &owned_element_type
         };
         let mut vec = Vec::with_capacity(len as usize);
         if has_null {
@@ -1409,12 +1434,12 @@ where
                 if flag == RefFlag::Null as i8 {
                     vec.push(C::default_value());
                 } else {
-                    vec.push(C::read_data_with_type(context, &element_type)?);
+                    vec.push(C::read_data_with_type(context, element_type)?);
                 }
             }
         } else {
             for _ in 0..len {
-                vec.push(C::read_data_with_type(context, &element_type)?);
+                vec.push(C::read_data_with_type(context, element_type)?);
             }
         }
         Ok(vec)
@@ -1511,7 +1536,7 @@ pub struct PrimitiveArrayVecCodec<T, const TYPE_ID: u8, const NULLABLE: bool, co
 impl<T, const TYPE_ID: u8, const NULLABLE: bool, const TRACK_REF: bool> Codec<Vec<T>>
     for PrimitiveArrayVecCodec<T, TYPE_ID, NULLABLE, TRACK_REF>
 where
-    T: Serializer + ForyDefault,
+    T: CompatibleListArrayElement,
 {
     #[inline(always)]
     fn field_type(_: &TypeResolver) -> Result<FieldType, Error> {
@@ -1545,6 +1570,21 @@ where
             }
         }
         Self::read_data(context)
+    }
+
+    fn read_compatible(
+        context: &mut ReadContext,
+        local_field_type: &FieldType,
+        remote_field_type: &FieldType,
+    ) -> Result<Option<Vec<T>>, Error> {
+        if local_field_type.compatible_fingerprint() == remote_field_type.compatible_fingerprint() {
+            return Self::read_field_with_type(context, remote_field_type).map(Some);
+        }
+        read_primitive_array_vec_compatible_mismatch::<T>(
+            context,
+            local_field_type,
+            remote_field_type,
+        )
     }
 
     #[inline(always)]

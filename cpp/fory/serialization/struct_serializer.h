@@ -97,6 +97,30 @@ inline constexpr bool is_primitive_type_id(TypeId type_id) {
          type_id == TypeId::TAGGED_UINT64;
 }
 
+/// Type trait to check if a type is a raw primitive (not a wrapper like
+/// optional, shared_ptr, etc.)
+template <typename T> struct is_raw_primitive : std::false_type {};
+template <> struct is_raw_primitive<bool> : std::true_type {};
+template <> struct is_raw_primitive<int8_t> : std::true_type {};
+template <> struct is_raw_primitive<uint8_t> : std::true_type {};
+template <> struct is_raw_primitive<int16_t> : std::true_type {};
+template <> struct is_raw_primitive<uint16_t> : std::true_type {};
+template <> struct is_raw_primitive<int32_t> : std::true_type {};
+template <> struct is_raw_primitive<uint32_t> : std::true_type {};
+template <> struct is_raw_primitive<int64_t> : std::true_type {};
+template <> struct is_raw_primitive<uint64_t> : std::true_type {};
+template <> struct is_raw_primitive<float16_t> : std::true_type {};
+template <> struct is_raw_primitive<bfloat16_t> : std::true_type {};
+template <> struct is_raw_primitive<float> : std::true_type {};
+template <> struct is_raw_primitive<double> : std::true_type {};
+template <typename T>
+inline constexpr bool is_raw_primitive_v = is_raw_primitive<T>::value;
+
+template <typename TargetType>
+FORY_ALWAYS_INLINE TargetType read_primitive_by_type_id(ReadContext &ctx,
+                                                        uint32_t type_id,
+                                                        Error &error);
+
 /// write a primitive value to buffer at given offset WITHOUT updating
 /// writer_index. Returns the number of bytes written. Caller must ensure buffer
 /// has sufficient capacity.
@@ -863,11 +887,11 @@ Container read_configured_list_data(ReadContext &ctx) {
   using Elem = element_type_t<Container>;
   uint32_t length = ctx.read_var_uint32(ctx.error());
   Container result;
-  if constexpr (has_reserve_v<Container>) {
-    result.reserve(length);
-  }
   if (FORY_PREDICT_FALSE(ctx.has_error()) || length == 0) {
     return result;
+  }
+  if constexpr (has_reserve_v<Container>) {
+    result.reserve(length);
   }
   uint8_t bitmap = ctx.read_uint8(ctx.error());
   if (FORY_PREDICT_FALSE(ctx.has_error())) {
@@ -897,6 +921,73 @@ Container read_configured_list_data(ReadContext &ctx) {
     }
   }
   return result;
+}
+
+template <typename Container, typename StructT, size_t Index, int8_t NodeIndex,
+          int8_t ElemNode>
+FORY_NOINLINE Container read_configured_list_data_as_array_field(
+    ReadContext &ctx, uint32_t remote_element_type_id) {
+  using Elem = element_type_t<Container>;
+  uint32_t length = ctx.read_var_uint32(ctx.error());
+  Container result;
+  if (FORY_PREDICT_FALSE(ctx.has_error()) || length == 0) {
+    return result;
+  }
+  if (FORY_PREDICT_FALSE(length > ctx.config().max_collection_size)) {
+    ctx.set_error(
+        Error::invalid_data("Collection length exceeds max_collection_size"));
+    return result;
+  }
+  uint8_t bitmap = ctx.read_uint8(ctx.error());
+  if (FORY_PREDICT_FALSE(ctx.has_error())) {
+    return result;
+  }
+  const bool is_decl_type = (bitmap & COLL_DECL_ELEMENT_TYPE) != 0;
+  const bool is_same_type = (bitmap & COLL_IS_SAME_TYPE) != 0;
+  const bool track_ref = (bitmap & COLL_TRACKING_REF) != 0;
+  const bool has_null = (bitmap & COLL_HAS_NULL) != 0;
+  if (FORY_PREDICT_FALSE(track_ref || has_null)) {
+    ctx.set_error(Error::invalid_data(
+        "compatible list to array field requires non-null elements"));
+    return result;
+  }
+  if (FORY_PREDICT_FALSE(!is_same_type)) {
+    ctx.set_error(Error::invalid_data(
+        "compatible list to array field requires same-type elements"));
+    return result;
+  }
+  if (FORY_PREDICT_FALSE(!is_decl_type)) {
+    ctx.set_error(Error::invalid_data(
+        "compatible list to array field requires declared elements"));
+    return result;
+  }
+  if constexpr (has_reserve_v<Container>) {
+    result.reserve(length);
+  }
+  for (uint32_t i = 0; i < length; ++i) {
+    if constexpr (is_raw_primitive_v<Elem>) {
+      auto elem = read_primitive_by_type_id<Elem>(ctx, remote_element_type_id,
+                                                  ctx.error());
+      if (FORY_PREDICT_FALSE(ctx.has_error())) {
+        return result;
+      }
+      collection_insert(result, elem);
+    } else {
+      ctx.set_error(Error::type_error(
+          "compatible list to array field requires primitive elements"));
+      return result;
+    }
+  }
+  return result;
+}
+
+template <typename Container>
+FORY_NOINLINE Container
+read_configured_array_data_as_list_field(ReadContext &ctx, RefMode ref_mode) {
+  if (ref_mode == RefMode::None) {
+    return Serializer<Container>::read_data(ctx);
+  }
+  return Serializer<Container>::read(ctx, ref_mode, false);
 }
 
 template <typename MapType, typename StructT, size_t Index, int8_t KeyNode,
@@ -2728,26 +2819,6 @@ void write_struct_fields_impl(const T &obj, WriteContext &ctx,
     (write_field_at_sorted_position<T, Indices>(obj, ctx, has_generics), ...);
   }
 }
-
-/// Type trait to check if a type is a raw primitive (not a wrapper like
-/// optional, shared_ptr, etc.)
-template <typename T> struct is_raw_primitive : std::false_type {};
-template <> struct is_raw_primitive<bool> : std::true_type {};
-template <> struct is_raw_primitive<int8_t> : std::true_type {};
-template <> struct is_raw_primitive<uint8_t> : std::true_type {};
-template <> struct is_raw_primitive<int16_t> : std::true_type {};
-template <> struct is_raw_primitive<uint16_t> : std::true_type {};
-template <> struct is_raw_primitive<int32_t> : std::true_type {};
-template <> struct is_raw_primitive<uint32_t> : std::true_type {};
-template <> struct is_raw_primitive<int64_t> : std::true_type {};
-template <> struct is_raw_primitive<uint64_t> : std::true_type {};
-template <> struct is_raw_primitive<float16_t> : std::true_type {};
-template <> struct is_raw_primitive<bfloat16_t> : std::true_type {};
-template <> struct is_raw_primitive<float> : std::true_type {};
-template <> struct is_raw_primitive<double> : std::true_type {};
-template <typename T>
-inline constexpr bool is_raw_primitive_v = is_raw_primitive<T>::value;
-
 /// Read a primitive value based on remote type_id (for compatible mode).
 /// Returns the value as a uint64_t (or int64_t for signed types).
 /// The caller must convert to the correct local type.
@@ -2802,6 +2873,8 @@ FORY_ALWAYS_INLINE TargetType read_primitive_by_type_id(ReadContext &ctx,
     return static_cast<TargetType>(ctx.read_tagged_uint64(error));
   case TypeId::FLOAT16:
     return static_cast<TargetType>(ctx.read_f16(error).to_float());
+  case TypeId::BFLOAT16:
+    return static_cast<TargetType>(ctx.read_bf16(error).to_float());
   case TypeId::FLOAT32:
     return static_cast<TargetType>(ctx.read_float(error));
   case TypeId::FLOAT64:
@@ -3199,6 +3272,45 @@ void read_single_field_by_index_compatible(T &obj, ReadContext &ctx,
           (obj.*field_ptr).value = std::optional<InnerType>(value);
         } else {
           obj.*field_ptr = std::optional<InnerType>(value);
+        }
+        return;
+      }
+    }
+  }
+
+  if constexpr (is_vector_v<FieldType>) {
+    constexpr FieldNodeKind configured_kind =
+        configured_node_kind<T, Index, 0>();
+    constexpr bool configured_as_array =
+        configured_kind == FieldNodeKind::Array;
+    constexpr bool configured_as_list = configured_kind == FieldNodeKind::List;
+    if constexpr (configured_as_array) {
+      if (remote_type_id == static_cast<uint32_t>(TypeId::LIST)) {
+        if (FORY_PREDICT_FALSE(remote_field_type.generics.size() != 1)) {
+          ctx.set_error(Error::invalid_data(
+              "compatible list to array field requires one element schema"));
+          return;
+        }
+        const auto &remote_element_type = remote_field_type.generics[0];
+        constexpr int8_t child = configured_node_child<T, Index, 0, 0>();
+        FieldType result = read_configured_list_data_as_array_field<
+            FieldType, T, Index, 0, child>(ctx, remote_element_type.type_id);
+        if constexpr (is_fory_field_v<RawFieldType>) {
+          (obj.*field_ptr).value = std::move(result);
+        } else {
+          obj.*field_ptr = std::move(result);
+        }
+        return;
+      }
+    } else if constexpr (configured_as_list) {
+      uint32_t element_type_id = 0;
+      if (primitive_array_element_type_id(remote_type_id, element_type_id)) {
+        FieldType result = read_configured_array_data_as_list_field<FieldType>(
+            ctx, remote_ref_mode);
+        if constexpr (is_fory_field_v<RawFieldType>) {
+          (obj.*field_ptr).value = std::move(result);
+        } else {
+          obj.*field_ptr = std::move(result);
         }
         return;
       }

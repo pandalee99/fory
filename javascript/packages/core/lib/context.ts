@@ -27,6 +27,7 @@ import {
 import { InnerFieldInfo, TypeMeta } from "./meta/TypeMeta";
 import { Type, TypeInfo } from "./typeInfo";
 import { Config, RefFlags, Serializer, TypeId } from "./type";
+import { markCompatibleCollectionArrayRead } from "./gen/collection";
 
 type TypeResolverLike = {
   config: Config;
@@ -38,6 +39,163 @@ type TypeResolverLike = {
   isCompatible(): boolean;
   regenerateReadSerializer(typeInfo: TypeInfo): Serializer;
 };
+
+function remoteListElementType(fieldInfo: InnerFieldInfo): InnerFieldInfo | undefined {
+  if (fieldInfo.typeId !== TypeId.LIST) {
+    return undefined;
+  }
+  return fieldInfo.options?.inner;
+}
+
+function denseArrayElementTypeId(typeId: number): number | undefined {
+  switch (typeId) {
+    case TypeId.BOOL_ARRAY:
+      return TypeId.BOOL;
+    case TypeId.INT8_ARRAY:
+      return TypeId.INT8;
+    case TypeId.INT16_ARRAY:
+      return TypeId.INT16;
+    case TypeId.INT32_ARRAY:
+      return TypeId.INT32;
+    case TypeId.INT64_ARRAY:
+      return TypeId.INT64;
+    case TypeId.UINT8_ARRAY:
+      return TypeId.UINT8;
+    case TypeId.UINT16_ARRAY:
+      return TypeId.UINT16;
+    case TypeId.UINT32_ARRAY:
+      return TypeId.UINT32;
+    case TypeId.UINT64_ARRAY:
+      return TypeId.UINT64;
+    case TypeId.FLOAT16_ARRAY:
+      return TypeId.FLOAT16;
+    case TypeId.BFLOAT16_ARRAY:
+      return TypeId.BFLOAT16;
+    case TypeId.FLOAT32_ARRAY:
+      return TypeId.FLOAT32;
+    case TypeId.FLOAT64_ARRAY:
+      return TypeId.FLOAT64;
+    default:
+      return undefined;
+  }
+}
+
+function compatibleArrayElementTypeId(typeId: number): number {
+  switch (typeId) {
+    case TypeId.VARINT32:
+      return TypeId.INT32;
+    case TypeId.VARINT64:
+    case TypeId.TAGGED_INT64:
+      return TypeId.INT64;
+    case TypeId.VAR_UINT32:
+      return TypeId.UINT32;
+    case TypeId.VAR_UINT64:
+    case TypeId.TAGGED_UINT64:
+      return TypeId.UINT64;
+    default:
+      return typeId;
+  }
+}
+
+function typeInfoForElementTypeId(typeId: number): TypeInfo {
+  switch (typeId) {
+    case TypeId.BOOL:
+      return Type.bool();
+    case TypeId.INT8:
+      return Type.int8();
+    case TypeId.INT16:
+      return Type.int16();
+    case TypeId.INT32:
+      return Type.int32({ encoding: "fixed" });
+    case TypeId.VARINT32:
+      return Type.int32();
+    case TypeId.INT64:
+      return Type.int64({ encoding: "fixed" });
+    case TypeId.VARINT64:
+      return Type.int64();
+    case TypeId.TAGGED_INT64:
+      return Type.int64({ encoding: "tagged" });
+    case TypeId.UINT8:
+      return Type.uint8();
+    case TypeId.UINT16:
+      return Type.uint16();
+    case TypeId.UINT32:
+      return Type.uint32({ encoding: "fixed" });
+    case TypeId.VAR_UINT32:
+      return Type.uint32();
+    case TypeId.UINT64:
+      return Type.uint64({ encoding: "fixed" });
+    case TypeId.VAR_UINT64:
+      return Type.uint64();
+    case TypeId.TAGGED_UINT64:
+      return Type.uint64({ encoding: "tagged" });
+    case TypeId.FLOAT16:
+      return Type.float16();
+    case TypeId.BFLOAT16:
+      return Type.bfloat16();
+    case TypeId.FLOAT32:
+      return Type.float32();
+    case TypeId.FLOAT64:
+      return Type.float64();
+    default:
+      return Type.any();
+  }
+}
+
+function typeInfoForDenseArrayElementTypeId(typeId: number): TypeInfo {
+  switch (typeId) {
+    case TypeId.BOOL:
+      return Type.boolArray();
+    case TypeId.INT8:
+      return Type.int8Array();
+    case TypeId.INT16:
+      return Type.int16Array();
+    case TypeId.INT32:
+      return Type.int32Array();
+    case TypeId.INT64:
+      return Type.int64Array();
+    case TypeId.UINT8:
+      return Type.uint8Array();
+    case TypeId.UINT16:
+      return Type.uint16Array();
+    case TypeId.UINT32:
+      return Type.uint32Array();
+    case TypeId.UINT64:
+      return Type.uint64Array();
+    case TypeId.FLOAT16:
+      return Type.float16Array();
+    case TypeId.BFLOAT16:
+      return Type.bfloat16Array();
+    case TypeId.FLOAT32:
+      return Type.float32Array();
+    case TypeId.FLOAT64:
+      return Type.float64Array();
+    default:
+      return Type.any();
+  }
+}
+
+function compatibleListToArrayTypeInfo(
+  remoteElement: InnerFieldInfo,
+  targetElementTypeId: number,
+): TypeInfo {
+  const elementTypeInfo = typeInfoForElementTypeId(remoteElement.typeId)
+    .setNullable(remoteElement.nullable === true)
+    .setTrackingRef(remoteElement.trackingRef === true);
+  const typeInfo = Type.list(elementTypeInfo);
+  return markCompatibleCollectionArrayRead(typeInfo, {
+    target: "array",
+    elementTypeId: targetElementTypeId,
+  });
+}
+
+function compatibleArrayToListTypeInfo(elementTypeId: number): TypeInfo {
+  const typeInfo = typeInfoForDenseArrayElementTypeId(elementTypeId);
+  return markCompatibleCollectionArrayRead(typeInfo, {
+    target: "list",
+    elementTypeId,
+  });
+}
 
 class MetaStringBytes {
   dynamicWriteStringId = -1;
@@ -500,17 +658,29 @@ export class ReadContext {
   private fieldInfoToTypeInfo(
     fieldInfo: InnerFieldInfo,
     fallbackTypeInfo?: TypeInfo,
+    topLevel = true,
   ): TypeInfo {
+    if (topLevel && fallbackTypeInfo) {
+      const compatible = this.compatibleFieldTypeInfo(fieldInfo, fallbackTypeInfo);
+      if (compatible) {
+        return compatible;
+      }
+    }
+    if (this.hasUnsupportedListArrayMismatch(fieldInfo, fallbackTypeInfo, topLevel)) {
+      throw new Error("unsupported compatible list/array schema mismatch");
+    }
     switch (fieldInfo.typeId) {
       case TypeId.MAP:
         return Type.map(
           this.fieldInfoToTypeInfo(
             fieldInfo.options!.key!,
             fallbackTypeInfo?.options?.key,
+            false,
           ),
           this.fieldInfoToTypeInfo(
             fieldInfo.options!.value!,
             fallbackTypeInfo?.options?.value,
+            false,
           ),
         );
       case TypeId.LIST:
@@ -518,6 +688,7 @@ export class ReadContext {
           this.fieldInfoToTypeInfo(
             fieldInfo.options!.inner!,
             fallbackTypeInfo?.options?.inner,
+            false,
           ),
         );
       case TypeId.SET:
@@ -525,6 +696,7 @@ export class ReadContext {
           this.fieldInfoToTypeInfo(
             fieldInfo.options!.key!,
             fallbackTypeInfo?.options?.key,
+            false,
           ),
         );
       default: {
@@ -559,6 +731,82 @@ export class ReadContext {
         return Type.any();
       }
     }
+  }
+
+  private compatibleFieldTypeInfo(
+    remote: InnerFieldInfo,
+    local: TypeInfo,
+  ): TypeInfo | undefined {
+    const remoteElement = remoteListElementType(remote);
+    const localElement = denseArrayElementTypeId(local.typeId);
+    if (remoteElement !== undefined && localElement !== undefined) {
+      if (compatibleArrayElementTypeId(remoteElement.typeId) !== localElement) {
+        return undefined;
+      }
+      return compatibleListToArrayTypeInfo(remoteElement, localElement);
+    }
+    const remoteArrayElement = denseArrayElementTypeId(remote.typeId);
+    if (
+      remoteArrayElement !== undefined
+      && local.typeId === TypeId.LIST
+      && local.options?.inner
+      && compatibleArrayElementTypeId(local.options.inner.typeId) === remoteArrayElement
+    ) {
+      return compatibleArrayToListTypeInfo(remoteArrayElement);
+    }
+    return undefined;
+  }
+
+  private hasUnsupportedListArrayMismatch(
+    remote: InnerFieldInfo,
+    local: TypeInfo | undefined,
+    topLevel: boolean,
+  ): boolean {
+    if (!local) {
+      return false;
+    }
+    if (this.isListArrayRootPair(remote, local)) {
+      return !(topLevel && this.compatibleFieldTypeInfo(remote, local));
+    }
+    if (remote.typeId !== local.typeId) {
+      return false;
+    }
+    switch (remote.typeId) {
+      case TypeId.MAP:
+        return (
+          this.hasUnsupportedListArrayMismatch(
+            remote.options!.key!,
+            local.options?.key,
+            false,
+          )
+          || this.hasUnsupportedListArrayMismatch(
+            remote.options!.value!,
+            local.options?.value,
+            false,
+          )
+        );
+      case TypeId.LIST:
+        return this.hasUnsupportedListArrayMismatch(
+          remote.options!.inner!,
+          local.options?.inner,
+          false,
+        );
+      case TypeId.SET:
+        return this.hasUnsupportedListArrayMismatch(
+          remote.options!.key!,
+          local.options?.key,
+          false,
+        );
+      default:
+        return false;
+    }
+  }
+
+  private isListArrayRootPair(remote: InnerFieldInfo, local: TypeInfo): boolean {
+    return (
+      (remote.typeId === TypeId.LIST && denseArrayElementTypeId(local.typeId) !== undefined)
+      || (denseArrayElementTypeId(remote.typeId) !== undefined && local.typeId === TypeId.LIST)
+    );
   }
 
   genSerializerByTypeMetaRuntime(typeMeta: TypeMeta, original?: Serializer) {

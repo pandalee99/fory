@@ -24,6 +24,7 @@ import { TypeInfo } from "../typeInfo";
 import { CodegenRegistry } from "./router";
 import { BaseSerializerGenerator, SerializerGenerator } from "./serializer";
 import { TypeMeta } from "../meta/TypeMeta";
+import { getCompatibleCollectionArrayReadAction } from "./collection";
 
 /**
  * Returns true when a field's read cannot recurse and needs no depth tracking.
@@ -44,6 +45,18 @@ function isDepthFreeField(typeInfo: TypeInfo): boolean {
     return !!key && !!value && TypeId.isLeafTypeId(key.typeId) && TypeId.isLeafTypeId(value.typeId);
   }
   return false;
+}
+
+function compatibleReadTargetExpr(typeInfo: TypeInfo, expr: string): string {
+  const action = getCompatibleCollectionArrayReadAction(typeInfo);
+  switch (action?.target) {
+    case "array":
+      return expr;
+    case "list":
+      return `Array.from(${expr})`;
+    default:
+      return expr;
+  }
 }
 
 const sortProps = (typeInfo: TypeInfo, typeResolver: CodecBuilder["resolver"]) => {
@@ -109,24 +122,25 @@ class StructSerializerGenerator extends BaseSerializerGenerator {
   readField(fieldTypeInfo: TypeInfo, assignStmt: (expr: string) => string, embedGenerator: SerializerGenerator) {
     const { nullable = false, dynamic, trackingRef } = fieldTypeInfo;
     const refMode = toRefMode(trackingRef, nullable);
+    const assignCompatible = (expr: string) => assignStmt(compatibleReadTargetExpr(fieldTypeInfo, expr));
     let stmt = "";
     // polymorphic type
     if (this.builder.resolver.isMonomorphic(fieldTypeInfo, dynamic)) {
       if (refMode == RefMode.TRACKING || refMode === RefMode.NULL_ONLY) {
         stmt = `
-          ${embedGenerator.readRefWithoutTypeInfo(assignStmt)}
+          ${embedGenerator.readRefWithoutTypeInfo(assignCompatible)}
         `;
       } else if (isDepthFreeField(fieldTypeInfo)) {
         // Leaf types and collections of leaf types cannot recurse — skip depth tracking.
-        stmt = embedGenerator.read(assignStmt, "false");
+        stmt = embedGenerator.read(assignCompatible, "false");
       } else {
-        stmt = embedGenerator.readWithDepth(assignStmt, "false");
+        stmt = embedGenerator.readWithDepth(assignCompatible, "false");
       }
     } else {
       if (refMode == RefMode.TRACKING || refMode === RefMode.NULL_ONLY) {
-        stmt = `${embedGenerator.readRef(assignStmt)}`;
+        stmt = `${embedGenerator.readRef(assignCompatible)}`;
       } else {
-        stmt = embedGenerator.readNoRef(assignStmt, "false");
+        stmt = embedGenerator.readNoRef(assignCompatible, "false");
       }
     }
     return stmt;

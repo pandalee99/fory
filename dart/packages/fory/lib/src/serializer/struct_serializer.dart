@@ -20,8 +20,10 @@
 import 'package:fory/src/context/read_context.dart';
 import 'package:fory/src/context/write_context.dart';
 import 'package:fory/src/meta/field_info.dart';
+import 'package:fory/src/meta/field_type.dart';
 import 'package:fory/src/meta/type_def.dart';
 import 'package:fory/src/resolver/type_resolver.dart';
+import 'package:fory/src/serializer/collection_serializers.dart';
 import 'package:fory/src/serializer/compatible_struct_metadata.dart';
 import 'package:fory/src/serializer/serializer.dart';
 import 'package:fory/src/serializer/serialization_field_info.dart';
@@ -161,6 +163,14 @@ final class StructSerializer extends Serializer<Object?> {
     required bool hasCurrentPreservedRef,
   }) {
     final layout = _compatibleReadLayoutForResolved(resolved);
+    if (layout is _CompatibleCollectionArrayReadLayout) {
+      return _readCompatibleCollectionArray(
+        context,
+        resolved,
+        layout,
+        hasCurrentPreservedRef: hasCurrentPreservedRef,
+      );
+    }
     final compatibleFactory = _compatibleFactory;
     final compatibleReadersBySlot = _compatibleReadersBySlot;
     if (compatibleFactory != null && compatibleReadersBySlot != null) {
@@ -220,34 +230,145 @@ final class StructSerializer extends Serializer<Object?> {
     return value;
   }
 
+  Object _readCompatibleCollectionArray(
+    ReadContext context,
+    TypeInfo resolved,
+    _CompatibleCollectionArrayReadLayout layout, {
+    required bool hasCurrentPreservedRef,
+  }) {
+    final compatibleFactory = _compatibleFactory;
+    final compatibleReadersBySlot = _compatibleReadersBySlot;
+    if (compatibleFactory != null && compatibleReadersBySlot != null) {
+      final int? sentinelId;
+      final needsSentinel = resolved.supportsRef && !hasCurrentPreservedRef;
+      if (needsSentinel) {
+        sentinelId = context.refReader.preserveRefId(-1);
+      } else {
+        sentinelId = null;
+      }
+      final value = compatibleFactory();
+      context.reference(value);
+      for (var index = 0; index < layout.fields.length; index += 1) {
+        final localField = layout.fields[index];
+        if (localField == null) {
+          readCompatibleField(context, layout.remoteFields[index]);
+          continue;
+        }
+        compatibleReadersBySlot[localField.slot](
+          context,
+          value,
+          layout.topLevelListArrayPairs[index]
+              ? readCompatibleMatchedCollectionArrayField(
+                  context,
+                  localField,
+                  layout.remoteFields[index],
+                )
+              : readFieldValue<Object?>(context, localField),
+        );
+      }
+      if (needsSentinel &&
+          context.refReader.hasPreservedRefId &&
+          context.refReader.lastPreservedRefId == sentinelId) {
+        context.refReader.reference(null);
+      }
+      _rememberRemoteMetadata(context, resolved, value);
+      return value;
+    }
+    final compatibleValues = List<Object?>.filled(_localFields.length, null);
+    final presentSlots = List<bool>.filled(_localFields.length, false);
+    for (var index = 0; index < layout.fields.length; index += 1) {
+      final localField = layout.fields[index];
+      if (localField == null) {
+        readCompatibleField(context, layout.remoteFields[index]);
+        continue;
+      }
+      final slot = localField.slot;
+      compatibleValues[slot] = layout.topLevelListArrayPairs[index]
+          ? readCompatibleMatchedCollectionArrayField(
+              context,
+              localField,
+              layout.remoteFields[index],
+            )
+          : readFieldValue(context, localField);
+      presentSlots[slot] = true;
+    }
+    final previousCompatibleFields = context.structReadSlots;
+    context.structReadSlots = StructReadSlots(compatibleValues, presentSlots);
+    final value = context.readSerializerPayload(
+      _payloadSerializer,
+      resolved,
+      hasCurrentPreservedRef: hasCurrentPreservedRef,
+    ) as Object;
+    context.structReadSlots = previousCompatibleFields;
+    _rememberRemoteMetadata(context, resolved, value);
+    return value;
+  }
+
+  @pragma('vm:prefer-inline')
   _CompatibleReadLayout _compatibleReadLayoutForResolved(
     TypeInfo resolved,
   ) {
     final remoteTypeDef = resolved.remoteTypeDef;
     if (remoteTypeDef == null) {
-      return _CompatibleReadLayout(_typeDef.fields, _localFields);
+      return _CompatibleReadLayout(
+        _typeDef.fields,
+        _localFields,
+      );
     }
     final cached = _compatibleReadLayouts[remoteTypeDef];
     if (cached != null) {
       return cached;
     }
+    return _buildCompatibleReadLayout(remoteTypeDef);
+  }
+
+  _CompatibleReadLayout _buildCompatibleReadLayout(TypeDef remoteTypeDef) {
     final fields = <SerializationFieldInfo?>[];
+    List<bool>? topLevelListArrayPairs;
+    var hasTopLevelListArrayPairs = false;
     for (final remoteField in remoteTypeDef.fields) {
       final localField = _localFieldsByIdentifier[remoteField.identifier];
       if (localField == null) {
         fields.add(null);
+        topLevelListArrayPairs?.add(false);
         continue;
       }
-      final mergedField = _typeResolver.serializationFieldInfo(
-        mergeCompatibleReadField(localField.field, remoteField),
-        slot: localField.slot,
-      );
+      final topLevelListArrayPair =
+          _topLevelListArrayPair(localField.field, remoteField);
+      if (_hasUnsupportedListArrayMismatch(
+        localField.field.fieldType,
+        remoteField.fieldType,
+        topLevel: true,
+      )) {
+        throw StateError(
+          'Compatible field ${localField.name} has unsupported list/array schema mismatch.',
+        );
+      }
+      if (topLevelListArrayPair) {
+        topLevelListArrayPairs ??=
+            List<bool>.filled(fields.length, false, growable: true);
+        hasTopLevelListArrayPairs = true;
+      }
+      final mergedField = topLevelListArrayPair
+          ? localField
+          : _typeResolver.serializationFieldInfo(
+              mergeCompatibleReadField(localField.field, remoteField),
+              slot: localField.slot,
+            );
       fields.add(mergedField);
+      topLevelListArrayPairs?.add(topLevelListArrayPair);
     }
-    final layout = _CompatibleReadLayout(
-      remoteTypeDef.fields,
-      List<SerializationFieldInfo?>.unmodifiable(fields),
-    );
+    final frozenFields = List<SerializationFieldInfo?>.unmodifiable(fields);
+    final layout = hasTopLevelListArrayPairs
+        ? _CompatibleCollectionArrayReadLayout(
+            remoteTypeDef.fields,
+            frozenFields,
+            List<bool>.unmodifiable(topLevelListArrayPairs!),
+          )
+        : _CompatibleReadLayout(
+            remoteTypeDef.fields,
+            frozenFields,
+          );
     _compatibleReadLayouts[remoteTypeDef] = layout;
     return layout;
   }
@@ -264,9 +385,48 @@ final class StructSerializer extends Serializer<Object?> {
   }
 }
 
+bool _topLevelListArrayPair(FieldInfo localField, FieldInfo remoteField) {
+  return isCompatibleCollectionArrayFieldPair(localField, remoteField);
+}
+
+bool _hasUnsupportedListArrayMismatch(
+  FieldType localType,
+  FieldType remoteType, {
+  required bool topLevel,
+}) {
+  if (isCompatibleCollectionArrayRootTypePair(localType, remoteType)) {
+    return !(topLevel &&
+        isCompatibleCollectionArrayTypePair(localType, remoteType));
+  }
+  if (localType.typeId != remoteType.typeId ||
+      localType.arguments.length != remoteType.arguments.length) {
+    return false;
+  }
+  for (var index = 0; index < localType.arguments.length; index += 1) {
+    if (_hasUnsupportedListArrayMismatch(
+      localType.arguments[index],
+      remoteType.arguments[index],
+      topLevel: false,
+    )) {
+      return true;
+    }
+  }
+  return false;
+}
+
 final class _CompatibleReadLayout {
   final List<FieldInfo> remoteFields;
   final List<SerializationFieldInfo?> fields;
 
   const _CompatibleReadLayout(this.remoteFields, this.fields);
+}
+
+final class _CompatibleCollectionArrayReadLayout extends _CompatibleReadLayout {
+  final List<bool> topLevelListArrayPairs;
+
+  const _CompatibleCollectionArrayReadLayout(
+    super.remoteFields,
+    super.fields,
+    this.topLevelListArrayPairs,
+  );
 }

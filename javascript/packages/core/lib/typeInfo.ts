@@ -19,6 +19,8 @@
 
 import { ForyTypeInfoSymbol, TypeId } from "./type";
 import { BFloat16, BFloat16Array } from "./types/bfloat16";
+import { BoolArray } from "./types/boolArray";
+import { Float16Array } from "./types/float16";
 import { Decimal } from "./types/decimal";
 
 
@@ -554,7 +556,7 @@ export type HintInput<T> = T extends {
   : T extends {
     type: typeof TypeId.BOOL_ARRAY;
   }
-  ? boolean[]
+  ? BoolArray | boolean[]
   : T extends {
     type: typeof TypeId.INT8_ARRAY;
   }
@@ -590,7 +592,7 @@ export type HintInput<T> = T extends {
   : T extends {
     type: typeof TypeId.FLOAT16_ARRAY;
   }
-  ? number[]
+  ? Float16Array | number[]
   : T extends {
     type: typeof TypeId.BFLOAT16_ARRAY;
   }
@@ -684,7 +686,7 @@ export type HintResult<T> = T extends never ? any : T extends {
   : T extends {
     type: typeof TypeId.BOOL_ARRAY;
   }
-  ? boolean[]
+  ? BoolArray
   : T extends {
     type: typeof TypeId.INT8_ARRAY;
   }
@@ -720,11 +722,11 @@ export type HintResult<T> = T extends never ? any : T extends {
   : T extends {
     type: typeof TypeId.FLOAT16_ARRAY;
   }
-  ? number[]
+  ? Float16Array
   : T extends {
     type: typeof TypeId.BFLOAT16_ARRAY;
   }
-  ? BFloat16[]
+  ? BFloat16Array
   : T extends {
     type: typeof TypeId.FLOAT32_ARRAY;
   }

@@ -120,6 +120,52 @@ private struct LocalNestedVarintMapV2: Equatable {
 }
 
 @ForyStruct
+private struct CompatibleListFieldV1: Equatable {
+    @ListField(element: .int32(encoding: .fixed))
+    var values: [Int32] = []
+
+    var extra: Int32 = 0
+}
+
+@ForyStruct
+private struct CompatibleVarintListFieldV1: Equatable {
+    @ListField(element: .int32())
+    var values: [Int32] = []
+
+    var extra: Int32 = 0
+}
+
+@ForyStruct
+private struct CompatibleArrayFieldV2: Equatable {
+    @ArrayField(element: .int32())
+    var values: [Int32] = []
+}
+
+@ForyStruct
+private struct CompatibleNullableListFieldV1: Equatable {
+    @ListField(element: .int32(nullable: true, encoding: .fixed))
+    var values: [Int32?] = []
+
+    var extra: Int32 = 0
+}
+
+@ForyStruct
+private struct CompatibleNestedListArrayFieldV1: Equatable {
+    @ListField(element: .list(element: .int32(encoding: .fixed)))
+    var values: [[Int32]] = []
+
+    var keep: Int32 = 0
+}
+
+@ForyStruct
+private struct CompatibleNestedArrayListFieldV2: Equatable {
+    @ListField(element: .array(element: .int32()))
+    var values: [[Int32]] = []
+
+    var keep: Int32 = 0
+}
+
+@ForyStruct
 private struct SchemaVersionV1: Equatable {
     var id: Int32 = 0
     var name: String = ""
@@ -351,6 +397,81 @@ func compatibleSkipUsesRemoteMetadataForNestedMapListSetFields() throws {
     #expect(decoded.data.isEmpty)
     #expect(decoded.keep == source.keep)
     #expect(decoded.ids.isEmpty)
+}
+
+@Test
+func compatibleReadAdaptsImmediateListAndArrayFieldPair() throws {
+    let writer = Fory(config: .init(xlang: true, trackRef: false, compatible: true))
+    writer.register(CompatibleListFieldV1.self, id: 9922)
+
+    let reader = Fory(config: .init(xlang: true, trackRef: false, compatible: true))
+    reader.register(CompatibleArrayFieldV2.self, id: 9922)
+
+    let decoded: CompatibleArrayFieldV2 = try reader.deserialize(
+        try writer.serialize(CompatibleListFieldV1(values: [1, 2, 3], extra: 9))
+    )
+    #expect(decoded.values == [1, 2, 3])
+}
+
+@Test
+func compatibleReadAdaptsDefaultVarintListAndArrayFieldPair() throws {
+    let writer = Fory(config: .init(xlang: true, trackRef: false, compatible: true))
+    writer.register(CompatibleVarintListFieldV1.self, id: 9924)
+
+    let reader = Fory(config: .init(xlang: true, trackRef: false, compatible: true))
+    reader.register(CompatibleArrayFieldV2.self, id: 9924)
+
+    let decoded: CompatibleArrayFieldV2 = try reader.deserialize(
+        try writer.serialize(CompatibleVarintListFieldV1(values: [-1, 2, 3], extra: 9))
+    )
+    #expect(decoded.values == [-1, 2, 3])
+}
+
+@Test
+func compatibleReadAdaptsArrayFieldToDefaultVarintListField() throws {
+    let writer = Fory(config: .init(xlang: true, trackRef: false, compatible: true))
+    writer.register(CompatibleArrayFieldV2.self, id: 9925)
+
+    let reader = Fory(config: .init(xlang: true, trackRef: false, compatible: true))
+    reader.register(CompatibleVarintListFieldV1.self, id: 9925)
+
+    let decoded: CompatibleVarintListFieldV1 = try reader.deserialize(
+        try writer.serialize(CompatibleArrayFieldV2(values: [-1, 2, 3]))
+    )
+    #expect(decoded.values == [-1, 2, 3])
+}
+
+@Test
+func compatibleReadRejectsNullableListElementsForArrayField() throws {
+    let writer = Fory(config: .init(xlang: true, trackRef: false, compatible: true))
+    writer.register(CompatibleNullableListFieldV1.self, id: 9923)
+
+    let reader = Fory(config: .init(xlang: true, trackRef: false, compatible: true))
+    reader.register(CompatibleArrayFieldV2.self, id: 9923)
+
+    let bytes = try writer.serialize(CompatibleNullableListFieldV1(values: [1, 2, 3], extra: 9))
+    let decoded: CompatibleArrayFieldV2 = try reader.deserialize(bytes)
+    #expect(decoded.values == [1, 2, 3])
+
+    let nullableBytes = try writer.serialize(CompatibleNullableListFieldV1(values: [1, nil, 3], extra: 9))
+    #expect(throws: ForyError.invalidData("compatible list-to-array field cannot read nullable elements")) {
+        let _: CompatibleArrayFieldV2 = try reader.deserialize(nullableBytes)
+    }
+}
+
+@Test
+func compatibleReadSkipsNestedListArrayFieldPair() throws {
+    let writer = Fory(config: .init(xlang: true, trackRef: false, compatible: true))
+    writer.register(CompatibleNestedListArrayFieldV1.self, id: 9926)
+
+    let reader = Fory(config: .init(xlang: true, trackRef: false, compatible: true))
+    reader.register(CompatibleNestedArrayListFieldV2.self, id: 9926)
+
+    let decoded: CompatibleNestedArrayListFieldV2 = try reader.deserialize(
+        try writer.serialize(CompatibleNestedListArrayFieldV1(values: [[1, 2]], keep: 7))
+    )
+    #expect(decoded.values.isEmpty)
+    #expect(decoded.keep == 7)
 }
 
 @Test

@@ -21,7 +21,7 @@ Tests for xlang TypeDef implementation.
 
 import array
 from dataclasses import dataclass, make_dataclass
-from typing import List, Dict
+from typing import List, Dict, Optional
 
 import pytest
 
@@ -43,8 +43,10 @@ from pyfory.meta.typedef_encoder import (
     prepend_header,
 )
 from pyfory.meta.typedef_decoder import decode_typedef
+from pyfory.serializer import PyArraySerializer
 from pyfory.types import TypeId
 from pyfory import Fory
+from pyfory.error import TypeNotCompatibleError
 
 try:
     import numpy as np
@@ -100,6 +102,51 @@ class BytesPayload:
 @dataclass
 class UInt8ArrayPayload:
     payload: pyfory.Array[pyfory.UInt8]
+
+
+@dataclass
+class Int32ListPayload:
+    payload: List[pyfory.FixedInt32]
+
+
+@dataclass
+class Int32VarintListPayload:
+    payload: List[pyfory.Int32]
+
+
+@dataclass
+class NullableInt32ListPayload:
+    payload: List[Optional[pyfory.FixedInt32]]
+
+
+@dataclass
+class StringListPayload:
+    payload: List[str]
+
+
+@dataclass
+class Int32ArrayPayload:
+    payload: pyfory.Array[pyfory.Int32]
+
+
+@dataclass
+class Int32NDArrayPayload:
+    payload: pyfory.NDArray[pyfory.Int32]
+
+
+@dataclass
+class Int32PyArrayPayload:
+    payload: pyfory.PyArray[pyfory.Int32]
+
+
+@dataclass
+class NestedInt32ListPayload:
+    payload: List[List[pyfory.FixedInt32]]
+
+
+@dataclass
+class NestedInt32ArrayPayload:
+    payload: List[pyfory.Array[pyfory.Int32]]
 
 
 def test_collection_field_type():
@@ -365,6 +412,174 @@ def test_compatible_uint8_array_assigns_to_bytes():
 
     assert isinstance(decoded, BytesPayload)
     assert decoded.payload == b"\x01\x02\xff"
+
+
+def _register_int32_payload(fory, cls):
+    fory.register(cls, namespace="example", typename="Int32Sequence")
+
+
+def _pyarray_int32_value(values):
+    for typecode, (_itemsize, _ftype, type_id) in PyArraySerializer.typecode_dict.items():
+        if type_id == TypeId.INT32_ARRAY:
+            return array.array(typecode, values)
+    raise AssertionError("No array.array typecode maps to INT32_ARRAY")
+
+
+def test_compatible_int32_list_assigns_to_array():
+    writer = Fory(xlang=True, compatible=True)
+    reader = Fory(xlang=True, compatible=True)
+    _register_int32_payload(writer, Int32ListPayload)
+    _register_int32_payload(reader, Int32ArrayPayload)
+
+    decoded = reader.deserialize(writer.serialize(Int32ListPayload(payload=[1, 2, 3])))
+
+    assert isinstance(decoded, Int32ArrayPayload)
+    assert isinstance(decoded.payload, pyfory.Int32Array)
+    assert list(decoded.payload) == [1, 2, 3]
+
+
+@pytest.mark.skipif(np is None, reason="Requires numpy")
+def test_compatible_int32_list_assigns_to_ndarray():
+    writer = Fory(xlang=True, compatible=True)
+    reader = Fory(xlang=True, compatible=True)
+    _register_int32_payload(writer, Int32ListPayload)
+    _register_int32_payload(reader, Int32NDArrayPayload)
+
+    decoded = reader.deserialize(writer.serialize(Int32ListPayload(payload=[1, 2, 3])))
+
+    assert isinstance(decoded, Int32NDArrayPayload)
+    assert isinstance(decoded.payload, np.ndarray)
+    assert decoded.payload.dtype == np.dtype(np.int32)
+    np.testing.assert_array_equal(decoded.payload, np.array([1, 2, 3], dtype=np.int32))
+
+
+@pytest.mark.skipif(np is None, reason="Requires numpy")
+def test_compatible_empty_int32_list_assigns_to_ndarray():
+    writer = Fory(xlang=True, compatible=True)
+    reader = Fory(xlang=True, compatible=True)
+    _register_int32_payload(writer, Int32ListPayload)
+    _register_int32_payload(reader, Int32NDArrayPayload)
+
+    decoded = reader.deserialize(writer.serialize(Int32ListPayload(payload=[])))
+
+    assert isinstance(decoded, Int32NDArrayPayload)
+    assert isinstance(decoded.payload, np.ndarray)
+    assert decoded.payload.dtype == np.dtype(np.int32)
+    assert decoded.payload.size == 0
+
+
+def test_compatible_int32_list_assigns_to_pyarray():
+    writer = Fory(xlang=True, compatible=True)
+    reader = Fory(xlang=True, compatible=True)
+    _register_int32_payload(writer, Int32ListPayload)
+    _register_int32_payload(reader, Int32PyArrayPayload)
+
+    decoded = reader.deserialize(writer.serialize(Int32ListPayload(payload=[1, 2, 3])))
+
+    assert isinstance(decoded, Int32PyArrayPayload)
+    assert isinstance(decoded.payload, array.array)
+    assert PyArraySerializer.typecode_dict[decoded.payload.typecode][2] == TypeId.INT32_ARRAY
+    assert decoded.payload.tolist() == [1, 2, 3]
+
+
+def test_compatible_empty_int32_list_assigns_to_pyarray():
+    writer = Fory(xlang=True, compatible=True)
+    reader = Fory(xlang=True, compatible=True)
+    _register_int32_payload(writer, Int32ListPayload)
+    _register_int32_payload(reader, Int32PyArrayPayload)
+
+    decoded = reader.deserialize(writer.serialize(Int32ListPayload(payload=[])))
+
+    assert isinstance(decoded, Int32PyArrayPayload)
+    assert isinstance(decoded.payload, array.array)
+    assert PyArraySerializer.typecode_dict[decoded.payload.typecode][2] == TypeId.INT32_ARRAY
+    assert decoded.payload.tolist() == []
+
+
+def test_compatible_varint_int32_list_assigns_to_array():
+    writer = Fory(xlang=True, compatible=True)
+    reader = Fory(xlang=True, compatible=True)
+    _register_int32_payload(writer, Int32VarintListPayload)
+    _register_int32_payload(reader, Int32ArrayPayload)
+
+    decoded = reader.deserialize(writer.serialize(Int32VarintListPayload(payload=[-1, 2, 3])))
+
+    assert isinstance(decoded, Int32ArrayPayload)
+    assert isinstance(decoded.payload, pyfory.Int32Array)
+    assert list(decoded.payload) == [-1, 2, 3]
+
+
+def test_compatible_int32_array_assigns_to_list():
+    writer = Fory(xlang=True, compatible=True)
+    reader = Fory(xlang=True, compatible=True)
+    _register_int32_payload(writer, Int32ArrayPayload)
+    _register_int32_payload(reader, Int32ListPayload)
+
+    decoded = reader.deserialize(writer.serialize(Int32ArrayPayload(payload=pyfory.Int32Array([1, 2, 3]))))
+
+    assert isinstance(decoded, Int32ListPayload)
+    assert decoded.payload == [1, 2, 3]
+
+
+@pytest.mark.skipif(np is None, reason="Requires numpy")
+def test_compatible_int32_ndarray_assigns_to_list():
+    writer = Fory(xlang=True, compatible=True)
+    reader = Fory(xlang=True, compatible=True)
+    _register_int32_payload(writer, Int32NDArrayPayload)
+    _register_int32_payload(reader, Int32ListPayload)
+
+    decoded = reader.deserialize(writer.serialize(Int32NDArrayPayload(payload=np.array([1, 2, 3], dtype=np.int32))))
+
+    assert isinstance(decoded, Int32ListPayload)
+    assert decoded.payload == [1, 2, 3]
+
+
+def test_compatible_int32_pyarray_assigns_to_list():
+    writer = Fory(xlang=True, compatible=True)
+    reader = Fory(xlang=True, compatible=True)
+    _register_int32_payload(writer, Int32PyArrayPayload)
+    _register_int32_payload(reader, Int32ListPayload)
+
+    decoded = reader.deserialize(writer.serialize(Int32PyArrayPayload(payload=_pyarray_int32_value([1, 2, 3]))))
+
+    assert isinstance(decoded, Int32ListPayload)
+    assert decoded.payload == [1, 2, 3]
+
+
+def test_compatible_nullable_int32_list_payload_rejects_array_read():
+    writer = Fory(xlang=True, compatible=True)
+    reader = Fory(xlang=True, compatible=True)
+    _register_int32_payload(writer, NullableInt32ListPayload)
+    _register_int32_payload(reader, Int32ArrayPayload)
+
+    decoded = reader.deserialize(writer.serialize(NullableInt32ListPayload(payload=[1, 2, 3])))
+    assert isinstance(decoded, Int32ArrayPayload)
+    assert list(decoded.payload) == [1, 2, 3]
+
+    with pytest.raises(TypeNotCompatibleError):
+        reader.deserialize(writer.serialize(NullableInt32ListPayload(payload=[1, None, 3])))
+
+
+def test_compatible_incompatible_list_array_elements_reject():
+    writer = Fory(xlang=True, compatible=True)
+    reader = Fory(xlang=True, compatible=True)
+    _register_int32_payload(writer, StringListPayload)
+    _register_int32_payload(reader, Int32ArrayPayload)
+
+    with pytest.raises(TypeNotCompatibleError):
+        reader.deserialize(writer.serialize(StringListPayload(payload=["1", "2"])))
+
+
+def test_compatible_nested_list_array_mismatch_not_assigned():
+    writer = Fory(xlang=True, compatible=True)
+    reader = Fory(xlang=True, compatible=True)
+    _register_int32_payload(writer, NestedInt32ListPayload)
+    _register_int32_payload(reader, NestedInt32ArrayPayload)
+
+    decoded = reader.deserialize(writer.serialize(NestedInt32ListPayload(payload=[[1, 2], [3]])))
+
+    assert isinstance(decoded, NestedInt32ArrayPayload)
+    assert decoded.payload == []
 
 
 if __name__ == "__main__":

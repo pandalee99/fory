@@ -404,6 +404,15 @@ private func readFieldExpr(
     }
     if let codecType = field.customCodecType {
         let fieldCodec = field.isOptional ? "OptionalFieldCodec<\(codecType)>" : codecType
+        if readTypeInfoExpr.contains("remoteField.fieldType") {
+            return """
+            try \(fieldCodec).readCompatibleField(
+                context,
+                remoteFieldType: remoteField.fieldType,
+                refMode: \(refModeExpr)
+            )
+            """
+        }
         return "try \(fieldCodec).read(context, refMode: \(refModeExpr), readTypeInfo: false)"
     }
     return "try \(field.typeText).foryRead(context, refMode: \(refModeExpr), readTypeInfo: \(readTypeInfoExpr))"

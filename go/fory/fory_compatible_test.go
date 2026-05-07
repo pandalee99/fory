@@ -131,6 +131,30 @@ type ByteFamilyInt8ArrayDataClass struct {
 	Payload []int8 `fory:"type=array(element=int8)"`
 }
 
+type Int32ListPayloadDataClass struct {
+	Payload []int32 `fory:"type=list(element=int32(nullable=false,encoding=fixed))"`
+}
+
+type Int32VarintListPayloadDataClass struct {
+	Payload []int32 `fory:"type=list(element=int32(nullable=false))"`
+}
+
+type NullableInt32ListPayloadDataClass struct {
+	Payload []*int32 `fory:"type=list(element=int32(nullable=true,encoding=fixed))"`
+}
+
+type Int32ArrayPayloadDataClass struct {
+	Payload [3]int32 `fory:"type=array(element=int32)"`
+}
+
+type NestedInt32ListPayloadDataClass struct {
+	Payload [][]int32 `fory:"type=list(element=list(element=int32(nullable=false,encoding=fixed)))"`
+}
+
+type NestedInt32ArrayPayloadDataClass struct {
+	Payload [][2]int32 `fory:"type=list(element=array(element=int32))"`
+}
+
 func TestMetaShareEnabled(t *testing.T) {
 	fory := NewForyWithOptions(WithXlang(true), WithCompatible(true))
 
@@ -531,6 +555,89 @@ func TestCompatibleSerializationScenarios(t *testing.T) {
 				assert.Nil(t, out.Payload)
 			},
 		},
+		{
+			name:      "Int32ListToArray",
+			tag:       "Int32Sequence",
+			writeType: Int32ListPayloadDataClass{},
+			readType:  Int32ArrayPayloadDataClass{},
+			input: Int32ListPayloadDataClass{
+				Payload: []int32{1, 2, 3},
+			},
+			assertFunc: func(t *testing.T, input any, output any) {
+				out := output.(Int32ArrayPayloadDataClass)
+				assert.Equal(t, [3]int32{1, 2, 3}, out.Payload)
+			},
+		},
+		{
+			name:      "Int32VarintListToArray",
+			tag:       "Int32Sequence",
+			writeType: Int32VarintListPayloadDataClass{},
+			readType:  Int32ArrayPayloadDataClass{},
+			input: Int32VarintListPayloadDataClass{
+				Payload: []int32{-1, 2, 3},
+			},
+			assertFunc: func(t *testing.T, input any, output any) {
+				out := output.(Int32ArrayPayloadDataClass)
+				assert.Equal(t, [3]int32{-1, 2, 3}, out.Payload)
+			},
+		},
+		{
+			name:                 "EmptyInt32ListDoesNotMatchFixedArrayLength",
+			tag:                  "Int32Sequence",
+			writeType:            Int32ListPayloadDataClass{},
+			readType:             Int32ArrayPayloadDataClass{},
+			input:                Int32ListPayloadDataClass{Payload: []int32{}},
+			unmarshalErrContains: "array length 3 does not match serialized list length 0",
+		},
+		{
+			name:      "Int32ArrayToList",
+			tag:       "Int32Sequence",
+			writeType: Int32ArrayPayloadDataClass{},
+			readType:  Int32ListPayloadDataClass{},
+			input: Int32ArrayPayloadDataClass{
+				Payload: [3]int32{1, 2, 3},
+			},
+			assertFunc: func(t *testing.T, input any, output any) {
+				out := output.(Int32ListPayloadDataClass)
+				assert.Equal(t, []int32{1, 2, 3}, out.Payload)
+			},
+		},
+		{
+			name:      "NullableInt32ListWithoutNullsMatchesArray",
+			tag:       "Int32Sequence",
+			writeType: NullableInt32ListPayloadDataClass{},
+			readType:  Int32ArrayPayloadDataClass{},
+			input: NullableInt32ListPayloadDataClass{
+				Payload: []*int32{ptr(int32(1)), ptr(int32(2)), ptr(int32(3))},
+			},
+			assertFunc: func(t *testing.T, input any, output any) {
+				out := output.(Int32ArrayPayloadDataClass)
+				assert.Equal(t, [3]int32{1, 2, 3}, out.Payload)
+			},
+		},
+		{
+			name:      "NullableInt32ListPayloadDoesNotMatchArray",
+			tag:       "Int32Sequence",
+			writeType: NullableInt32ListPayloadDataClass{},
+			readType:  Int32ArrayPayloadDataClass{},
+			input: NullableInt32ListPayloadDataClass{
+				Payload: []*int32{ptr(int32(1)), nil, ptr(int32(3))},
+			},
+			unmarshalErrContains: "compatible list to array field requires non-null elements",
+		},
+		{
+			name:      "NestedListArrayMismatch",
+			tag:       "NestedInt32Sequence",
+			writeType: NestedInt32ListPayloadDataClass{},
+			readType:  NestedInt32ArrayPayloadDataClass{},
+			input: NestedInt32ListPayloadDataClass{
+				Payload: [][]int32{{1, 2}, {3, 4}},
+			},
+			assertFunc: func(t *testing.T, input any, output any) {
+				out := output.(NestedInt32ArrayPayloadDataClass)
+				assert.Nil(t, out.Payload)
+			},
+		},
 	}
 
 	for _, tc := range cases {
@@ -541,14 +648,15 @@ func TestCompatibleSerializationScenarios(t *testing.T) {
 }
 
 type compatibilityCase struct {
-	name        string
-	tag         string
-	writeType   any
-	readType    any
-	input       any
-	assertFunc  func(t *testing.T, input any, output any)
-	writerSetup func(*Fory) error
-	readerSetup func(*Fory) error
+	name                 string
+	tag                  string
+	writeType            any
+	readType             any
+	input                any
+	assertFunc           func(t *testing.T, input any, output any)
+	writerSetup          func(*Fory) error
+	readerSetup          func(*Fory) error
+	unmarshalErrContains string
 }
 
 func runCompatibilityCase(t *testing.T, tc compatibilityCase) {
@@ -587,6 +695,12 @@ func runCompatibilityCase(t *testing.T, tc compatibilityCase) {
 	assert.NotPanics(t, func() {
 		unmarshalErr = reader.Unmarshal(data, target.Interface())
 	})
+	if tc.unmarshalErrContains != "" {
+		if assert.Error(t, unmarshalErr) {
+			assert.Contains(t, unmarshalErr.Error(), tc.unmarshalErrContains)
+		}
+		return
+	}
 	assert.NoError(t, unmarshalErr)
 
 	tc.assertFunc(t, tc.input, target.Elem().Interface())

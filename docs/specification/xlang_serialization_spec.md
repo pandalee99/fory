@@ -182,6 +182,24 @@ canonical dynamic tags for `array<T>`:
 `ARRAY (42)` is reserved for a future generic or shaped-array descriptor and is
 not emitted for dense primitive arrays.
 
+In schema-compatible mode only, a matched struct/class field may read between
+direct top-level `list<T>` and direct top-level `array<T>` schemas when `T`
+belongs to the valid dense array element domains above. Integer list element
+encodings in the same signedness and width domain match the corresponding dense
+array element domain. This is a read adaptation, not a schema-kind merge:
+writers keep emitting their local canonical `list<T>` or `array<T>` payload, and
+TypeDef/ClassDef encodings, fingerprints, dynamic root serialization,
+schema-consistent mode, and unknown-field skipping continue to treat `list<T>`
+and `array<T>` as distinct kinds.
+
+The adaptation is limited to the immediate schema of the matched compatible
+field. It does not apply when `list<T>` or `array<T>` appears inside another
+field type, including collection elements, map keys or values, array elements,
+union alternatives, or other generic/container positions. When a peer `list<T>`
+payload declares nullable or ref-tracked elements, a local matched `array<T>`
+field must raise a compatible-read error. Null list elements must not be coerced
+to dense-array default values.
+
 Users can also provide meta hints for fields of a type, or the type whole. Here is an example in java which use
 annotation to provide such information.
 
@@ -1219,7 +1237,9 @@ can be taken as an example.
 #### primitive array
 
 Primitive array are taken as a binary buffer, serialization will just write the length of array size as an unsigned int,
-then copy the whole buffer into the stream.
+then copy the whole buffer into the stream. Multi-byte element arrays are always encoded in little-endian element order;
+runtimes whose native typed-array storage uses another byte order must swap or write elements explicitly instead of
+copying native storage bytes unchanged.
 
 Such serialization won't compress the array. If users want to compress primitive array, users need to register custom
 serializers for such types or mark it as list type.

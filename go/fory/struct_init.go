@@ -432,6 +432,7 @@ func (s *structSerializer) initFieldsFromTypeDef(typeResolver *TypeResolver) err
 
 		if exists {
 			shouldRead := false
+			usesCompatibleCollectionArrayReader := false
 			isPolymorphicField := def.typeSpec.TypeId() == UNKNOWN
 			defTypeId := def.typeSpec.TypeId()
 			internalDefTypeId := defTypeId
@@ -521,13 +522,37 @@ func (s *structSerializer) initFieldsFromTypeDef(typeResolver *TypeResolver) err
 			} else if defTypeId == SET && isSetReflectType(localType) {
 				shouldRead = true
 				fieldType = localType
+			} else if defTypeId == LIST && localFieldSpec != nil && listFieldCanReadLocalArray(
+				def.typeSpec,
+				def.nullable,
+				def.trackRef,
+				localFieldSpec.Type,
+				localNullableByIndex[fieldIndex],
+				localTrackRefByIndex[fieldIndex],
+				localType,
+			) {
+				shouldRead = true
+				fieldType = localType
+			} else if defTypeId == LIST && localFieldSpec != nil && compatibleListFieldCanReadLocalArray(def.typeSpec, localFieldSpec.Type, localType) {
+				shouldRead = true
+				usesCompatibleCollectionArrayReader = true
+				fieldType = localType
+				sliceType := reflect.SliceOf(localType.Elem())
+				if listReader, ok := newPrimitiveListSerializer(sliceType, def.typeSpec.Element.TypeID); ok {
+					fieldSerializer = compatiblePrimitiveListToArraySerializer{
+						arrayType:  localType,
+						listReader: listReader.(primitiveListSerializer),
+					}
+				}
+			} else if defTypeId == LIST && localType.Kind() == reflect.Array {
+				shouldRead = false
 			} else if !typeLookupFailed && typesCompatible(localType, remoteType) {
 				shouldRead = true
 				fieldType = localType
 			}
 
 			if shouldRead {
-				if localType != nil {
+				if localType != nil && !usesCompatibleCollectionArrayReader {
 					localSerializer, localErr := serializerForTypeSpec(typeResolver, localType, def.typeSpec)
 					if localErr == nil && localSerializer != nil {
 						fieldSerializer = localSerializer
@@ -773,6 +798,72 @@ func fieldSpecEqualForDiff(remoteSpec *TypeSpec, remoteNullable bool, remoteTrac
 	local.Nullable = localNullable
 	local.TrackRef = localTrackRef
 	return remote.EqualForDiff(local)
+}
+
+func listFieldCanReadLocalArray(remoteSpec *TypeSpec, remoteNullable bool, remoteTrackRef bool, localSpec *TypeSpec, localNullable bool, localTrackRef bool, localType reflect.Type) bool {
+	if localType == nil || localType.Kind() != reflect.Array || remoteSpec == nil || localSpec == nil {
+		return false
+	}
+	if remoteSpec.TypeID != LIST || localSpec.TypeID != LIST {
+		return false
+	}
+	return fieldSpecEqualForDiff(remoteSpec, remoteNullable, remoteTrackRef, localSpec, localNullable, localTrackRef)
+}
+
+func compatibleListFieldCanReadLocalArray(remoteSpec *TypeSpec, localSpec *TypeSpec, localType reflect.Type) bool {
+	if remoteSpec == nil || localSpec == nil || localType == nil {
+		return false
+	}
+	if localType.Kind() != reflect.Array && localType.Kind() != reflect.Slice {
+		return false
+	}
+	if remoteSpec.TypeID != LIST || remoteSpec.Element == nil {
+		return false
+	}
+	if !isPrimitiveArrayType(localSpec.TypeID) {
+		return false
+	}
+	remoteSpec.normalizeChildren()
+	localSpec.normalizeChildren()
+	if _, ok := primitiveArrayElementTypeID(localSpec.TypeID); !ok {
+		return false
+	}
+	sliceType := reflect.SliceOf(localType.Elem())
+	_, ok := newPrimitiveListSerializer(sliceType, remoteSpec.Element.TypeID)
+	return ok
+}
+
+func primitiveArrayElementTypeID(arrayTypeID TypeId) (TypeId, bool) {
+	switch arrayTypeID {
+	case BOOL_ARRAY:
+		return BOOL, true
+	case INT8_ARRAY:
+		return INT8, true
+	case INT16_ARRAY:
+		return INT16, true
+	case INT32_ARRAY:
+		return INT32, true
+	case INT64_ARRAY:
+		return INT64, true
+	case UINT8_ARRAY:
+		return UINT8, true
+	case UINT16_ARRAY:
+		return UINT16, true
+	case UINT32_ARRAY:
+		return UINT32, true
+	case UINT64_ARRAY:
+		return UINT64, true
+	case FLOAT32_ARRAY:
+		return FLOAT32, true
+	case FLOAT64_ARRAY:
+		return FLOAT64, true
+	case FLOAT16_ARRAY:
+		return FLOAT16, true
+	case BFLOAT16_ARRAY:
+		return BFLOAT16, true
+	default:
+		return UNKNOWN, false
+	}
 }
 
 func typeIdEqualForDiff(remoteTypeId TypeId, localTypeId TypeId) bool {

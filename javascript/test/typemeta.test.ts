@@ -17,7 +17,12 @@
  * under the License.
  */
 
-import Fory, { Type } from "../packages/core/index";
+import Fory, {
+  BFloat16Array,
+  BoolArray,
+  Float16Array,
+  Type,
+} from "../packages/core/index";
 import { ReadContext } from "../packages/core/lib/context";
 import { TypeMeta } from "../packages/core/lib/meta/TypeMeta";
 import { BinaryReader } from "../packages/core/lib/reader";
@@ -193,6 +198,139 @@ describe("typemeta", () => {
       name: "Alice",
       alias: "ally",
     });
+  });
+
+  test("adapts only immediate compatible list and dense array field pairs", () => {
+    const writerFory = new Fory({ compatible: true });
+    const readerFory = new Fory({ compatible: true });
+
+    const writerType = Type.struct(7211, {
+      values: Type.list(Type.int32({ encoding: "fixed" })).setId(1),
+    });
+    const readerType = Type.struct(7211, {
+      values: Type.int32Array().setId(1),
+    });
+
+    const bytes = writerFory.register(writerType).serialize({
+      values: [1, 2, 3],
+    });
+    const result = readerFory.register(readerType).deserialize(bytes);
+
+    expect(result.values).toBeInstanceOf(Int32Array);
+    expect(Array.from(result.values)).toEqual([1, 2, 3]);
+  });
+
+  test("adapts compatible list fields to reduced-precision dense array carriers", () => {
+    const writerFory = new Fory({ compatible: true });
+    const readerFory = new Fory({ compatible: true });
+
+    const writerType = Type.struct(7214, {
+      bools: Type.list(Type.bool()).setId(1),
+      float16s: Type.list(Type.float16()).setId(2),
+      bfloat16s: Type.list(Type.bfloat16()).setId(3),
+    });
+    const readerType = Type.struct(7214, {
+      bools: Type.boolArray().setId(1),
+      float16s: Type.float16Array().setId(2),
+      bfloat16s: Type.bfloat16Array().setId(3),
+    });
+
+    const bytes = writerFory.register(writerType).serialize({
+      bools: [true, false],
+      float16s: [1.5, -2],
+      bfloat16s: [1.5, -2],
+    });
+    const result = readerFory.register(readerType).deserialize(bytes);
+
+    expect(result.bools).toBeInstanceOf(BoolArray);
+    expect(Array.from(result.bools)).toEqual([true, false]);
+    expect(result.float16s).toBeInstanceOf(Float16Array as any);
+    expect(Array.from(result.float16s as Iterable<number>)[0]).toBeCloseTo(1.5, 1);
+    expect(Array.from(result.float16s as Iterable<number>)[1]).toBeCloseTo(-2, 1);
+    expect(result.bfloat16s).toBeInstanceOf(BFloat16Array);
+    expect(Array.from(result.bfloat16s as Iterable<number>)).toEqual([1.5, -2]);
+  });
+
+  test("adapts compatible dense array field to immediate list field", () => {
+    const writerFory = new Fory({ compatible: true });
+    const readerFory = new Fory({ compatible: true });
+
+    const writerType = Type.struct(7213, {
+      values: Type.int32Array().setId(1),
+    });
+    const readerType = Type.struct(7213, {
+      values: Type.list(Type.int32({ encoding: "fixed" })).setId(1),
+    });
+
+    const bytes = writerFory.register(writerType).serialize({
+      values: new Int32Array([1, 2, 3]),
+    });
+    const result = readerFory.register(readerType).deserialize(bytes);
+
+    expect(Array.isArray(result.values)).toBe(true);
+    expect(result).toEqual({ values: [1, 2, 3] });
+  });
+
+  test("rejects compatible list to dense array when payload has nullable elements", () => {
+    const writerFory = new Fory({ compatible: true });
+    const readerFory = new Fory({ compatible: true });
+
+    const writerType = Type.struct(7212, {
+      values: Type.list(
+        Type.int32({ encoding: "fixed" }).setNullable(true),
+      ).setId(1),
+    });
+    const readerType = Type.struct(7212, {
+      values: Type.int32Array().setId(1),
+    });
+
+    const serializer = writerFory.register(writerType);
+    const nonNullBytes = serializer.serialize({
+      values: [1, 2, 3],
+    });
+    const result = readerFory.register(readerType).deserialize(nonNullBytes);
+    expect(Array.from(result.values as Int32Array)).toEqual([1, 2, 3]);
+
+    const nullableBytes = serializer.serialize({
+      values: [1, null, 3],
+    });
+    expect(() => readerFory.register(readerType).deserialize(nullableBytes)).toThrow();
+  });
+
+  test("rejects incompatible immediate list and dense array element fields", () => {
+    const writerFory = new Fory({ compatible: true });
+    const readerFory = new Fory({ compatible: true });
+
+    const writerType = Type.struct(7215, {
+      values: Type.list(Type.string()).setId(1),
+    });
+    const readerType = Type.struct(7215, {
+      values: Type.int32Array().setId(1),
+    });
+
+    const bytes = writerFory.register(writerType).serialize({
+      values: ["1", "2"],
+    });
+
+    expect(() => readerFory.register(readerType).deserialize(bytes)).toThrow(/list\/array/);
+  });
+
+  test("rejects nested compatible list and dense array positions", () => {
+    const writerFory = new Fory({ compatible: true });
+    const readerFory = new Fory({ compatible: true });
+
+    const writerType = Type.struct(7216, {
+      values: Type.list(Type.int32Array()).setId(1),
+    });
+    const readerType = Type.struct(7216, {
+      values: Type.list(Type.list(Type.int32({ encoding: "fixed" }))).setId(1),
+    });
+
+    const bytes = writerFory.register(writerType).serialize({
+      values: [new Int32Array([1, 2])],
+    });
+
+    expect(() => readerFory.register(readerType).deserialize(bytes)).toThrow(/list\/array/);
   });
 
   test("keeps compatible named schema evolution working when field count differs", () => {

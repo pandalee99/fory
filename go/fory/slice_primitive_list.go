@@ -27,6 +27,11 @@ type primitiveListSerializer struct {
 	elemTypeID TypeId
 }
 
+type compatiblePrimitiveListToArraySerializer struct {
+	arrayType  reflect.Type
+	listReader primitiveListSerializer
+}
+
 func newPrimitiveListSerializer(type_ reflect.Type, elemTypeID TypeId) (Serializer, bool) {
 	if type_.Kind() != reflect.Slice {
 		return nil, false
@@ -177,6 +182,84 @@ func (s primitiveListSerializer) ReadData(ctx *ReadContext, value reflect.Value)
 	s.readValues(buf, err, value, length, hasNull)
 }
 
+func (s compatiblePrimitiveListToArraySerializer) WriteData(ctx *WriteContext, value reflect.Value) {
+	ctx.SetError(SerializationErrorf("compatible list-to-array field serializer is read-only"))
+}
+
+func (s compatiblePrimitiveListToArraySerializer) Write(ctx *WriteContext, refMode RefMode, writeType bool, hasGenerics bool, value reflect.Value) {
+	ctx.SetError(SerializationErrorf("compatible list-to-array field serializer is read-only"))
+}
+
+//go:noinline
+func (s compatiblePrimitiveListToArraySerializer) Read(ctx *ReadContext, refMode RefMode, readType bool, hasGenerics bool, value reflect.Value) {
+	done, typeID := readSliceRefAndType(ctx, refMode, readType, value)
+	if done || ctx.HasError() {
+		return
+	}
+	if readType && typeID != uint32(LIST) {
+		ctx.SetError(DeserializationErrorf("array-compatible list type mismatch: expected LIST (%d), got %d", LIST, typeID))
+		return
+	}
+	s.ReadData(ctx, value)
+}
+
+func (s compatiblePrimitiveListToArraySerializer) ReadData(ctx *ReadContext, value reflect.Value) {
+	buf := ctx.Buffer()
+	err := ctx.Err()
+	length := ctx.ReadCollectionLength()
+	if ctx.HasError() {
+		return
+	}
+	if value.Kind() != reflect.Slice && length != value.Len() {
+		ctx.SetError(DeserializationErrorf("array length %d does not match serialized list length %d", value.Len(), length))
+		return
+	}
+	if length == 0 {
+		if value.Kind() == reflect.Slice {
+			value.Set(reflect.MakeSlice(value.Type(), 0, 0))
+		} else if value.Len() != 0 {
+			ctx.SetError(DeserializationErrorf("array-compatible list length %d does not match array length %d", length, value.Len()))
+		}
+		return
+	}
+	if value.Kind() == reflect.Array && length != value.Len() {
+		ctx.SetError(DeserializationErrorf("array-compatible list length %d does not match array length %d", length, value.Len()))
+		return
+	}
+	collectFlag := buf.ReadInt8(err)
+	if (collectFlag & CollectionIsSameType) != 0 {
+		if (collectFlag & CollectionIsDeclElementType) == 0 {
+			ctx.TypeResolver().ReadTypeInfo(buf, err)
+		}
+	}
+	if (collectFlag & CollectionTrackingRef) != 0 {
+		ctx.SetError(DeserializationErrorf("array-compatible list does not support reference-tracked elements"))
+		return
+	}
+	if (collectFlag & CollectionHasNull) != 0 {
+		ctx.SetError(DeserializationErrorf("compatible list to array field requires non-null elements"))
+		return
+	}
+	if (collectFlag & (CollectionIsSameType | CollectionIsDeclElementType)) != (CollectionIsSameType | CollectionIsDeclElementType) {
+		ctx.SetError(DeserializationErrorf("array-compatible list requires declared same-type elements"))
+		return
+	}
+	if value.Kind() == reflect.Slice {
+		temp := reflect.New(value.Type()).Elem()
+		s.listReader.readValues(buf, err, temp, length, false)
+		if ctx.HasError() {
+			return
+		}
+		value.Set(temp)
+		return
+	}
+	s.listReader.readArrayValues(buf, err, value, length)
+}
+
+func (s compatiblePrimitiveListToArraySerializer) ReadWithTypeInfo(ctx *ReadContext, refMode RefMode, typeInfo *TypeInfo, value reflect.Value) {
+	s.Read(ctx, refMode, false, false, value)
+}
+
 func (s primitiveListSerializer) readValues(buf *ByteBuffer, err *Error, value reflect.Value, length int, hasNull bool) {
 	switch s.type_.Elem().Kind() {
 	case reflect.Bool:
@@ -205,6 +288,104 @@ func (s primitiveListSerializer) readValues(buf *ByteBuffer, err *Error, value r
 		*(*[]float32)(value.Addr().UnsafePointer()) = readFloat32ListPayload(buf, err, length, hasNull)
 	case reflect.Float64:
 		*(*[]float64)(value.Addr().UnsafePointer()) = readFloat64ListPayload(buf, err, length, hasNull)
+	}
+}
+
+func (s primitiveListSerializer) readArrayValues(buf *ByteBuffer, err *Error, value reflect.Value, length int) {
+	switch s.type_.Elem().Kind() {
+	case reflect.Bool:
+		raw := buf.ReadBinary(length, err)
+		for i := 0; i < length; i++ {
+			value.Index(i).SetBool(raw[i] != 0)
+		}
+	case reflect.Int8:
+		raw := buf.ReadBinary(length, err)
+		for i := 0; i < length; i++ {
+			value.Index(i).SetInt(int64(int8(raw[i])))
+		}
+	case reflect.Uint8:
+		raw := buf.ReadBinary(length, err)
+		for i := 0; i < length; i++ {
+			value.Index(i).SetUint(uint64(raw[i]))
+		}
+	case reflect.Int16:
+		for i := 0; i < length; i++ {
+			value.Index(i).SetInt(int64(buf.ReadInt16(err)))
+		}
+	case reflect.Uint16:
+		for i := 0; i < length; i++ {
+			value.Index(i).SetUint(uint64(uint16(buf.ReadInt16(err))))
+		}
+	case reflect.Int32:
+		for i := 0; i < length; i++ {
+			if s.elemTypeID == INT32 {
+				value.Index(i).SetInt(int64(buf.ReadInt32(err)))
+			} else {
+				value.Index(i).SetInt(int64(buf.ReadVarint32(err)))
+			}
+		}
+	case reflect.Uint32:
+		for i := 0; i < length; i++ {
+			if s.elemTypeID == UINT32 {
+				value.Index(i).SetUint(uint64(uint32(buf.ReadInt32(err))))
+			} else {
+				value.Index(i).SetUint(uint64(buf.ReadVarUint32(err)))
+			}
+		}
+	case reflect.Int64:
+		for i := 0; i < length; i++ {
+			switch s.elemTypeID {
+			case INT64:
+				value.Index(i).SetInt(buf.ReadInt64(err))
+			case TAGGED_INT64:
+				value.Index(i).SetInt(buf.ReadTaggedInt64(err))
+			default:
+				value.Index(i).SetInt(buf.ReadVarint64(err))
+			}
+		}
+	case reflect.Uint64:
+		for i := 0; i < length; i++ {
+			switch s.elemTypeID {
+			case UINT64:
+				value.Index(i).SetUint(uint64(buf.ReadInt64(err)))
+			case TAGGED_UINT64:
+				value.Index(i).SetUint(buf.ReadTaggedUint64(err))
+			default:
+				value.Index(i).SetUint(buf.ReadVarUint64(err))
+			}
+		}
+	case reflect.Int:
+		for i := 0; i < length; i++ {
+			if s.elemTypeID == INT32 {
+				value.Index(i).SetInt(int64(buf.ReadInt32(err)))
+			} else if s.elemTypeID == INT64 {
+				value.Index(i).SetInt(buf.ReadInt64(err))
+			} else if reflect.TypeOf(int(0)).Size() == 8 {
+				value.Index(i).SetInt(buf.ReadVarint64(err))
+			} else {
+				value.Index(i).SetInt(int64(buf.ReadVarint32(err)))
+			}
+		}
+	case reflect.Uint:
+		for i := 0; i < length; i++ {
+			if s.elemTypeID == UINT32 {
+				value.Index(i).SetUint(uint64(uint32(buf.ReadInt32(err))))
+			} else if s.elemTypeID == UINT64 {
+				value.Index(i).SetUint(uint64(buf.ReadInt64(err)))
+			} else if reflect.TypeOf(uint(0)).Size() == 8 {
+				value.Index(i).SetUint(buf.ReadVarUint64(err))
+			} else {
+				value.Index(i).SetUint(uint64(buf.ReadVarUint32(err)))
+			}
+		}
+	case reflect.Float32:
+		for i := 0; i < length; i++ {
+			value.Index(i).SetFloat(float64(buf.ReadFloat32(err)))
+		}
+	case reflect.Float64:
+		for i := 0; i < length; i++ {
+			value.Index(i).SetFloat(buf.ReadFloat64(err))
+		}
 	}
 }
 
