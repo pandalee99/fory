@@ -36,6 +36,10 @@ export class BinaryReaderBuilder {
     return `${this.holder}.readSetCursor(${v})`;
   }
 
+  getDataView() {
+    return `${this.holder}.getDataView()`;
+  }
+
   readVarInt32() {
     return `${this.holder}.readVarInt32()`;
   }
@@ -273,6 +277,18 @@ class BinaryWriterBuilder {
     return `${this.holder}.writeGetCursor()`;
   }
 
+  getPlatformBuffer() {
+    return `${this.holder}.getPlatformBuffer()`;
+  }
+
+  getDataView() {
+    return `${this.holder}.getDataView()`;
+  }
+
+  setWriteCursor(cursor: number | string) {
+    return `${this.holder}.setWriteCursor(${cursor})`;
+  }
+
   setUint32Position(offset: number | string, v: number | string) {
     return `${this.holder}.setUint32Position(${offset}, ${v})`;
   }
@@ -353,6 +369,13 @@ class TypeMetaContextBuilder {
 
   readTypeMeta() {
     return `${this.readHolder}.readTypeMeta()`;
+  }
+
+  readTypeMetaIfSchemaChanged(expectedHash: string, original?: string) {
+    if (original) {
+      return `${this.readHolder}.readTypeMetaIfSchemaChanged(${expectedHash}, ${original})`;
+    }
+    return `${this.readHolder}.readTypeMetaIfSchemaChanged(${expectedHash})`;
   }
 
   genSerializerByTypeMetaRuntime(typeMeta: string, original?: string) {

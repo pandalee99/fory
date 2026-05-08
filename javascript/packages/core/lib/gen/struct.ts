@@ -92,10 +92,70 @@ function toRefMode(trackingRef?: boolean, nullable?: boolean) {
   }
 }
 
+function isDirectVarInt32Field(
+  typeInfo: TypeInfo,
+  typeResolver: CodecBuilder["resolver"],
+) {
+  return typeInfo.typeId === TypeId.VARINT32
+    && toRefMode(typeInfo.trackingRef, typeInfo.nullable) === RefMode.NONE
+    && typeResolver.isMonomorphic(typeInfo, typeInfo.dynamic);
+}
+
+function directNumericFieldReadExpr(
+  typeInfo: TypeInfo,
+  builder: CodecBuilder,
+): string | null {
+  if (
+    toRefMode(typeInfo.trackingRef, typeInfo.nullable) !== RefMode.NONE
+    || !builder.resolver.isMonomorphic(typeInfo, typeInfo.dynamic)
+  ) {
+    return null;
+  }
+  switch (typeInfo.typeId) {
+    case TypeId.INT8:
+      return builder.reader.readInt8();
+    case TypeId.INT16:
+      return builder.reader.readInt16();
+    case TypeId.INT32:
+      return builder.reader.readInt32();
+    case TypeId.VARINT32:
+      return builder.reader.readVarInt32();
+    case TypeId.INT64:
+      return builder.reader.readInt64();
+    case TypeId.VARINT64:
+      return builder.reader.readVarInt64();
+    case TypeId.TAGGED_INT64:
+      return builder.reader.readTaggedInt64();
+    case TypeId.UINT8:
+      return builder.reader.readUint8();
+    case TypeId.UINT16:
+      return builder.reader.readUint16();
+    case TypeId.UINT32:
+      return builder.reader.readUint32();
+    case TypeId.VAR_UINT32:
+      return builder.reader.readVarUInt32();
+    case TypeId.UINT64:
+      return builder.reader.readUint64();
+    case TypeId.VAR_UINT64:
+      return builder.reader.readVarUInt64();
+    case TypeId.TAGGED_UINT64:
+      return builder.reader.readTaggedUInt64();
+    case TypeId.FLOAT16:
+      return builder.reader.readFloat16();
+    case TypeId.BFLOAT16:
+      return builder.reader.readBfloat16();
+    case TypeId.FLOAT32:
+      return builder.reader.readFloat32();
+    case TypeId.FLOAT64:
+      return builder.reader.readFloat64();
+    default:
+      return null;
+  }
+}
+
 class StructSerializerGenerator extends BaseSerializerGenerator {
   typeInfo: TypeInfo;
   sortedProps: { key: string; typeInfo: TypeInfo }[];
-  metaChangedSerializer: string;
   typeMeta: TypeMeta;
   serializerExpr: string;
   ownTypeInfoExpr: string;
@@ -104,7 +164,6 @@ class StructSerializerGenerator extends BaseSerializerGenerator {
     super(typeInfo, builder, scope);
     this.typeInfo = typeInfo;
     this.sortedProps = sortProps(this.typeInfo, this.builder.resolver);
-    this.metaChangedSerializer = this.scope.declareVar("metaChangedSerializer", "null");
     this.typeMeta = TypeMeta.fromTypeInfo(this.typeInfo, this.builder.resolver);
     // Build an expression that resolves this struct's own serializer at runtime.
     // This is needed so that nested struct generators (e.g., Person inside
@@ -117,6 +176,11 @@ class StructSerializerGenerator extends BaseSerializerGenerator {
       ? `${this.builder.getTypeResolverName()}.getSerializerByName("${CodecBuilder.replaceBackslashAndQuote(typeInfo.named!)}")`
       : `${this.builder.getTypeResolverName()}.getSerializerById(${typeInfo.typeId}, ${typeInfo.userTypeId})`;
     this.ownTypeInfoExpr = `${this.serializerExpr}.getTypeInfo()`;
+  }
+
+  private isDepthFreeStruct(): boolean {
+    return this.sortedProps.length > 0
+      && this.sortedProps.every(({ typeInfo }) => isDepthFreeField(typeInfo));
   }
 
   readField(fieldTypeInfo: TypeInfo, assignStmt: (expr: string) => string, embedGenerator: SerializerGenerator) {
@@ -210,18 +274,94 @@ class StructSerializerGenerator extends BaseSerializerGenerator {
       return `${!this.builder.resolver.isCompatible() ? this.builder.writer.writeInt32(hash) : ""}`;
     }
     const hash = this.typeMeta.computeStructHash();
+    const fieldWrites: string[] = [];
+    for (let i = 0; i < this.sortedProps.length;) {
+      const current = this.sortedProps[i];
+      if (isDirectVarInt32Field(current.typeInfo, this.builder.resolver)) {
+        let end = i + 1;
+        while (
+          end < this.sortedProps.length
+          && isDirectVarInt32Field(this.sortedProps[end].typeInfo, this.builder.resolver)
+        ) {
+          end++;
+        }
+        if (end - i > 1) {
+          fieldWrites.push(this.writeVarInt32Run(accessor, this.sortedProps.slice(i, end)));
+          i = end;
+          continue;
+        }
+      }
+      const InnerGeneratorClass = CodegenRegistry.get(current.typeInfo.typeId);
+      if (!InnerGeneratorClass) {
+        throw new Error(`${current.typeInfo.typeId} generator not exists`);
+      }
+      const innerGenerator = new InnerGeneratorClass(current.typeInfo, this.builder, this.scope);
+      const fieldAccessor = `${accessor}${CodecBuilder.safePropAccessor(current.key)}`;
+      fieldWrites.push(this.writeField(current.key, current.typeInfo, fieldAccessor, innerGenerator.writeEmbed()));
+      i++;
+    }
     return `
       ${!this.builder.resolver.isCompatible() ? this.builder.writer.writeInt32(hash) : ""}
-      ${this.sortedProps.map(({ key, typeInfo }) => {
-      const InnerGeneratorClass = CodegenRegistry.get(typeInfo.typeId);
-      if (!InnerGeneratorClass) {
-        throw new Error(`${typeInfo.typeId} generator not exists`);
-      }
-      const innerGenerator = new InnerGeneratorClass(typeInfo, this.builder, this.scope);
+      ${fieldWrites.join(";\n")}
+    `;
+  }
 
-      const fieldAccessor = `${accessor}${CodecBuilder.safePropAccessor(key)}`;
-      return this.writeField(key, typeInfo, fieldAccessor, innerGenerator.writeEmbed());
-    }).join(";\n")}
+  private writeVarInt32Run(
+    accessor: string,
+    fields: { key: string; typeInfo: TypeInfo }[],
+  ) {
+    const cursor = this.scope.uniqueName("cursor");
+    const buffer = this.scope.uniqueName("buffer");
+    const dataView = this.scope.uniqueName("dataView");
+    const value = this.scope.uniqueName("value");
+    const rawCursor = this.scope.uniqueName("rawCursor");
+    const u32 = this.scope.uniqueName("u32");
+    const locals = fields.map(({ key }) => {
+      return {
+        key,
+        fieldAccessor: `${accessor}${CodecBuilder.safePropAccessor(key)}`,
+        local: this.scope.uniqueName(key),
+      };
+    });
+    const checks = locals.map(({ key, local }) => `
+      if (${local} === null || ${local} === undefined) {
+        throw new Error('Field ${CodecBuilder.safeString(key)} is not nullable');
+      }
+    `).join("\n");
+    const writes = locals.map(({ local }) => `
+      ${value} = ((${local} << 1) ^ (${local} >> 31)) >>> 0;
+      if (${value} >>> 7 === 0) {
+        ${buffer}[${cursor}++] = ${value};
+      } else {
+        ${rawCursor} = ${cursor};
+        if (${value} >>> 14 === 0) {
+          ${u32} = ((${value} & 0x7f | 0x80) << 24) | ((${value} >>> 7) << 16);
+          ${cursor} += 2;
+        } else if (${value} >>> 21 === 0) {
+          ${u32} = ((${value} & 0x7f | 0x80) << 24) | ((${value} >>> 7 & 0x7f | 0x80) << 16) | ((${value} >>> 14) << 8);
+          ${cursor} += 3;
+        } else if (${value} >>> 28 === 0) {
+          ${u32} = ((${value} & 0x7f | 0x80) << 24) | ((${value} >>> 7 & 0x7f | 0x80) << 16) | ((${value} >>> 14 & 0x7f | 0x80) << 8) | (${value} >>> 21);
+          ${cursor} += 4;
+        } else {
+          ${u32} = ((${value} & 0x7f | 0x80) << 24) | ((${value} >>> 7 & 0x7f | 0x80) << 16) | ((${value} >>> 14 & 0x7f | 0x80) << 8) | (${value} >>> 21 & 0x7f | 0x80);
+          ${buffer}[${rawCursor} + 4] = ${value} >>> 28;
+          ${cursor} += 5;
+        }
+        ${dataView}.setUint32(${rawCursor}, ${u32});
+      }
+    `).join("\n");
+    return `
+      ${locals.map(({ local, fieldAccessor }) => `const ${local} = ${fieldAccessor};`).join("\n")}
+      ${checks}
+      let ${cursor} = ${this.builder.writer.writeGetCursor()};
+      const ${buffer} = ${this.builder.writer.getPlatformBuffer()};
+      const ${dataView} = ${this.builder.writer.getDataView()};
+      let ${value};
+      let ${rawCursor};
+      let ${u32};
+      ${writes}
+      ${this.builder.writer.setWriteCursor(cursor)}
     `;
   }
 
@@ -234,6 +374,19 @@ class StructSerializerGenerator extends BaseSerializerGenerator {
       `;
     }
     const hash = this.typeMeta.computeStructHash();
+    const directNumericObjectRead = this.readDirectNumericObject(accessor, refState);
+    if (directNumericObjectRead !== null) {
+      return `
+        ${!this.builder.resolver.isCompatible()
+? `
+        if(${this.builder.reader.readInt32()} !== ${hash}) {
+          throw new Error("Read class version is not consistent with ${hash} ")
+        }
+      `
+: ""}
+        ${directNumericObjectRead}
+      `;
+    }
     return `
       ${!this.builder.resolver.isCompatible()
 ? `
@@ -269,6 +422,118 @@ class StructSerializerGenerator extends BaseSerializerGenerator {
     `;
   }
 
+  private readDirectNumericObject(
+    accessor: (expr: string) => string,
+    refState: string,
+  ): string | null {
+    const varInt32ObjectRead = this.readDirectVarInt32Object(accessor, refState);
+    if (varInt32ObjectRead !== null) {
+      return varInt32ObjectRead;
+    }
+    if (this.typeInfo.options!.withConstructor || this.sortedProps.length === 0) {
+      return null;
+    }
+    const fields: Array<{ key: string; expr: string }> = [];
+    for (const { key, typeInfo } of this.sortedProps) {
+      const expr = directNumericFieldReadExpr(typeInfo, this.builder);
+      if (expr === null) {
+        return null;
+      }
+      fields.push({ key, expr });
+    }
+    const result = this.scope.uniqueName("result");
+    return `
+      const ${result} = {
+        ${fields.map(({ key, expr }) => `${CodecBuilder.safePropName(key)}: ${expr}`).join(",\n")}
+      };
+      ${this.maybeReference(result, refState)}
+      ${accessor(result)}
+    `;
+  }
+
+  private readDirectVarInt32Object(
+    accessor: (expr: string) => string,
+    refState: string,
+  ): string | null {
+    if (
+      this.typeInfo.options!.withConstructor
+      || this.sortedProps.length === 0
+      || !this.sortedProps.every(({ typeInfo }) =>
+        isDirectVarInt32Field(typeInfo, this.builder.resolver)
+      )
+    ) {
+      return null;
+    }
+    const cursor = this.scope.uniqueName("cursor");
+    const dataView = this.scope.uniqueName("dataView");
+    const byteLength = this.scope.uniqueName("byteLength");
+    const fourByteValue = this.scope.uniqueName("fourByteValue");
+    const byte = this.scope.uniqueName("byte");
+    const value = this.scope.uniqueName("value");
+    const result = this.scope.uniqueName("result");
+    const fields = this.sortedProps.map(({ key }) => ({
+      key,
+      local: this.scope.uniqueName(key),
+    }));
+    const reads = fields.map(({ local }) => `
+      if (${byteLength} - ${cursor} >= 5) {
+        ${fourByteValue} = ${dataView}.getUint32(${cursor}, true);
+        ${cursor}++;
+        ${value} = ${fourByteValue} & 0x7f;
+        if ((${fourByteValue} & 0x80) !== 0) {
+          ${cursor}++;
+          ${value} |= (${fourByteValue} >>> 1) & 0x3f80;
+          if ((${fourByteValue} & 0x8000) !== 0) {
+            ${cursor}++;
+            ${value} |= (${fourByteValue} >>> 2) & 0x1fc000;
+            if ((${fourByteValue} & 0x800000) !== 0) {
+              ${cursor}++;
+              ${value} |= (${fourByteValue} >>> 3) & 0xfe00000;
+              if ((${fourByteValue} & 0x80000000) !== 0) {
+                ${value} |= ${dataView}.getUint8(${cursor}++) << 28;
+              }
+            }
+          }
+        }
+      } else {
+        ${byte} = ${dataView}.getUint8(${cursor}++);
+        ${value} = ${byte} & 0x7f;
+        if ((${byte} & 0x80) !== 0) {
+          ${byte} = ${dataView}.getUint8(${cursor}++);
+          ${value} |= (${byte} & 0x7f) << 7;
+          if ((${byte} & 0x80) !== 0) {
+            ${byte} = ${dataView}.getUint8(${cursor}++);
+            ${value} |= (${byte} & 0x7f) << 14;
+            if ((${byte} & 0x80) !== 0) {
+              ${byte} = ${dataView}.getUint8(${cursor}++);
+              ${value} |= (${byte} & 0x7f) << 21;
+              if ((${byte} & 0x80) !== 0) {
+                ${byte} = ${dataView}.getUint8(${cursor}++);
+                ${value} |= ${byte} << 28;
+              }
+            }
+          }
+        }
+      }
+      const ${local} = (${value} >>> 1) ^ -(${value} & 1);
+    `).join("\n");
+    return `
+      let ${cursor} = ${this.builder.reader.readGetCursor()};
+      const ${dataView} = ${this.builder.reader.getDataView()};
+      const ${byteLength} = ${dataView}.byteLength;
+      let ${fourByteValue};
+      let ${byte};
+      let ${value};
+      ${reads}
+      ${this.builder.reader.readSetCursor(cursor)}
+      const ${result} = {
+        ${fields.map(({ key, local }) => `${CodecBuilder.safePropName(key)}: ${local}`).join(",\n")}
+      };
+      ${this.maybeReference(result, refState)}
+      ${accessor(result)}
+    `;
+  }
+
   readWithDepth(assignStmt: (v: string) => string, refState: string): string {
     if (!this.typeInfo.options?.props || Object.keys(this.typeInfo.options.props).length === 0) {
       const result = this.scope.uniqueName("result");
@@ -285,46 +550,84 @@ class StructSerializerGenerator extends BaseSerializerGenerator {
   readNoRef(assignStmt: (v: string) => string, refState: string): string {
     const result = this.scope.uniqueName("result");
     if (!this.typeInfo.options?.props || Object.keys(this.typeInfo.options.props).length === 0) {
-      return `
-        ${this.readTypeInfo()}
+      return this.readTypeInfoThen(
+        changedSerializer => `
+          ${assignStmt(`${changedSerializer}.read(${refState})`)};
+        `,
+        () => `
         ${this.builder.getReadContextName()}.incReadDepth();
         let ${result} = ${this.serializerExpr}.read(${refState});
         ${this.builder.getReadContextName()}.decReadDepth();
         ${assignStmt(result)};
-      `;
+      `,
+        true,
+      );
     }
-    return `
-      ${this.readTypeInfo()}
+    if (this.isDepthFreeStruct()) {
+      return this.readTypeInfoThen(
+        changedSerializer => `
+          ${assignStmt(`${changedSerializer}.read(${refState})`)};
+        `,
+        () => `
+        let ${result};
+          ${this.read(v => `${result} = ${v}`, refState)};
+        ${assignStmt(result)};
+      `,
+        true,
+      );
+    }
+    return this.readTypeInfoThen(
+      changedSerializer => `
+        ${assignStmt(`${changedSerializer}.read(${refState})`)};
+      `,
+      () => `
       ${this.builder.getReadContextName()}.incReadDepth();
       let ${result};
-      if (${this.metaChangedSerializer} !== null) {
-        ${result} = ${this.metaChangedSerializer}.read(${refState});
-      } else {
-        ${this.read(v => `${result} = ${v}`, refState)};
-      }
+      ${this.read(v => `${result} = ${v}`, refState)};
       ${this.builder.getReadContextName()}.decReadDepth();
       ${assignStmt(result)};
-    `;
+    `,
+      true,
+    );
   }
 
   readTypeInfo(): string {
-    const typeMeta = this.scope.uniqueName("typeMeta");
+    return this.readTypeInfoThen();
+  }
+
+  private readTypeInfoThen(
+    onMetaChanged?: (changedSerializer: string) => string,
+    onMetaUnchanged?: () => string,
+    metaChangedExits = false,
+  ): string {
     const internalTypeId = this.getInternalTypeId();
+    const localHash = this.getHash();
     let namesStmt = "";
     let typeMetaStmt = "";
     let readUserTypeIdStmt = "";
+    const unchangedStmt = onMetaUnchanged?.() ?? "";
+    const readCompatibleTypeMeta = () => {
+      const changedSerializer = this.scope.uniqueName("changedSerializer");
+      let unchangedBranch = "";
+      if (unchangedStmt && !metaChangedExits) {
+        unchangedBranch = ` else {
+            ${unchangedStmt}
+          }`;
+      }
+      return `
+          const ${changedSerializer} = ${this.builder.typeMetaResolver.readTypeMetaIfSchemaChanged(localHash)};
+          if (${changedSerializer} !== undefined) {
+            ${onMetaChanged?.(changedSerializer) ?? `return ${changedSerializer};`}
+          }${unchangedBranch}
+          `;
+    };
     switch (internalTypeId) {
       case TypeId.STRUCT:
         readUserTypeIdStmt = `${this.builder.reader.readVarUint32Small7()};`;
         break;
       case TypeId.NAMED_COMPATIBLE_STRUCT:
       case TypeId.COMPATIBLE_STRUCT:
-        typeMetaStmt = `
-          const ${typeMeta} = ${this.builder.typeMetaResolver.readTypeMeta()};
-          if (getHash() !== ${typeMeta}.getHash()) {
-            ${this.metaChangedSerializer} = ${this.builder.typeMetaResolver.genSerializerByTypeMetaRuntime(typeMeta)}
-          }
-          `;
+        typeMetaStmt = readCompatibleTypeMeta();
         break;
       case TypeId.NAMED_STRUCT:
         if (!this.builder.resolver.isCompatible()) {
@@ -337,22 +640,12 @@ class StructSerializerGenerator extends BaseSerializerGenerator {
             };
           `;
         } else {
-          typeMetaStmt = `
-          const ${typeMeta} = ${this.builder.typeMetaResolver.readTypeMeta()};
-          if (getHash() !== ${typeMeta}.getHash()) {
-            ${this.metaChangedSerializer} = ${this.builder.typeMetaResolver.genSerializerByTypeMetaRuntime(typeMeta)}
-          }
-          `;
+          typeMetaStmt = readCompatibleTypeMeta();
         }
         break;
       default:
         if (this.builder.resolver.isCompatible()) {
-          typeMetaStmt = `
-          const ${typeMeta} = ${this.builder.typeMetaResolver.readTypeMeta()};
-          if (getHash() !== ${typeMeta}.getHash()) {
-            ${this.metaChangedSerializer} = ${this.builder.typeMetaResolver.genSerializerByTypeMetaRuntime(typeMeta)}
-          }
-          `;
+          typeMetaStmt = readCompatibleTypeMeta();
         }
         break;
     }
@@ -367,27 +660,65 @@ class StructSerializerGenerator extends BaseSerializerGenerator {
       ${
         typeMetaStmt
       }
+      ${typeMetaStmt && !metaChangedExits ? "" : unchangedStmt}
     `;
   }
 
   readEmbed() {
     // Hoist the serializer lookup into a scope-level const, evaluated once during
-    // factory init. This is safe because readEmbed() is called by the PARENT
-    // struct whose factory runs after all child serializers are registered.
+    // factory init. Self-recursive structs may still point at a placeholder, so
+    // only the fully generated serializer path can hoist derived values below.
     const hoisted = this.scope.declare("ser", this.serializerExpr);
     const scope = this.scope;
     const builder = this.builder;
+    const internalTypeId = this.getInternalTypeId();
+    const serializer = builder.resolver.getSerializerByTypeInfo(this.typeInfo);
+    const canInlineCompatibleTypeInfo = internalTypeId === TypeId.COMPATIBLE_STRUCT
+      || internalTypeId === TypeId.NAMED_COMPATIBLE_STRUCT
+      || (internalTypeId === TypeId.NAMED_STRUCT && builder.resolver.isCompatible());
+    const canUseHeaderCacheFastPath = canInlineCompatibleTypeInfo && serializer?._initialized;
+    const inlineCompatibleTypeInfo = (
+      onMetaChanged: (changedSerializer: string) => string,
+      onMetaUnchanged: () => string,
+    ) => {
+      if (!canUseHeaderCacheFastPath) {
+        const changedSerializer = scope.uniqueName("changedSerializer");
+        return `
+              const ${changedSerializer} = ${hoisted}.readTypeInfo();
+              if (${changedSerializer} !== undefined) {
+                ${onMetaChanged(changedSerializer)}
+              } else {
+                ${onMetaUnchanged()}
+              }
+            `;
+      }
+      const changedSerializer = scope.uniqueName("changedSerializer");
+      const hoistedHash = scope.declare("serHash", `${hoisted}.getHash()`);
+      return `
+              ${builder.reader.readUint8()};
+              const ${changedSerializer} = ${builder.typeMetaResolver.readTypeMetaIfSchemaChanged(hoistedHash, hoisted)};
+              if (${changedSerializer} !== undefined) {
+                ${onMetaChanged(changedSerializer)}
+              } else {
+                ${onMetaUnchanged()}
+              }
+            `;
+    };
     return new Proxy({}, {
       get: (target, prop: string) => {
         if (prop === "readNoRef") {
           return (accessor: (expr: string) => string, refState: string) => {
             const result = scope.uniqueName("result");
             return `
-              ${hoisted}.readTypeInfo();
-              ${builder.getReadContextName()}.incReadDepth();
-              let ${result} = ${hoisted}.read(${refState});
-              ${builder.getReadContextName()}.decReadDepth();
-              ${accessor(result)};
+              ${inlineCompatibleTypeInfo(
+                changedSerializer => `${accessor(`${changedSerializer}.read(${refState})`)};`,
+                () => `
+                ${builder.getReadContextName()}.incReadDepth();
+                let ${result} = ${hoisted}.read(${refState});
+                ${builder.getReadContextName()}.decReadDepth();
+                ${accessor(result)};
+              `,
+              )}
             `;
           };
         }
@@ -403,10 +734,14 @@ class StructSerializerGenerator extends BaseSerializerGenerator {
               } else if (${refFlag} === ${RefFlags.RefFlag}) {
                 ${result} = ${builder.referenceResolver.getReadRef(builder.reader.readVarUInt32())};
               } else {
-                ${hoisted}.readTypeInfo();
-                ${builder.getReadContextName()}.incReadDepth();
-                ${result} = ${hoisted}.read(${refFlag} === ${RefFlags.RefValueFlag});
-                ${builder.getReadContextName()}.decReadDepth();
+                ${inlineCompatibleTypeInfo(
+                  changedSerializer => `${result} = ${changedSerializer}.read(${refFlag} === ${RefFlags.RefValueFlag});`,
+                  () => `
+                  ${builder.getReadContextName()}.incReadDepth();
+                  ${result} = ${hoisted}.read(${refFlag} === ${RefFlags.RefValueFlag});
+                  ${builder.getReadContextName()}.decReadDepth();
+                `,
+                )}
               }
               ${accessor(result)};
             `;
@@ -501,7 +836,7 @@ class StructSerializerGenerator extends BaseSerializerGenerator {
       default:
         break;
     }
-    return ` 
+    return `
       ${this.builder.writer.writeUint8(this.getTypeId())};
       ${writeUserTypeIdStmt}
       ${typeMeta}

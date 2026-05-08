@@ -1,6 +1,6 @@
 # C++ Benchmark Performance Report
 
-_Generated on 2026-04-29 21:16:35_
+_Generated on 2026-05-08 03:30:03_
 
 ## How to Generate This Report
 
@@ -21,7 +21,7 @@ python benchmark_report.py --json-file build/benchmark_results.json --output-dir
 | CPU Cores (Physical)       | 12                        |
 | CPU Cores (Logical)        | 12                        |
 | Total RAM (GB)             | 48.0                      |
-| Benchmark Date             | 2026-04-29T21:15:49+08:00 |
+| Benchmark Date             | 2026-05-08T03:29:26+08:00 |
 | CPU Cores (from benchmark) | 12                        |
 
 ## Benchmark Plots
@@ -32,73 +32,73 @@ All class-level plots below show throughput (ops/sec).
 
 ![Throughput](throughput.png)
 
-### Struct
+### NumericStruct
 
-![Struct](struct.png)
+![NumericStruct](struct.png)
 
 ### Sample
 
 ![Sample](sample.png)
 
-### Mediacontent
+### MediaContent
 
-![Mediacontent](mediacontent.png)
+![MediaContent](mediacontent.png)
 
-### Structlist
+### NumericStructList
 
-![Structlist](structlist.png)
+![NumericStructList](structlist.png)
 
-### Samplelist
+### SampleList
 
-![Samplelist](samplelist.png)
+![SampleList](samplelist.png)
 
-### Mediacontentlist
+### MediaContentList
 
-![Mediacontentlist](mediacontentlist.png)
+![MediaContentList](mediacontentlist.png)
 
 ## Benchmark Results
 
 ### Timing Results (nanoseconds)
 
-| Datatype         | Operation   | fory (ns) | protobuf (ns) | msgpack (ns) | Fastest |
-| ---------------- | ----------- | --------- | ------------- | ------------ | ------- |
-| Struct           | Serialize   | 25.6      | 34.3          | 54.3         | fory    |
-| Struct           | Deserialize | 23.1      | 25.5          | 769.9        | fory    |
-| Sample           | Serialize   | 68.4      | 96.6          | 317.8        | fory    |
-| Sample           | Deserialize | 326.2     | 662.5         | 2633.8       | fory    |
-| MediaContent     | Serialize   | 119.5     | 854.1         | 292.7        | fory    |
-| MediaContent     | Deserialize | 391.2     | 1207.2        | 2809.7       | fory    |
-| StructList       | Serialize   | 72.6      | 421.4         | 286.4        | fory    |
-| StructList       | Deserialize | 122.7     | 364.1         | 3400.5       | fory    |
-| SampleList       | Serialize   | 284.0     | 4898.1        | 1549.8       | fory    |
-| SampleList       | Deserialize | 1824.8    | 5047.4        | 13206.2      | fory    |
-| MediaContentList | Serialize   | 477.8     | 4788.9        | 1461.9       | fory    |
-| MediaContentList | Deserialize | 2053.4    | 6561.8        | 13702.4      | fory    |
+| Datatype          | Operation   | fory (ns) | protobuf (ns) | msgpack (ns) | Fastest |
+| ----------------- | ----------- | --------- | ------------- | ------------ | ------- |
+| NumericStruct     | Serialize   | 23.6      | 48.9          | 81.8         | fory    |
+| NumericStruct     | Deserialize | 25.7      | 32.4          | 1171.3       | fory    |
+| Sample            | Serialize   | 62.0      | 96.1          | 308.3        | fory    |
+| Sample            | Deserialize | 329.1     | 678.9         | 2712.6       | fory    |
+| MediaContent      | Serialize   | 114.2     | 878.1         | 293.4        | fory    |
+| MediaContent      | Deserialize | 417.4     | 1202.5        | 2748.2       | fory    |
+| NumericStructList | Serialize   | 81.7      | 495.5         | 419.7        | fory    |
+| NumericStructList | Deserialize | 171.5     | 405.8         | 5309.0       | fory    |
+| SampleList        | Serialize   | 279.3     | 4992.3        | 1563.2       | fory    |
+| SampleList        | Deserialize | 1784.6    | 5065.2        | 13040.9      | fory    |
+| MediaContentList  | Serialize   | 485.3     | 4798.9        | 1479.4       | fory    |
+| MediaContentList  | Deserialize | 2235.5    | 6482.6        | 13797.8      | fory    |
 
 ### Throughput Results (ops/sec)
 
-| Datatype         | Operation   | fory TPS   | protobuf TPS | msgpack TPS | Fastest |
-| ---------------- | ----------- | ---------- | ------------ | ----------- | ------- |
-| Struct           | Serialize   | 39,028,134 | 29,190,083   | 18,400,879  | fory    |
-| Struct           | Deserialize | 43,236,159 | 39,162,796   | 1,298,861   | fory    |
-| Sample           | Serialize   | 14,612,190 | 10,356,947   | 3,146,384   | fory    |
-| Sample           | Deserialize | 3,065,887  | 1,509,472    | 379,673     | fory    |
-| MediaContent     | Serialize   | 8,364,768  | 1,170,804    | 3,416,327   | fory    |
-| MediaContent     | Deserialize | 2,556,154  | 828,370      | 355,913     | fory    |
-| StructList       | Serialize   | 13,768,856 | 2,373,115    | 3,491,609   | fory    |
-| StructList       | Deserialize | 8,149,855  | 2,746,704    | 294,075     | fory    |
-| SampleList       | Serialize   | 3,521,702  | 204,162      | 645,233     | fory    |
-| SampleList       | Deserialize | 547,995    | 198,123      | 75,722      | fory    |
-| MediaContentList | Serialize   | 2,092,938  | 208,817      | 684,050     | fory    |
-| MediaContentList | Deserialize | 486,993    | 152,398      | 72,980      | fory    |
+| Datatype          | Operation   | fory TPS   | protobuf TPS | msgpack TPS | Fastest |
+| ----------------- | ----------- | ---------- | ------------ | ----------- | ------- |
+| NumericStruct     | Serialize   | 42,340,747 | 20,456,013   | 12,223,421  | fory    |
+| NumericStruct     | Deserialize | 38,921,757 | 30,876,920   | 853,731     | fory    |
+| Sample            | Serialize   | 16,120,239 | 10,402,361   | 3,243,915   | fory    |
+| Sample            | Deserialize | 3,038,551  | 1,473,035    | 368,652     | fory    |
+| MediaContent      | Serialize   | 8,760,221  | 1,138,812    | 3,408,303   | fory    |
+| MediaContent      | Deserialize | 2,395,697  | 831,626      | 363,876     | fory    |
+| NumericStructList | Serialize   | 12,246,425 | 2,018,049    | 2,382,679   | fory    |
+| NumericStructList | Deserialize | 5,829,352  | 2,464,295    | 188,358     | fory    |
+| SampleList        | Serialize   | 3,579,741  | 200,307      | 639,695     | fory    |
+| SampleList        | Deserialize | 560,346    | 197,425      | 76,682      | fory    |
+| MediaContentList  | Serialize   | 2,060,531  | 208,381      | 675,956     | fory    |
+| MediaContentList  | Deserialize | 447,319    | 154,259      | 72,475      | fory    |
 
 ### Serialized Data Sizes (bytes)
 
-| Datatype         | fory | protobuf | msgpack |
-| ---------------- | ---- | -------- | ------- |
-| Struct           | 58   | 61       | 55      |
-| Sample           | 446  | 375      | 530     |
-| MediaContent     | 365  | 301      | 480     |
-| StructList       | 184  | 315      | 289     |
-| SampleList       | 1980 | 1890     | 2664    |
-| MediaContentList | 1535 | 1520     | 2421    |
+| Datatype          | fory | protobuf | msgpack |
+| ----------------- | ---- | -------- | ------- |
+| NumericStruct     | 78   | 93       | 87      |
+| Sample            | 445  | 375      | 530     |
+| MediaContent      | 362  | 301      | 480     |
+| NumericStructList | 255  | 475      | 449     |
+| SampleList        | 1978 | 1890     | 2664    |
+| MediaContentList  | 1531 | 1520     | 2421    |

@@ -17,11 +17,12 @@
 
 use clap::{Parser, ValueEnum};
 use fory_benchmarks::data::{
-    BenchmarkCase, DataKind, MediaContent, MediaContentList, NumericStruct, Sample, SampleList,
-    StructList,
+    BenchmarkCase, DataKind, MediaContent, MediaContentList, NumericStruct, NumericStructList,
+    Sample, SampleList,
 };
 use fory_benchmarks::serializers::{
-    fory::ForySerializer, protobuf::ProtobufSerializer, BenchmarkSerializer,
+    fory::ForySerializer, msgpack::MsgpackSerializer, protobuf::ProtobufSerializer,
+    BenchmarkSerializer,
 };
 use std::hint::black_box;
 
@@ -35,6 +36,7 @@ enum Operation {
 enum SerializerKind {
     Fory,
     Protobuf,
+    Msgpack,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -100,6 +102,7 @@ where
     T: BenchmarkCase,
     ForySerializer: BenchmarkSerializer<T>,
     ProtobufSerializer: BenchmarkSerializer<T>,
+    MsgpackSerializer: BenchmarkSerializer<T>,
 {
     let value = T::create();
 
@@ -107,6 +110,9 @@ where
         SerializerKind::Fory => profile(iterations, &value, &ForySerializer::new(), operation),
         SerializerKind::Protobuf => {
             profile(iterations, &value, &ProtobufSerializer::new(), operation)
+        }
+        SerializerKind::Msgpack => {
+            profile(iterations, &value, &MsgpackSerializer::new(), operation)
         }
     }
 }
@@ -116,21 +122,23 @@ where
     T: BenchmarkCase,
     ForySerializer: BenchmarkSerializer<T>,
     ProtobufSerializer: BenchmarkSerializer<T>,
+    MsgpackSerializer: BenchmarkSerializer<T>,
 {
     let value = T::create();
     let fory = ForySerializer::new().serialize(&value).unwrap().len();
     let protobuf = ProtobufSerializer::new().serialize(&value).unwrap().len();
+    let msgpack = MsgpackSerializer::new().serialize(&value).unwrap().len();
 
-    println!("| {label} | {fory} | {protobuf} |");
+    println!("| {label} | {fory} | {protobuf} | {msgpack} |");
 }
 
 fn print_all_serialized_sizes() {
-    println!("| Datatype | fory | protobuf |");
-    println!("|----------|------|----------|");
+    println!("| Datatype | fory | protobuf | msgpack |");
+    println!("|----------|------|----------|---------|");
     print_size_row::<NumericStruct>(DataKind::Struct.display_name());
     print_size_row::<Sample>(DataKind::Sample.display_name());
     print_size_row::<MediaContent>(DataKind::MediaContent.display_name());
-    print_size_row::<StructList>(DataKind::StructList.display_name());
+    print_size_row::<NumericStructList>(DataKind::NumericStructList.display_name());
     print_size_row::<SampleList>(DataKind::SampleList.display_name());
     print_size_row::<MediaContentList>(DataKind::MediaContentList.display_name());
 }
@@ -152,7 +160,7 @@ fn main() {
             profile_case::<MediaContent>(cli.iterations, cli.serializer, cli.operation)
         }
         DataType::Structlist => {
-            profile_case::<StructList>(cli.iterations, cli.serializer, cli.operation)
+            profile_case::<NumericStructList>(cli.iterations, cli.serializer, cli.operation)
         }
         DataType::Samplelist => {
             profile_case::<SampleList>(cli.iterations, cli.serializer, cli.operation)

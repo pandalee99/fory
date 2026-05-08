@@ -43,6 +43,15 @@ export default class Fory {
   readonly config: Config;
   readonly writeContext: WriteContext;
   readonly readContext: ReadContext;
+  private readonly rootSerializers = new WeakMap<
+    Serializer,
+    (data: any) => PlatformBuffer
+  >();
+
+  private readonly rootDeserializers = new WeakMap<
+    Serializer,
+    (bytes: Uint8Array) => any
+  >();
 
   constructor(config?: Partial<Config>) {
     this.config = this.initConfig(config);
@@ -130,13 +139,8 @@ export default class Fory {
     }
     return {
       serializer,
-      serialize: (data: any) => this.serialize(data, serializer),
-      deserialize: (bytes: Uint8Array) => {
-        if (TypeId.polymorphicType(serializer.getTypeId())) {
-          return this.deserialize(bytes, serializer);
-        }
-        return this.deserialize(bytes);
-      },
+      serialize: this.getRootSerializer(serializer),
+      deserialize: this.getRootDeserializer(serializer),
     };
   }
 
@@ -167,17 +171,49 @@ export default class Fory {
     throw new Error("outofband mode is not supported now");
   }
 
-  private serializeInternal<T = any>(data: T, serializer: Serializer) {
-    this.writeContext.reset();
-    const writer = this.writeContext.writer;
-    const bitmap = ConfigFlags.isCrossLanguageFlag;
-    writer.writeUint8(bitmap);
-    writer.reserve(serializer.fixedSize);
-    serializer.writeRef(data);
-    return writer;
+  private getRootSerializer(serializer: Serializer) {
+    let rootSerializer = this.rootSerializers.get(serializer);
+    if (rootSerializer !== undefined) {
+      return rootSerializer;
+    }
+    const writeContext = this.writeContext;
+    const writer = writeContext.writer;
+    const rootHeader = ConfigFlags.isCrossLanguageFlag;
+    rootSerializer = (data: any) => {
+      writeContext.reset();
+      writer.writeUint8(rootHeader);
+      writer.reserve(serializer.fixedSize);
+      serializer.writeRef(data);
+      return writer.dump();
+    };
+    this.rootSerializers.set(serializer, rootSerializer);
+    return rootSerializer;
+  }
+
+  private getRootDeserializer(serializer: Serializer) {
+    let rootDeserializer = this.rootDeserializers.get(serializer);
+    if (rootDeserializer !== undefined) {
+      return rootDeserializer;
+    }
+    const readContext = this.readContext;
+    const reader = readContext.reader;
+    const rootSerializer = TypeId.polymorphicType(serializer.getTypeId())
+      ? serializer
+      : this.anySerializer;
+    const rootHeader = ConfigFlags.isCrossLanguageFlag;
+    rootDeserializer = (bytes: Uint8Array) => {
+      readContext.reset(bytes);
+      const bitmap = reader.readUint8();
+      if (bitmap !== rootHeader) {
+        this.throwInvalidRootHeader(bitmap);
+      }
+      return rootSerializer.readRef();
+    };
+    this.rootDeserializers.set(serializer, rootDeserializer);
+    return rootDeserializer;
   }
 
   serialize<T = any>(data: T, serializer: Serializer = this.anySerializer) {
-    return this.serializeInternal(data, serializer).dump();
+    return this.getRootSerializer(serializer)(data);
   }
 }

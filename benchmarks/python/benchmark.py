@@ -19,9 +19,9 @@
 """Comprehensive Python benchmark suite for C++ parity benchmark objects.
 
 This script mirrors `benchmarks/cpp/benchmark.cc` coverage and benchmarks:
-- Data types: Struct, Sample, MediaContent and corresponding *List variants.
+- Data types: NumericStruct, Sample, MediaContent and corresponding *List variants.
 - Operations: serialize / deserialize.
-- Serializers: fory / pickle / protobuf.
+- Serializers: fory / protobuf / pickle.
 
 Results are written as JSON and consumed by `benchmark_report.py`.
 """
@@ -54,21 +54,21 @@ DATA_TYPE_ORDER = [
     "samplelist",
     "mediacontentlist",
 ]
-SERIALIZER_ORDER = ["fory", "pickle", "protobuf"]
+SERIALIZER_ORDER = ["fory", "protobuf", "pickle"]
 OPERATION_ORDER = ["serialize", "deserialize"]
 
 DATA_LABELS = {
-    "struct": "Struct",
+    "struct": "NumericStruct",
     "sample": "Sample",
     "mediacontent": "MediaContent",
-    "structlist": "StructList",
+    "structlist": "NumericStructList",
     "samplelist": "SampleList",
     "mediacontentlist": "MediaContentList",
 }
 SERIALIZER_LABELS = {
     "fory": "Fory",
-    "pickle": "Pickle",
     "protobuf": "Protobuf",
+    "pickle": "Pickle",
 }
 
 
@@ -112,6 +112,10 @@ class NumericStruct:
     f6: pyfory.Int32 = pyfory.field(id=6)
     f7: pyfory.Int32 = pyfory.field(id=7)
     f8: pyfory.Int32 = pyfory.field(id=8)
+    f9: pyfory.Int32 = pyfory.field(id=9)
+    f10: pyfory.Int32 = pyfory.field(id=10)
+    f11: pyfory.Int32 = pyfory.field(id=11)
+    f12: pyfory.Int32 = pyfory.field(id=12)
 
 
 @dataclass
@@ -172,7 +176,7 @@ class MediaContent:
 
 
 @dataclass
-class StructList:
+class NumericStructList:
     struct_list: List[NumericStruct] = pyfory.field(id=1)
 
 
@@ -196,6 +200,10 @@ def create_numeric_struct() -> NumericStruct:
         f6=1000000,
         f7=-999999999,
         f8=42,
+        f9=123456789,
+        f10=-42,
+        f11=31415926,
+        f12=-27182818,
     )
 
 
@@ -273,8 +281,10 @@ def create_media_content() -> MediaContent:
     return MediaContent(media=media, images=images)
 
 
-def create_struct_list() -> StructList:
-    return StructList(struct_list=[create_numeric_struct() for _ in range(LIST_SIZE)])
+def create_numeric_struct_list() -> NumericStructList:
+    return NumericStructList(
+        struct_list=[create_numeric_struct() for _ in range(LIST_SIZE)]
+    )
 
 
 def create_sample_list() -> SampleList:
@@ -292,7 +302,7 @@ def create_benchmark_data() -> Dict[str, Any]:
         "struct": create_numeric_struct(),
         "sample": create_sample(),
         "mediacontent": create_media_content(),
-        "structlist": create_struct_list(),
+        "structlist": create_numeric_struct_list(),
         "samplelist": create_sample_list(),
         "mediacontentlist": create_media_content_list(),
     }
@@ -313,7 +323,7 @@ def load_bench_pb2(proto_dir: Path):
 
 
 def to_pb_struct(bench_pb2, obj: NumericStruct):
-    pb = bench_pb2.Struct()
+    pb = bench_pb2.NumericStruct()
     pb.f1 = obj.f1
     pb.f2 = obj.f2
     pb.f3 = obj.f3
@@ -322,6 +332,10 @@ def to_pb_struct(bench_pb2, obj: NumericStruct):
     pb.f6 = obj.f6
     pb.f7 = obj.f7
     pb.f8 = obj.f8
+    pb.f9 = obj.f9
+    pb.f10 = obj.f10
+    pb.f11 = obj.f11
+    pb.f12 = obj.f12
     return pb
 
 
@@ -335,6 +349,10 @@ def from_pb_struct(pb_obj) -> NumericStruct:
         f6=pb_obj.f6,
         f7=pb_obj.f7,
         f8=pb_obj.f8,
+        f9=pb_obj.f9,
+        f10=pb_obj.f10,
+        f11=pb_obj.f11,
+        f12=pb_obj.f12,
     )
 
 
@@ -465,15 +483,17 @@ def from_pb_mediacontent(pb_obj) -> MediaContent:
     )
 
 
-def to_pb_structlist(bench_pb2, obj: StructList):
-    pb = bench_pb2.StructList()
+def to_pb_numeric_struct_list(bench_pb2, obj: NumericStructList):
+    pb = bench_pb2.NumericStructList()
     for item in obj.struct_list:
         pb.struct_list.add().CopyFrom(to_pb_struct(bench_pb2, item))
     return pb
 
 
-def from_pb_structlist(pb_obj) -> StructList:
-    return StructList(struct_list=[from_pb_struct(item) for item in pb_obj.struct_list])
+def from_pb_numeric_struct_list(pb_obj) -> NumericStructList:
+    return NumericStructList(
+        struct_list=[from_pb_struct(item) for item in pb_obj.struct_list]
+    )
 
 
 def to_pb_samplelist(bench_pb2, obj: SampleList):
@@ -503,10 +523,14 @@ def from_pb_mediacontentlist(pb_obj) -> MediaContentList:
 
 
 PROTO_CONVERTERS = {
-    "struct": (to_pb_struct, from_pb_struct, "Struct"),
+    "struct": (to_pb_struct, from_pb_struct, "NumericStruct"),
     "sample": (to_pb_sample, from_pb_sample, "Sample"),
     "mediacontent": (to_pb_mediacontent, from_pb_mediacontent, "MediaContent"),
-    "structlist": (to_pb_structlist, from_pb_structlist, "StructList"),
+    "structlist": (
+        to_pb_numeric_struct_list,
+        from_pb_numeric_struct_list,
+        "NumericStructList",
+    ),
     "samplelist": (to_pb_samplelist, from_pb_samplelist, "SampleList"),
     "mediacontentlist": (
         to_pb_mediacontentlist,
@@ -525,7 +549,7 @@ def build_fory() -> pyfory.Fory:
     fory.register_type(Media, type_id=3)
     fory.register_type(Image, type_id=4)
     fory.register_type(MediaContent, type_id=5)
-    fory.register_type(StructList, type_id=6)
+    fory.register_type(NumericStructList, type_id=6)
     fory.register_type(SampleList, type_id=7)
     fory.register_type(MediaContentList, type_id=8)
     return fory
@@ -697,7 +721,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--serializer",
         default="all",
-        help="Comma-separated serializers: fory,pickle,protobuf or all",
+        help="Comma-separated serializers: fory,protobuf,pickle or all",
     )
     parser.add_argument(
         "--warmup",

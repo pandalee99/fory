@@ -24,6 +24,8 @@ import { toFloat16Bits } from "../types/float16";
 import { BFloat16, toBFloat16Bits } from "../types/bfloat16";
 
 const MAX_POOL_SIZE = 1024 * 1024 * 3; // 3MB
+const MAX_SAFE_BIGINT = BigInt(Number.MAX_SAFE_INTEGER);
+const MIN_SAFE_BIGINT = BigInt(Number.MIN_SAFE_INTEGER);
 
 function getInternalStringDetector() {
   try {
@@ -48,6 +50,7 @@ export class BinaryWriter {
 
   private hpsEnable = false;
   private internalStringDetector: (((content: string) => boolean) | null) = null;
+  private writeNonEmptyStringWithHeader: (v: string) => void;
 
   constructor(config: {
     hps?: Hps;
@@ -56,6 +59,13 @@ export class BinaryWriter {
     this.config = config;
     this.hpsEnable = Boolean(config?.hps);
     this.internalStringDetector = getInternalStringDetector();
+    if (this.hpsEnable) {
+      this.writeNonEmptyStringWithHeader = v => this.stringWithHeaderFast(v);
+    } else if (this.internalStringDetector !== null) {
+      this.writeNonEmptyStringWithHeader = v => this.stringWithHeaderWithDetector(v);
+    } else {
+      this.writeNonEmptyStringWithHeader = v => this.stringWithHeaderCompatibly(v);
+    }
   }
 
   private initPoll() {
@@ -301,10 +311,17 @@ export class BinaryWriter {
       }
       this.cursor += len;
     } else {
-      const len = v.length * 2;
+      const strLen = v.length;
+      const len = strLen * 2;
       this.writeVarUInt32((len << 2) | UTF16);
       this.reserve(len);
-      this.platformBuffer.write(v, this.cursor, "utf16le");
+      if (strLen < 40) {
+        for (let index = 0; index < strLen; index++) {
+          this.dataView.setUint16(this.cursor + index * 2, v.charCodeAt(index), true);
+        }
+      } else {
+        this.platformBuffer.write(v, this.cursor, "utf16le");
+      }
       this.cursor += len;
     }
   }
@@ -413,15 +430,35 @@ export class BinaryWriter {
     return 5;
   }
 
-  writeVarInt64(v: bigint) {
-    if (typeof v !== "bigint") {
-      v = BigInt(v);
+  private writeVarUInt64Number(value: number) {
+    while (value >= 0x80) {
+      this.platformBuffer[this.cursor++] = (value % 0x80) | 0x80;
+      value = Math.floor(value / 0x80);
     }
-    return this.writeVarUInt64((v << 1n) ^ (v >> 63n));
+    this.platformBuffer[this.cursor++] = value;
+  }
+
+  writeVarInt64(v: bigint | number) {
+    if (typeof v !== "bigint") {
+      if (Number.isSafeInteger(v)) {
+        this.writeVarUInt64Number(v >= 0 ? v * 2 : -v * 2 - 1);
+        return;
+      }
+      v = BigInt(v);
+    } else if (v >= MIN_SAFE_BIGINT && v <= MAX_SAFE_BIGINT) {
+      const value = Number(v);
+      this.writeVarUInt64Number(value >= 0 ? value * 2 : -value * 2 - 1);
+      return;
+    }
+    this.writeVarUInt64((v << 1n) ^ (v >> 63n));
   }
 
   writeVarUInt64(val: bigint | number) {
     if (typeof val !== "bigint") {
+      if (Number.isSafeInteger(val) && val >= 0) {
+        this.writeVarUInt64Number(val);
+        return;
+      }
       val = BigInt(val);
     }
     val = val & 0xFFFFFFFFFFFFFFFFn; // keep only the lower 64 bits
@@ -477,6 +514,18 @@ export class BinaryWriter {
     return this.cursor;
   }
 
+  getPlatformBuffer() {
+    return this.platformBuffer;
+  }
+
+  getDataView() {
+    return this.dataView;
+  }
+
+  setWriteCursor(cursor: number) {
+    this.cursor = cursor;
+  }
+
   setUint32Position(offset: number, v: number) {
     this.dataView.setUint32(offset, v, true);
   }
@@ -498,12 +547,10 @@ export class BinaryWriter {
   }
 
   stringWithHeader(v: string) {
-    if (this.hpsEnable) {
-      return this.stringWithHeaderFast(v);
+    if (v.length === 0) {
+      this.platformBuffer[this.cursor++] = 0;
+      return;
     }
-    if (this.internalStringDetector !== null) {
-      return this.stringWithHeaderWithDetector(v);
-    }
-    return this.stringWithHeaderCompatibly(v);
+    return this.writeNonEmptyStringWithHeader(v);
   }
 }

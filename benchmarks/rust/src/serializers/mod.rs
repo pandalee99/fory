@@ -16,6 +16,7 @@
 // under the License.
 
 pub mod fory;
+pub mod msgpack;
 pub mod protobuf;
 
 pub type BoxError = Box<dyn std::error::Error + Send + Sync + 'static>;

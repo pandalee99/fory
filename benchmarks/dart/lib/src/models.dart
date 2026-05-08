@@ -22,8 +22,10 @@ library;
 import 'dart:typed_data';
 
 import 'package:fory/fory.dart';
+import 'package:json_annotation/json_annotation.dart';
 
 part 'models.fory.dart';
+part 'models.g.dart';
 
 enum Player {
   java,
@@ -37,7 +39,41 @@ enum MediaSize {
 
 const int _kListSize = 5;
 
+Float32 _float32FromJson(num value) => Float32(value);
+
+double _float32ToJson(Float32 value) => value.value;
+
+Int32List _int32ListFromJson(List<dynamic> values) =>
+    Int32List.fromList(values.map((value) => (value as num).toInt()).toList());
+
+List<int> _int32ListToJson(Int32List values) => values.toList(growable: false);
+
+Int64List _int64ListFromJson(List<dynamic> values) =>
+    Int64List.fromList(values.map((value) => (value as num).toInt()).toList());
+
+List<int> _int64ListToJson(Int64List values) => values.toList(growable: false);
+
+Float32List _float32ListFromJson(List<dynamic> values) => Float32List.fromList(
+      values.map((value) => (value as num).toDouble()).toList(),
+    );
+
+List<double> _float32ListToJson(Float32List values) =>
+    values.toList(growable: false);
+
+Float64List _float64ListFromJson(List<dynamic> values) => Float64List.fromList(
+      values.map((value) => (value as num).toDouble()).toList(),
+    );
+
+List<double> _float64ListToJson(Float64List values) =>
+    values.toList(growable: false);
+
+BoolList _boolListFromJson(List<dynamic> values) =>
+    BoolList.fromList(values.map((value) => value as bool));
+
+List<bool> _boolListToJson(BoolList values) => values.toList(growable: false);
+
 @ForyStruct()
+@JsonSerializable()
 class NumericStruct {
   NumericStruct({
     required this.f1,
@@ -48,6 +84,10 @@ class NumericStruct {
     required this.f6,
     required this.f7,
     required this.f8,
+    required this.f9,
+    required this.f10,
+    required this.f11,
+    required this.f12,
   });
 
   @ForyField(id: 1, type: Int32Type())
@@ -66,9 +106,23 @@ class NumericStruct {
   final int f7;
   @ForyField(id: 8, type: Int32Type())
   final int f8;
+  @ForyField(id: 9, type: Int32Type())
+  final int f9;
+  @ForyField(id: 10, type: Int32Type())
+  final int f10;
+  @ForyField(id: 11, type: Int32Type())
+  final int f11;
+  @ForyField(id: 12, type: Int32Type())
+  final int f12;
+
+  factory NumericStruct.fromJson(Map<String, dynamic> json) =>
+      _$NumericStructFromJson(json);
+
+  Map<String, dynamic> toJson() => _$NumericStructToJson(this);
 }
 
 @ForyStruct()
+@JsonSerializable()
 class Sample {
   Sample({
     required this.intValue,
@@ -100,6 +154,7 @@ class Sample {
   @ForyField(id: 2, type: Int64Type())
   final int longValue;
   @ForyField(id: 3)
+  @JsonKey(fromJson: _float32FromJson, toJson: _float32ToJson)
   final Float32 floatValue;
   @ForyField(id: 4)
   final double doubleValue;
@@ -114,6 +169,7 @@ class Sample {
   @ForyField(id: 9, type: Int64Type())
   final int longValueBoxed;
   @ForyField(id: 10)
+  @JsonKey(fromJson: _float32FromJson, toJson: _float32ToJson)
   final Float32 floatValueBoxed;
   @ForyField(id: 11)
   final double doubleValueBoxed;
@@ -124,24 +180,36 @@ class Sample {
   @ForyField(id: 14)
   final bool booleanValueBoxed;
   @ForyField(id: 15)
+  @JsonKey(fromJson: _int32ListFromJson, toJson: _int32ListToJson)
   final Int32List intArray;
   @ForyField(id: 16)
+  @JsonKey(fromJson: _int64ListFromJson, toJson: _int64ListToJson)
   final Int64List longArray;
   @ForyField(id: 17)
+  @JsonKey(fromJson: _float32ListFromJson, toJson: _float32ListToJson)
   final Float32List floatArray;
   @ForyField(id: 18)
+  @JsonKey(fromJson: _float64ListFromJson, toJson: _float64ListToJson)
   final Float64List doubleArray;
   @ForyField(id: 19)
+  @JsonKey(fromJson: _int32ListFromJson, toJson: _int32ListToJson)
   final Int32List shortArray;
   @ForyField(id: 20)
+  @JsonKey(fromJson: _int32ListFromJson, toJson: _int32ListToJson)
   final Int32List charArray;
   @ArrayField(id: 21, element: BoolType())
+  @JsonKey(fromJson: _boolListFromJson, toJson: _boolListToJson)
   final BoolList booleanArray;
   @ForyField(id: 22)
   final String string;
+
+  factory Sample.fromJson(Map<String, dynamic> json) => _$SampleFromJson(json);
+
+  Map<String, dynamic> toJson() => _$SampleToJson(this);
 }
 
 @ForyStruct()
+@JsonSerializable()
 class Media {
   Media({
     required this.uri,
@@ -182,9 +250,14 @@ class Media {
   final Player player;
   @ForyField(id: 12)
   final String copyright;
+
+  factory Media.fromJson(Map<String, dynamic> json) => _$MediaFromJson(json);
+
+  Map<String, dynamic> toJson() => _$MediaToJson(this);
 }
 
 @ForyStruct()
+@JsonSerializable()
 class Image {
   Image({
     required this.uri,
@@ -204,9 +277,14 @@ class Image {
   final int height;
   @ForyField(id: 5)
   final MediaSize size;
+
+  factory Image.fromJson(Map<String, dynamic> json) => _$ImageFromJson(json);
+
+  Map<String, dynamic> toJson() => _$ImageToJson(this);
 }
 
 @ForyStruct()
+@JsonSerializable()
 class MediaContent {
   MediaContent({
     required this.media,
@@ -217,19 +295,31 @@ class MediaContent {
   final Media media;
   @ForyField(id: 2)
   final List<Image> images;
+
+  factory MediaContent.fromJson(Map<String, dynamic> json) =>
+      _$MediaContentFromJson(json);
+
+  Map<String, dynamic> toJson() => _$MediaContentToJson(this);
 }
 
 @ForyStruct()
-class StructList {
-  StructList({
+@JsonSerializable()
+class NumericStructList {
+  NumericStructList({
     required this.structList,
   });
 
   @ForyField(id: 1)
   final List<NumericStruct> structList;
+
+  factory NumericStructList.fromJson(Map<String, dynamic> json) =>
+      _$NumericStructListFromJson(json);
+
+  Map<String, dynamic> toJson() => _$NumericStructListToJson(this);
 }
 
 @ForyStruct()
+@JsonSerializable()
 class SampleList {
   SampleList({
     required this.sampleList,
@@ -237,9 +327,15 @@ class SampleList {
 
   @ForyField(id: 1)
   final List<Sample> sampleList;
+
+  factory SampleList.fromJson(Map<String, dynamic> json) =>
+      _$SampleListFromJson(json);
+
+  Map<String, dynamic> toJson() => _$SampleListToJson(this);
 }
 
 @ForyStruct()
+@JsonSerializable()
 class MediaContentList {
   MediaContentList({
     required this.mediaContentList,
@@ -247,6 +343,11 @@ class MediaContentList {
 
   @ForyField(id: 1)
   final List<MediaContent> mediaContentList;
+
+  factory MediaContentList.fromJson(Map<String, dynamic> json) =>
+      _$MediaContentListFromJson(json);
+
+  Map<String, dynamic> toJson() => _$MediaContentListToJson(this);
 }
 
 void registerBenchmarkTypes(Fory fory) {
@@ -255,7 +356,7 @@ void registerBenchmarkTypes(Fory fory) {
   ModelsFory.register(fory, Media, id: 3);
   ModelsFory.register(fory, Image, id: 4);
   ModelsFory.register(fory, MediaContent, id: 5);
-  ModelsFory.register(fory, StructList, id: 6);
+  ModelsFory.register(fory, NumericStructList, id: 6);
   ModelsFory.register(fory, SampleList, id: 7);
   ModelsFory.register(fory, MediaContentList, id: 8);
   ModelsFory.register(fory, Player, id: 9);
@@ -272,6 +373,10 @@ NumericStruct createNumericStruct() {
     f6: 1000000,
     f7: -999999999,
     f8: 42,
+    f9: 123456789,
+    f10: -42,
+    f11: 31415926,
+    f12: -27182818,
   );
 }
 
@@ -403,8 +508,8 @@ MediaContent createMediaContent() {
   );
 }
 
-StructList createStructList() {
-  return StructList(
+NumericStructList createNumericStructList() {
+  return NumericStructList(
     structList: List<NumericStruct>.generate(
       _kListSize,
       (_) => createNumericStruct(),

@@ -6,7 +6,7 @@ This benchmark compares serialization and deserialization throughput for Apache 
 
 | Key                   | Value                         |
 | --------------------- | ----------------------------- |
-| Timestamp             | 2026-03-10T06:25:16Z          |
+| Timestamp             | 2026-05-07T19:46:19Z          |
 | OS                    | Version 15.7.2 (Build 24G325) |
 | Host                  | macbook-pro.local             |
 | CPU Cores (Logical)   | 12                            |
@@ -17,28 +17,28 @@ This benchmark compares serialization and deserialization throughput for Apache 
 
 ![Throughput](throughput.png)
 
-| Datatype         | Operation   |   Fory TPS | Protobuf TPS | Msgpack TPS | Fastest      |
-| ---------------- | ----------- | ---------: | -----------: | ----------: | ------------ |
-| Struct           | Serialize   |  9,727,950 |    6,572,406 |     141,248 | fory (1.48x) |
-| Struct           | Deserialize | 11,889,570 |    8,584,510 |      99,792 | fory (1.39x) |
-| Sample           | Serialize   |  3,496,305 |    1,281,983 |      17,188 | fory (2.73x) |
-| Sample           | Deserialize |  1,045,018 |      765,706 |      12,767 | fory (1.36x) |
-| MediaContent     | Serialize   |  1,425,354 |      678,542 |      29,048 | fory (2.10x) |
-| MediaContent     | Deserialize |    614,447 |      478,298 |      12,711 | fory (1.28x) |
-| StructList       | Serialize   |  3,307,962 |    1,028,210 |      24,781 | fory (3.22x) |
-| StructList       | Deserialize |  2,788,200 |      708,596 |       8,160 | fory (3.93x) |
-| SampleList       | Serialize   |    715,734 |      205,380 |       3,361 | fory (3.48x) |
-| SampleList       | Deserialize |    199,317 |      133,425 |       1,498 | fory (1.49x) |
-| MediaContentList | Serialize   |    364,097 |      103,721 |       5,538 | fory (3.51x) |
-| MediaContentList | Deserialize |    103,421 |       86,331 |       1,529 | fory (1.20x) |
+| Datatype          | Operation   |   Fory TPS | Protobuf TPS | Msgpack TPS | Fastest      |
+| ----------------- | ----------- | ---------: | -----------: | ----------: | ------------ |
+| NumericStruct     | Serialize   |  9,456,190 |    6,237,003 |      99,134 | fory (1.52x) |
+| NumericStruct     | Deserialize | 11,244,151 |    6,898,201 |      68,135 | fory (1.63x) |
+| Sample            | Serialize   |  3,653,537 |    1,269,790 |      17,033 | fory (2.88x) |
+| Sample            | Deserialize |    992,566 |      751,855 |      12,379 | fory (1.32x) |
+| MediaContent      | Serialize   |  1,586,123 |      673,382 |      28,762 | fory (2.36x) |
+| MediaContent      | Deserialize |    606,656 |      471,433 |      12,321 | fory (1.29x) |
+| NumericStructList | Serialize   |  2,981,475 |      930,517 |      18,067 | fory (3.20x) |
+| NumericStructList | Deserialize |  2,466,526 |      720,704 |       6,191 | fory (3.42x) |
+| SampleList        | Serialize   |    784,804 |      205,426 |       3,356 | fory (3.82x) |
+| SampleList        | Deserialize |    191,930 |      132,154 |       1,452 | fory (1.45x) |
+| MediaContentList  | Serialize   |    347,354 |      100,939 |       5,460 | fory (3.44x) |
+| MediaContentList  | Deserialize |    114,145 |       84,897 |       1,446 | fory (1.34x) |
 
 ## Serialized Size (bytes)
 
-| Datatype         | Fory | Protobuf | Msgpack |
-| ---------------- | ---: | -------: | ------: |
-| MediaContent     |  365 |      301 |     524 |
-| MediaContentList | 1535 |     1520 |    2639 |
-| Sample           |  446 |      375 |     737 |
-| SampleList       | 1980 |     1890 |    3698 |
-| Struct           |   58 |       61 |      65 |
-| StructList       |  184 |      315 |     338 |
+| Datatype          | Fory | Protobuf | Msgpack |
+| ----------------- | ---: | -------: | ------: |
+| NumericStruct     |   78 |       93 |     100 |
+| Sample            |  445 |      375 |     737 |
+| MediaContent      |  362 |      301 |     524 |
+| NumericStructList |  255 |      475 |     513 |
+| SampleList        | 1978 |     1890 |    3698 |
+| MediaContentList  | 1531 |     1520 |    2639 |
