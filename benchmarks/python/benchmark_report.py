@@ -22,18 +22,30 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import platform
-import shutil
-import subprocess
+import sys
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 from typing import Dict
 
 import matplotlib.pyplot as plt
-import numpy as np
 from matplotlib.ticker import FuncFormatter
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from plot_style import (  # noqa: E402
+    BAR_EDGE_COLOR,
+    GROUP_BAR_WIDTH,
+    GROUP_X,
+    PLOT_RC_PARAMS,
+    add_compact_legend,
+    format_markdown_with_prettier,
+    format_throughput_tick,
+    save_benchmark_figure,
+    serializer_offset,
+    set_grouped_operation_axis,
+    style_throughput_axis,
+)
 
 try:
     import psutil
@@ -131,18 +143,8 @@ def format_datatype_table_label(datatype: str) -> str:
     return mapping.get(datatype, datatype)
 
 
-def format_tps_label(tps: float) -> str:
-    if tps >= 1e9:
-        return f"{tps / 1e9:.2f}G"
-    if tps >= 1e6:
-        return f"{tps / 1e6:.2f}M"
-    if tps >= 1e3:
-        return f"{tps / 1e3:.2f}K"
-    return f"{tps:.0f}"
-
-
 def format_tps_tick(tps: float, _position) -> str:
-    return format_tps_label(tps)
+    return format_throughput_tick(tps, _position)
 
 
 def build_benchmark_matrix(benchmarks):
@@ -153,52 +155,6 @@ def build_benchmark_matrix(benchmarks):
         serializer = bench["serializer"]
         data[datatype][operation][serializer] = bench["mean_ns"]
     return data
-
-
-def plot_datatype(ax, data, datatype: str, operation: str):
-    if datatype not in data or operation not in data[datatype]:
-        ax.set_title(f"{format_datatype_table_label(datatype)} {operation}: no data")
-        ax.axis("off")
-        return
-
-    libs = [
-        lib
-        for lib in SERIALIZER_ORDER
-        if data[datatype][operation].get(lib, 0) and data[datatype][operation][lib] > 0
-    ]
-    if not libs:
-        ax.set_title(f"{format_datatype_table_label(datatype)} {operation}: no data")
-        ax.axis("off")
-        return
-
-    times = [data[datatype][operation][lib] for lib in libs]
-    throughput = [1e9 / t if t > 0 else 0 for t in times]
-
-    x = np.arange(len(libs))
-    bars = ax.bar(
-        x,
-        throughput,
-        color=[COLORS.get(lib, "#999999") for lib in libs],
-        width=0.6,
-    )
-
-    ax.set_xticks(x)
-    ax.set_xticklabels([SERIALIZER_LABELS.get(lib, lib) for lib in libs])
-    ax.set_ylabel("Throughput (ops/sec)")
-    ax.set_title(f"{operation.capitalize()} Throughput (higher is better)")
-    ax.grid(True, axis="y", linestyle="--", alpha=0.45)
-    ax.ticklabel_format(style="scientific", axis="y", scilimits=(0, 0))
-
-    for bar, val in zip(bars, throughput):
-        ax.annotate(
-            format_tps_label(val),
-            xy=(bar.get_x() + bar.get_width() / 2, bar.get_height()),
-            xytext=(0, 3),
-            textcoords="offset points",
-            ha="center",
-            va="bottom",
-            fontsize=9,
-        )
 
 
 def plot_throughput_grid_subplot(ax, data, datatype: str):
@@ -221,70 +177,61 @@ def plot_throughput_grid_subplot(ax, data, datatype: str):
         return
 
     operations = ["serialize", "deserialize"]
-    x = np.arange(len(operations))
-    width = 0.8 / len(available_libs)
+    x = GROUP_X
     for idx, lib in enumerate(available_libs):
         times = [
             data.get(datatype, {}).get(operation, {}).get(lib, 0)
             for operation in operations
         ]
         tps = [1e9 / val if val > 0 else 0 for val in times]
-        offset = (idx - (len(available_libs) - 1) / 2) * width
+        offset = serializer_offset(idx, len(available_libs))
         ax.bar(
             x + offset,
             tps,
-            width,
+            GROUP_BAR_WIDTH,
             label=SERIALIZER_LABELS.get(lib, lib),
             color=COLORS.get(lib, "#999999"),
+            edgecolor=BAR_EDGE_COLOR,
+            linewidth=0.8,
         )
 
-    ax.set_title(format_datatype_table_label(datatype))
-    ax.set_xticks(x)
-    ax.set_xticklabels(["Serialize", "Deserialize"])
-    ax.grid(True, axis="y", linestyle="--", alpha=0.45)
+    max_tps = max(
+        1e9 / data[datatype][operation][lib]
+        for operation in operations
+        for lib in available_libs
+        if data.get(datatype, {}).get(operation, {}).get(lib, 0) > 0
+    )
+    ax.set_ylim(0, max_tps * 1.12)
+    ax.set_title(format_datatype_table_label(datatype), pad=8)
+    set_grouped_operation_axis(ax)
+    style_throughput_axis(ax)
     ax.yaxis.set_major_formatter(FuncFormatter(format_tps_tick))
-    ax.legend(loc="upper right", fontsize=8, framealpha=0.9)
+    add_compact_legend(ax)
 
 
 def generate_plots(data, output_dir: Path):
-    plot_images = []
-    operations = ["serialize", "deserialize"]
+    with plt.rc_context(PLOT_RC_PARAMS):
+        fig, axes = plt.subplots(2, 3, figsize=(16.5, 9.0))
+        for index, (ax, datatype) in enumerate(zip(axes.flat, DATATYPE_ORDER)):
+            plot_throughput_grid_subplot(ax, data, datatype)
+            if index % 3 == 0:
+                ax.set_ylabel("Throughput (ops/sec)", labelpad=10)
 
-    datatypes = [dt for dt in DATATYPE_ORDER if dt in data]
-    for datatype in datatypes:
-        fig, axes = plt.subplots(1, 2, figsize=(12, 5))
-        for idx, operation in enumerate(operations):
-            plot_datatype(axes[idx], data, datatype, operation)
-        fig.suptitle(f"{format_datatype_table_label(datatype)} Throughput", fontsize=14)
-        fig.tight_layout(rect=[0, 0, 1, 0.95])
-
-        path = output_dir / f"{datatype}.png"
-        plt.savefig(path, dpi=150)
+        fig.suptitle(
+            "Python Serialization Throughput",
+            fontsize=15,
+            fontweight="normal",
+            y=0.955,
+        )
+        fig.tight_layout(rect=[0.02, 0.02, 0.995, 0.965], w_pad=1.2, h_pad=1.25)
+        throughput_path = output_dir / "throughput.png"
+        save_benchmark_figure(fig, throughput_path)
         plt.close()
-        plot_images.append((datatype, path))
 
-    fig, axes = plt.subplots(2, 3, figsize=(18, 10))
-    for index, (ax, datatype) in enumerate(zip(axes.flat, DATATYPE_ORDER)):
-        plot_throughput_grid_subplot(ax, data, datatype)
-        if index % 3 == 0:
-            ax.set_ylabel("Throughput (ops/sec)")
-        else:
-            ax.tick_params(axis="y", labelleft=False)
-            ax.yaxis.get_offset_text().set_visible(False)
-
-    fig.suptitle("Python Serialization Throughput", fontsize=14)
-    fig.tight_layout()
-    throughput_path = output_dir / "throughput.png"
-    plt.savefig(throughput_path, dpi=150)
-    plt.close()
-    plot_images.append(("throughput", throughput_path))
-
-    return plot_images
+    return throughput_path
 
 
-def generate_markdown_report(
-    raw, data, sizes, plot_images, output_dir: Path, plot_prefix: str
-):
+def generate_markdown_report(raw, data, sizes, output_dir: Path, plot_prefix: str):
     context = raw.get("context", {})
     system_info = get_system_info()
 
@@ -304,6 +251,9 @@ def generate_markdown_report(
         "cd benchmarks/python\n",
         "./run.sh\n",
         "```\n\n",
+        "## Benchmark Plot\n\n",
+        "The plot shows throughput (ops/sec); higher is better.\n\n",
+        f"![Throughput]({plot_prefix}throughput.png)\n\n",
         "## Hardware & OS Info\n\n",
         "| Key | Value |\n",
         "|-----|-------|\n",
@@ -318,23 +268,6 @@ def generate_markdown_report(
     for key in ["warmup", "iterations", "repeat", "number", "list_size"]:
         if key in context:
             md.append(f"| {key} | {context[key]} |\n")
-
-    md.append("\n## Benchmark Plots\n")
-    md.append("\nAll plots show throughput (ops/sec); higher is better.\n")
-
-    plot_images_sorted = sorted(
-        plot_images, key=lambda item: (0 if item[0] == "throughput" else 1, item[0])
-    )
-    for datatype, image_path in plot_images_sorted:
-        image_name = os.path.basename(image_path)
-        image_ref = f"{plot_prefix}{image_name}"
-        plot_title = (
-            "Throughput"
-            if datatype == "throughput"
-            else format_datatype_table_label(datatype)
-        )
-        md.append(f"\n### {plot_title}\n\n")
-        md.append(f"![{plot_title}]({image_ref})\n")
 
     md.append("\n## Benchmark Results\n\n")
     md.append("### Timing Results (nanoseconds)\n\n")
@@ -425,9 +358,7 @@ def generate_markdown_report(
     report_path = output_dir / "README.md"
     report_path.write_text("".join(md), encoding="utf-8")
 
-    prettier = shutil.which("prettier")
-    if prettier is not None:
-        subprocess.run([prettier, "--write", str(report_path)], check=True)
+    format_markdown_with_prettier(report_path)
 
     return report_path
 
@@ -444,13 +375,12 @@ def main() -> int:
     sizes = raw.get("sizes", {})
 
     data = build_benchmark_matrix(benchmarks)
-    plot_images = generate_plots(data, output_dir)
+    generate_plots(data, output_dir)
 
     report_path = generate_markdown_report(
         raw,
         data,
         sizes,
-        plot_images,
         output_dir,
         args.plot_prefix,
     )

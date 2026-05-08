@@ -20,14 +20,30 @@ import argparse
 import json
 import os
 import platform
-import shutil
-import subprocess
+import sys
 from collections import defaultdict
 from datetime import datetime
+from pathlib import Path
 
 import matplotlib.pyplot as plt
-import numpy as np
 from matplotlib.ticker import FuncFormatter
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from plot_style import (  # noqa: E402
+    BAR_EDGE_COLOR,
+    GROUP_BAR_WIDTH,
+    GROUP_X,
+    apply_benchmark_style,
+    add_compact_legend,
+    format_markdown_with_prettier,
+    format_throughput_tick,
+    save_benchmark_figure,
+    serializer_offset,
+    set_grouped_operation_axis,
+    style_throughput_axis,
+)
+
+apply_benchmark_style(plt)
 
 try:
     import psutil
@@ -138,18 +154,8 @@ def format_datatype_table_label(datatype: str) -> str:
     return datatype.capitalize()
 
 
-def format_tps_label(tps: float) -> str:
-    if tps >= 1e9:
-        return f"{tps / 1e9:.2f}G"
-    if tps >= 1e6:
-        return f"{tps / 1e6:.2f}M"
-    if tps >= 1e3:
-        return f"{tps / 1e3:.2f}K"
-    return f"{tps:.0f}"
-
-
 def format_tps_tick(tps: float, _position) -> str:
-    return format_tps_label(tps)
+    return format_throughput_tick(tps, _position)
 
 
 def preferred_ordered_values(values, preferred):
@@ -247,44 +253,6 @@ def build_coverage(rows):
     }
 
 
-def plot_datatype(ax, throughputs: dict, datatype: str, operation: str) -> None:
-    if datatype not in throughputs or operation not in throughputs[datatype]:
-        ax.set_title(f"{datatype} {operation} - No Data")
-        ax.axis("off")
-        return
-
-    libs = set(throughputs[datatype][operation].keys())
-    lib_order = [lib for lib in SERIALIZER_ORDER if lib in libs]
-    if not lib_order:
-        ax.set_title(f"{datatype} {operation} - No Supported Serializer Data")
-        ax.axis("off")
-        return
-    throughput = [throughputs[datatype][operation].get(lib, 0) for lib in lib_order]
-    colors = [COLORS.get(lib, "#888888") for lib in lib_order]
-
-    x = np.arange(len(lib_order))
-    bars = ax.bar(x, throughput, color=colors, width=0.6)
-
-    ax.set_title(f"{operation.capitalize()} Throughput (higher is better)")
-    ax.set_xticks(x)
-    ax.set_xticklabels([SERIALIZER_LABELS.get(lib, lib) for lib in lib_order])
-    ax.set_ylabel("Throughput (ops/sec)")
-    ax.grid(True, axis="y", linestyle="--", alpha=0.5)
-    ax.ticklabel_format(style="scientific", axis="y", scilimits=(0, 0))
-
-    for bar, tps_value in zip(bars, throughput):
-        height = bar.get_height()
-        ax.annotate(
-            format_tps_label(tps_value),
-            xy=(bar.get_x() + bar.get_width() / 2, height),
-            xytext=(0, 3),
-            textcoords="offset points",
-            ha="center",
-            va="bottom",
-            fontsize=9,
-        )
-
-
 def plot_throughput_grid_subplot(ax, throughputs, datatype):
     if datatype not in throughputs:
         ax.set_title(f"{format_datatype_table_label(datatype)}\nNo Data")
@@ -304,28 +272,35 @@ def plot_throughput_grid_subplot(ax, throughputs, datatype):
         ax.axis("off")
         return
 
-    x = np.arange(len(PREFERRED_OPERATION_ORDER))
-    width = 0.8 / len(available_libs)
+    x = GROUP_X
     for idx, lib in enumerate(available_libs):
         tps = [
             throughputs[datatype][operation].get(lib, 0)
             for operation in PREFERRED_OPERATION_ORDER
         ]
-        offset = (idx - (len(available_libs) - 1) / 2) * width
+        offset = serializer_offset(idx, len(available_libs))
         ax.bar(
             x + offset,
             tps,
-            width,
+            GROUP_BAR_WIDTH,
             label=SERIALIZER_LABELS.get(lib, lib),
             color=COLORS.get(lib, "#888888"),
+            edgecolor=BAR_EDGE_COLOR,
+            linewidth=0.8,
         )
 
-    ax.set_title(format_datatype_table_label(datatype))
-    ax.set_xticks(x)
-    ax.set_xticklabels(["Serialize", "Deserialize"])
-    ax.grid(True, axis="y", linestyle="--", alpha=0.5)
+    max_tps = max(
+        throughputs[datatype][operation][lib]
+        for operation in PREFERRED_OPERATION_ORDER
+        for lib in available_libs
+        if throughputs[datatype][operation].get(lib, 0) > 0
+    )
+    ax.set_ylim(0, max_tps * 1.12)
+    ax.set_title(format_datatype_table_label(datatype), pad=8)
+    set_grouped_operation_axis(ax)
+    style_throughput_axis(ax)
     ax.yaxis.set_major_formatter(FuncFormatter(format_tps_tick))
-    ax.legend(loc="upper right", fontsize=8, framealpha=0.9)
+    add_compact_legend(ax)
 
 
 def build_markdown(
@@ -337,7 +312,6 @@ def build_markdown(
     sizes,
     datatypes,
     operations,
-    plot_images,
 ):
     report_lines = [
         "# C# Benchmark Performance Report\n\n",
@@ -348,6 +322,9 @@ def build_markdown(
         "dotnet run -c Release --project ./Fory.CSharpBenchmark.csproj -- --output build/benchmark_results.json\n",
         "python3 benchmark_report.py --json-file build/benchmark_results.json --output-dir report\n",
         "```\n\n",
+        "## Benchmark Plot\n\n",
+        "The plot shows throughput (ops/sec); higher is better.\n\n",
+        f"![Throughput]({args.plot_prefix}throughput.png)\n\n",
         "## Hardware & OS Info\n\n",
         "| Key | Value |\n",
         "|-----|-------|\n",
@@ -375,22 +352,6 @@ def build_markdown(
         report_lines.append(
             "\n> Warning: benchmark input is partial; plots/tables only show available cases.\n"
         )
-
-    report_lines.append("\n## Benchmark Plots\n")
-    report_lines.append("\nAll class-level plots below show throughput (ops/sec).\n")
-    plot_images_sorted = sorted(
-        plot_images, key=lambda item: (0 if item[0] == "throughput" else 1, item[0])
-    )
-    for datatype, img in plot_images_sorted:
-        img_filename = os.path.basename(img)
-        img_path_report = args.plot_prefix + img_filename
-        plot_title = (
-            "Throughput"
-            if datatype == "throughput"
-            else format_datatype_table_label(datatype)
-        )
-        report_lines.append(f"\n### {plot_title}\n\n")
-        report_lines.append(f"![{plot_title}]({img_path_report})\n")
 
     report_lines.append("\n## Benchmark Results\n\n")
     report_lines.append("### Timing Results (nanoseconds)\n\n")
@@ -503,31 +464,17 @@ def main() -> None:
         list(operations_present), PREFERRED_OPERATION_ORDER
     )
 
-    plot_images = []
-    for datatype in datatypes:
-        fig, axes = plt.subplots(1, 2, figsize=(12, 5))
-        for index, operation in enumerate(PREFERRED_OPERATION_ORDER):
-            plot_datatype(axes[index], throughputs, datatype, operation)
-        fig.suptitle(f"{format_datatype_table_label(datatype)} Throughput", fontsize=14)
-        fig.tight_layout(rect=[0, 0, 1, 0.95])
-        plot_path = os.path.join(output_dir, f"{datatype}.png")
-        plt.savefig(plot_path, dpi=150)
-        plot_images.append((datatype, plot_path))
-        plt.close()
-
-    fig, axes = plt.subplots(2, 3, figsize=(18, 10))
+    fig, axes = plt.subplots(2, 3, figsize=(16.5, 9.0))
     for index, (ax, datatype) in enumerate(zip(axes.flat, PREFERRED_DATATYPE_ORDER)):
         plot_throughput_grid_subplot(ax, throughputs, datatype)
         if index % 3 == 0:
-            ax.set_ylabel("Throughput (ops/sec)")
-        else:
-            ax.tick_params(axis="y", labelleft=False)
-            ax.yaxis.get_offset_text().set_visible(False)
-    fig.suptitle("C# Serialization Throughput", fontsize=14)
-    fig.tight_layout()
+            ax.set_ylabel("Throughput (ops/sec)", labelpad=10)
+    fig.suptitle(
+        "C# Serialization Throughput", fontsize=15, fontweight="normal", y=0.955
+    )
+    fig.tight_layout(rect=[0.02, 0.02, 0.995, 0.965], w_pad=1.2, h_pad=1.25)
     throughput_path = os.path.join(output_dir, "throughput.png")
-    plt.savefig(throughput_path, dpi=150)
-    plot_images.append(("throughput", throughput_path))
+    save_benchmark_figure(fig, throughput_path)
     plt.close()
 
     report = build_markdown(
@@ -539,7 +486,6 @@ def main() -> None:
         sizes=sizes,
         datatypes=datatypes,
         operations=operations,
-        plot_images=plot_images,
     )
     legacy_report_path = os.path.join(output_dir, "REPORT.md")
     if os.path.exists(legacy_report_path):
@@ -548,9 +494,7 @@ def main() -> None:
     with open(report_path, "w", encoding="utf-8") as f:
         f.write(report)
 
-    prettier = shutil.which("prettier")
-    if prettier is not None:
-        subprocess.run([prettier, "--write", report_path], check=True)
+    format_markdown_with_prettier(report_path)
 
     if coverage["is_partial"]:
         print(

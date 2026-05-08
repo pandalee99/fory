@@ -20,14 +20,30 @@ import argparse
 import os
 import platform
 import re
-import shutil
-import subprocess
+import sys
 from collections import defaultdict
 from datetime import datetime
+from pathlib import Path
 
 import matplotlib.pyplot as plt
-import numpy as np
 from matplotlib.ticker import FuncFormatter
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from plot_style import (  # noqa: E402
+    BAR_EDGE_COLOR,
+    GROUP_BAR_WIDTH,
+    GROUP_X,
+    add_compact_legend,
+    apply_benchmark_style,
+    format_markdown_with_prettier,
+    format_throughput_tick,
+    save_benchmark_figure,
+    serializer_offset,
+    set_grouped_operation_axis,
+    style_throughput_axis,
+)
+
+apply_benchmark_style(plt)
 
 try:
     import psutil
@@ -107,20 +123,6 @@ def datatype_title(datatype):
     return datatype.capitalize()
 
 
-def datatype_plot_label(datatype):
-    if datatype == "struct":
-        return "NumericStruct"
-    if datatype == "structlist":
-        return "NumericStruct\nList"
-    if datatype == "mediacontent":
-        return "MediaContent"
-    if datatype == "mediacontentlist":
-        return "MediaContent\nList"
-    if datatype.endswith("list"):
-        return f"{datatype[:-4].capitalize()}\nList"
-    return datatype.capitalize()
-
-
 def get_system_info(log_file):
     info = {
         "OS": f"{platform.system()} {platform.release()}",
@@ -192,57 +194,8 @@ def load_serialized_sizes(size_file):
     return sizes
 
 
-def format_tps_label(tps):
-    if tps >= 1e9:
-        return f"{tps / 1e9:.2f}G"
-    if tps >= 1e6:
-        return f"{tps / 1e6:.2f}M"
-    if tps >= 1e3:
-        return f"{tps / 1e3:.2f}K"
-    return f"{tps:.0f}"
-
-
 def format_tps_tick(tps, _position):
-    return format_tps_label(tps)
-
-
-def plot_datatype(ax, results, datatype, operation):
-    if datatype not in results or operation not in results[datatype]:
-        ax.set_title(f"{datatype} {operation} - No Data")
-        ax.axis("off")
-        return
-
-    libs = [
-        serializer
-        for serializer in SERIALIZER_ORDER
-        if results[datatype][operation].get(serializer, 0) > 0
-    ]
-    throughput = [1e9 / results[datatype][operation][serializer] for serializer in libs]
-    x = np.arange(len(libs))
-    bars = ax.bar(
-        x,
-        throughput,
-        color=[COLORS.get(serializer, "#888888") for serializer in libs],
-        width=0.6,
-    )
-
-    ax.set_title(f"{operation.capitalize()} Throughput (higher is better)")
-    ax.set_xticks(x)
-    ax.set_xticklabels([SERIALIZER_LABELS[serializer] for serializer in libs])
-    ax.set_ylabel("Throughput (ops/sec)")
-    ax.grid(True, axis="y", linestyle="--", alpha=0.5)
-    ax.ticklabel_format(style="scientific", axis="y", scilimits=(0, 0))
-
-    for bar, value in zip(bars, throughput):
-        ax.annotate(
-            format_tps_label(value),
-            xy=(bar.get_x() + bar.get_width() / 2, value),
-            xytext=(0, 3),
-            textcoords="offset points",
-            ha="center",
-            va="bottom",
-            fontsize=9,
-        )
+    return format_throughput_tick(tps, _position)
 
 
 def plot_throughput_grid_subplot(ax, results, datatype):
@@ -264,66 +217,57 @@ def plot_throughput_grid_subplot(ax, results, datatype):
         ax.axis("off")
         return
 
-    x = np.arange(len(OPERATIONS))
-    width = 0.8 / len(available)
+    x = GROUP_X
     for index, serializer in enumerate(available):
         throughput = []
         for operation in OPERATIONS:
             time_ns = results[datatype][operation].get(serializer, 0)
             throughput.append(1e9 / time_ns if time_ns > 0 else 0)
-        offset = (index - (len(available) - 1) / 2) * width
+        offset = serializer_offset(index, len(available))
         ax.bar(
             x + offset,
             throughput,
-            width,
+            GROUP_BAR_WIDTH,
             label=SERIALIZER_LABELS[serializer],
             color=COLORS.get(serializer, "#888888"),
+            edgecolor=BAR_EDGE_COLOR,
+            linewidth=0.8,
         )
 
-    ax.set_title(datatype_title(datatype))
-    ax.set_xticks(x)
-    ax.set_xticklabels(["Serialize", "Deserialize"])
-    ax.grid(True, axis="y", linestyle="--", alpha=0.5)
+    max_tps = max(
+        1e9 / results[datatype][operation][serializer]
+        for operation in OPERATIONS
+        for serializer in available
+        if results[datatype][operation].get(serializer, 0) > 0
+    )
+    ax.set_ylim(0, max_tps * 1.12)
+    ax.set_title(datatype_title(datatype), pad=8)
+    set_grouped_operation_axis(ax)
+    style_throughput_axis(ax)
     ax.yaxis.set_major_formatter(FuncFormatter(format_tps_tick))
-    ax.legend(loc="upper right", fontsize=8, framealpha=0.9)
+    add_compact_legend(ax)
 
 
 def generate_plots(results, output_dir):
     os.makedirs(output_dir, exist_ok=True)
-    plot_images = []
 
-    for datatype in DATATYPE_ORDER:
-        if datatype not in results:
-            continue
-        fig, axes = plt.subplots(1, 2, figsize=(12, 5))
-        for index, operation in enumerate(OPERATIONS):
-            plot_datatype(axes[index], results, datatype, operation)
-        fig.suptitle(f"{datatype_title(datatype)} Throughput", fontsize=14)
-        fig.tight_layout(rect=[0, 0, 1, 0.95])
-        plot_path = os.path.join(output_dir, f"{datatype}.png")
-        plt.savefig(plot_path, dpi=150)
-        plt.close(fig)
-        plot_images.append((datatype, plot_path))
-
-    fig, axes = plt.subplots(2, 3, figsize=(18, 10))
+    fig, axes = plt.subplots(2, 3, figsize=(16.5, 9.0))
     for index, (ax, datatype) in enumerate(zip(axes.flat, DATATYPE_ORDER)):
         plot_throughput_grid_subplot(ax, results, datatype)
         if index % 3 == 0:
-            ax.set_ylabel("Throughput (ops/sec)")
-        else:
-            ax.tick_params(axis="y", labelleft=False)
-            ax.yaxis.get_offset_text().set_visible(False)
-    fig.suptitle("Rust Serialization Throughput", fontsize=14)
-    fig.tight_layout()
+            ax.set_ylabel("Throughput (ops/sec)", labelpad=10)
+    fig.suptitle(
+        "Rust Serialization Throughput", fontsize=15, fontweight="normal", y=0.955
+    )
+    fig.tight_layout(rect=[0.02, 0.02, 0.995, 0.965], w_pad=1.2, h_pad=1.25)
     throughput_path = os.path.join(output_dir, "throughput.png")
-    plt.savefig(throughput_path, dpi=150)
+    save_benchmark_figure(fig, throughput_path)
     plt.close(fig)
-    plot_images.append(("throughput", throughput_path))
 
-    return plot_images
+    return throughput_path
 
 
-def write_report(system_info, results, sizes, plot_images, output_dir, plot_prefix):
+def write_report(system_info, results, sizes, output_dir, plot_prefix):
     report = [
         "# Rust Benchmark Performance Report\n\n",
         f"_Generated on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}_\n\n",
@@ -334,6 +278,9 @@ def write_report(system_info, results, sizes, plot_images, output_dir, plot_pref
         "cargo run --release --bin fory_profiler -- --print-all-serialized-sizes | tee results/serialized_sizes.txt\n",
         "python benchmark_report.py --log-file results/cargo_bench.log --size-file results/serialized_sizes.txt --output-dir results\n",
         "```\n\n",
+        "## Benchmark Plot\n\n",
+        "The plot shows throughput (ops/sec); higher is better.\n\n",
+        f"![Throughput]({plot_prefix}throughput.png)\n\n",
         "## Hardware & OS Info\n\n",
         "| Key | Value |\n",
         "|-----|-------|\n",
@@ -341,17 +288,6 @@ def write_report(system_info, results, sizes, plot_images, output_dir, plot_pref
 
     for key, value in system_info.items():
         report.append(f"| {key} | {value} |\n")
-
-    report.append("\n## Benchmark Plots\n")
-    report.append("\nAll class-level plots below show throughput (ops/sec).\n")
-
-    sorted_plots = sorted(
-        plot_images, key=lambda item: (0 if item[0] == "throughput" else 1, item[0])
-    )
-    for datatype, image_path in sorted_plots:
-        plot_title = datatype_title(datatype)
-        report.append(f"\n### {plot_title}\n\n")
-        report.append(f"![{plot_title}]({plot_prefix}{os.path.basename(image_path)})\n")
 
     report.append("\n## Benchmark Results\n\n")
     report.append("### Timing Results (nanoseconds)\n\n")
@@ -429,9 +365,7 @@ def write_report(system_info, results, sizes, plot_images, output_dir, plot_pref
     with open(report_path, "w", encoding="utf-8") as file:
         file.writelines(report)
 
-    prettier = shutil.which("prettier")
-    if prettier is not None:
-        subprocess.run([prettier, "--write", report_path], check=True)
+    format_markdown_with_prettier(report_path)
 
     return report_path
 
@@ -441,9 +375,9 @@ def main():
     results = load_benchmark_results(args.log_file)
     sizes = load_serialized_sizes(args.size_file)
     system_info = get_system_info(args.log_file)
-    plot_images = generate_plots(results, args.output_dir)
+    generate_plots(results, args.output_dir)
     report_path = write_report(
-        system_info, results, sizes, plot_images, args.output_dir, args.plot_prefix
+        system_info, results, sizes, args.output_dir, args.plot_prefix
     )
     print(f"✅ Plots saved in: {args.output_dir}")
     print(f"📄 Markdown report generated at: {report_path}")
