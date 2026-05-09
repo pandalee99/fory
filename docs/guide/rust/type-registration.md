@@ -47,7 +47,7 @@ let bytes = fory.serialize(&user)?;
 let decoded: User = fory.deserialize(&bytes)?;
 ```
 
-## Register by Namespace
+## Register by Name
 
 For cross-language compatibility, register with namespace and type name:
 
@@ -56,8 +56,8 @@ let mut fory = Fory::builder()
     .compatible(true)
     .xlang(true).build();
 
-// Register with namespace-based naming
-fory.register_by_namespace::<MyStruct>("com.example", "MyStruct")?;
+// Register with symbolic type identity
+fory.register_by_name::<MyStruct>("com.example", "MyStruct")?;
 ```
 
 ## Register Custom Serializer

@@ -299,10 +299,10 @@ func main() {
     F12 []int16
   }
   serializer := forygo.NewFory(forygo.WithXlang(true), forygo.WithCompatible(true))
-  if err := serializer.RegisterNamedStruct(SomeClass1{}, "example.SomeClass1"); err != nil {
+  if err := serializer.RegisterStructByName(SomeClass1{}, "example.SomeClass1"); err != nil {
     panic(err)
   }
-  if err := serializer.RegisterNamedStruct(SomeClass2{}, "example.SomeClass2"); err != nil {
+  if err := serializer.RegisterStructByName(SomeClass2{}, "example.SomeClass2"); err != nil {
     panic(err)
   }
   obj1 := &SomeClass1{F1: true, F2: map[int8]int32{-1: 2}}
@@ -410,10 +410,10 @@ fn complex_struct() {
 
     let mut fory = Fory::builder().xlang(true).compatible(true).build();
     fory
-        .register_by_namespace::<Animal>("example", "foo2")
+        .register_by_name::<Animal>("example", "foo2")
         .expect("register Animal");
     fory
-        .register_by_namespace::<Person>("example", "foo")
+        .register_by_name::<Person>("example", "foo")
         .expect("register Person");
     let bin = fory.serialize(&person).expect("serialize success");
     let obj: Person = fory.deserialize(&bin).expect("deserialize success");

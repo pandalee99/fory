@@ -609,8 +609,8 @@ let mut fory = Fory::builder()
 // Register types with consistent IDs across languages
 fory.register::<MyStruct>(100);
 
-// Or use namespace-based registration
-fory.register_by_namespace::<MyStruct>("com.example", "MyStruct");
+// Or use name-based registration
+fory.register_by_name::<MyStruct>("com.example", "MyStruct");
 ```
 
 See [xlang_type_mapping.md](https://fory.apache.org/docs/specification/xlang_type_mapping) for type mapping across languages.

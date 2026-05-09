@@ -412,8 +412,8 @@ fory.register::<envelope::Payload>(2862577837)?;
 If `option enable_auto_type_id = false;` is set:
 
 ```rust
-fory.register_by_namespace::<Config>("myapp.models", "Config")?;
-fory.register_union_by_namespace::<Holder>("myapp.models", "Holder")?;
+fory.register_by_name::<Config>("myapp.models", "Config")?;
+fory.register_union_by_name::<Holder>("myapp.models", "Holder")?;
 ```
 
 ### Usage
@@ -659,8 +659,8 @@ if err := f.RegisterStruct(Envelope_Payload{}, 2862577837); err != nil { ... }
 If `option enable_auto_type_id = false;` is set:
 
 ```go
-if err := f.RegisterNamedStruct(Config{}, "myapp.models.Config"); err != nil { ... }
-if err := f.RegisterNamedUnion(Holder{}, "myapp.models.Holder", fory.NewUnionSerializer(...)); err != nil { ... }
+if err := f.RegisterStructByName(Config{}, "myapp.models.Config"); err != nil { ... }
+if err := f.RegisterUnionByName(Holder{}, "myapp.models.Holder", fory.NewUnionSerializer(...)); err != nil { ... }
 ```
 
 `go_nested_type_style` controls nested type naming:
@@ -1046,7 +1046,7 @@ void main() {
 
 - Explicit `[id=...]` values are used directly in generated registration.
 - When type IDs are omitted, generated code uses computed numeric IDs (see `auto_id.*` outputs).
-- If `option enable_auto_type_id = false;` is set, generated registration uses namespace/type-name APIs instead of numeric IDs.
+- If `option enable_auto_type_id = false;` is set, generated registration uses name-based APIs instead of numeric IDs.
 
 ### Nested Type Shape
 

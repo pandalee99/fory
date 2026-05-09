@@ -1061,13 +1061,13 @@
 //!     field2: String,
 //! }
 //!
-//! fory.register_by_namespace::<MyStruct>("com.example", "MyStruct");
+//! fory.register_by_name::<MyStruct>("com.example", "MyStruct");
 //! ```
 //!
 //! **Type registration strategies:**
 //!
 //! - **ID-based registration**: `fory.register::<T>(id)` - Fastest, requires coordination
-//! - **Namespace-based registration**: `fory.register_by_namespace::<T>(namespace, name)` - Automatic cross-language mapping
+//! - **Name-based registration**: `fory.register_by_name::<T>(namespace, name)` - Automatic cross-language mapping
 //!
 //! ## Performance Characteristics
 //!

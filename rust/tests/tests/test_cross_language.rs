@@ -444,10 +444,9 @@ fn test_named_simple_struct() {
     let data_file_path = get_data_file();
     let bytes = fs::read(&data_file_path).unwrap();
     let mut fory = Fory::builder().compatible(true).xlang(true).build();
-    fory.register_by_namespace::<Color>("demo", "color")
-        .unwrap();
-    fory.register_by_namespace::<Item>("demo", "item").unwrap();
-    fory.register_by_namespace::<SimpleStruct>("demo", "simple_struct")
+    fory.register_by_name::<Color>("demo", "color").unwrap();
+    fory.register_by_name::<Item>("demo", "item").unwrap();
+    fory.register_by_name::<SimpleStruct>("demo", "simple_struct")
         .unwrap();
 
     let local_obj = SimpleStruct {
@@ -477,9 +476,9 @@ fn test_struct_evolving_override() {
     let data_file_path = get_data_file();
     let bytes = fs::read(&data_file_path).unwrap();
     let mut fory = Fory::builder().compatible(true).xlang(true).build();
-    fory.register_by_namespace::<EvolvingOverrideStruct>("test", "evolving_yes")
+    fory.register_by_name::<EvolvingOverrideStruct>("test", "evolving_yes")
         .unwrap();
-    fory.register_by_namespace::<FixedOverrideStruct>("test", "evolving_off")
+    fory.register_by_name::<FixedOverrideStruct>("test", "evolving_off")
         .unwrap();
 
     let mut reader = Reader::new(bytes.as_slice());
@@ -789,16 +788,18 @@ fn test_skip_id_custom() {
 fn test_skip_name_custom() {
     let mut fory1 = Fory::builder().compatible(true).xlang(true).build();
     fory1
-        .register_serializer_by_name::<MyExt>("my_ext")
+        .register_serializer_by_name::<MyExt>("", "my_ext")
         .unwrap();
-    fory1.register_by_name::<Empty>("my_wrapper").unwrap();
+    fory1.register_by_name::<Empty>("", "my_wrapper").unwrap();
     let mut fory2 = Fory::builder().compatible(true).xlang(true).build();
-    fory2.register_by_name::<Color>("color").unwrap();
-    fory2.register_by_name::<MyStruct>("my_struct").unwrap();
+    fory2.register_by_name::<Color>("", "color").unwrap();
+    fory2.register_by_name::<MyStruct>("", "my_struct").unwrap();
     fory2
-        .register_serializer_by_name::<MyExt>("my_ext")
+        .register_serializer_by_name::<MyExt>("", "my_ext")
         .unwrap();
-    fory2.register_by_name::<MyWrapper>("my_wrapper").unwrap();
+    fory2
+        .register_by_name::<MyWrapper>("", "my_wrapper")
+        .unwrap();
     _test_skip_custom(&fory1, &fory2);
 }
 
@@ -806,9 +807,10 @@ fn test_skip_name_custom() {
 #[ignore]
 fn test_consistent_named() {
     let mut fory = Fory::builder().compatible(false).xlang(true).build();
-    fory.register_by_name::<Color>("color").unwrap();
-    fory.register_by_name::<MyStruct>("my_struct").unwrap();
-    fory.register_serializer_by_name::<MyExt>("my_ext").unwrap();
+    fory.register_by_name::<Color>("", "color").unwrap();
+    fory.register_by_name::<MyStruct>("", "my_struct").unwrap();
+    fory.register_serializer_by_name::<MyExt>("", "my_ext")
+        .unwrap();
 
     let color = Color::White;
     let my_struct = MyStruct { id: 42 };

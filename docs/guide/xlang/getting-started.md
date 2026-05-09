@@ -161,7 +161,7 @@ fory.register_type(Person, typename="example.Person")
 **Go:**
 
 ```go
-fory.RegisterNamedStruct(Person{}, "example.Person")
+fory.RegisterStructByName(Person{}, "example.Person")
 ```
 
 **Rust:**
@@ -177,7 +177,7 @@ struct Person {
 
 let mut fory = Fory::builder().xlang(true).compatible(true).build();
 fory
-    .register_by_namespace::<Person>("example", "Person")
+    .register_by_name::<Person>("example", "Person")
     .expect("register Person");
 ```
 

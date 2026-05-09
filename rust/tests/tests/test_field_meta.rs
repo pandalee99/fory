@@ -394,9 +394,9 @@ fn annotated_primitive_vec_field_uses_list_element_type_meta() {
 #[test]
 fn unannotated_non_primitive_vec_field_keeps_declared_element_type_meta() {
     let mut type_resolver = TypeResolver::default();
-    type_resolver.register_by_id::<NestedListItem>(401).unwrap();
+    type_resolver.register::<NestedListItem>(401).unwrap();
     type_resolver
-        .register_by_id::<NonPrimitiveVecDefaultWire>(402)
+        .register::<NonPrimitiveVecDefaultWire>(402)
         .unwrap();
 
     let field_type = only_field_type::<NonPrimitiveVecDefaultWire>(&type_resolver);
