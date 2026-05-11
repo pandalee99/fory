@@ -35,7 +35,7 @@ import org.apache.fory.context.WriteContext;
 import org.apache.fory.logging.Logger;
 import org.apache.fory.logging.LoggerFactory;
 import org.apache.fory.memory.MemoryBuffer;
-import org.apache.fory.memory.Platform;
+import org.apache.fory.platform.UnsafeOps;
 import org.apache.fory.reflect.FieldAccessor;
 import org.apache.fory.reflect.ObjectCreator;
 import org.apache.fory.reflect.ObjectCreators;
@@ -51,10 +51,12 @@ import org.apache.fory.type.DescriptorGrouper;
 import org.apache.fory.type.DispatchId;
 import org.apache.fory.type.Float16;
 import org.apache.fory.type.Generics;
+import org.apache.fory.type.TypeUtils;
 import org.apache.fory.type.unsigned.UInt16;
 import org.apache.fory.type.unsigned.UInt32;
 import org.apache.fory.type.unsigned.UInt64;
 import org.apache.fory.type.unsigned.UInt8;
+import org.apache.fory.util.ExceptionUtils;
 import org.apache.fory.util.record.RecordComponent;
 import org.apache.fory.util.record.RecordInfo;
 import org.apache.fory.util.record.RecordUtils;
@@ -246,56 +248,56 @@ public abstract class AbstractObjectSerializer<T> extends Serializer<T> {
       MemoryBuffer buffer, Object targetObject, long fieldOffset, int dispatchId) {
     switch (dispatchId) {
       case DispatchId.BOOL:
-        buffer.writeBoolean(Platform.getBoolean(targetObject, fieldOffset));
+        buffer.writeBoolean(UnsafeOps.getBoolean(targetObject, fieldOffset));
         return false;
       case DispatchId.INT8:
-        buffer.writeByte(Platform.getByte(targetObject, fieldOffset));
+        buffer.writeByte(UnsafeOps.getByte(targetObject, fieldOffset));
         return false;
       case DispatchId.UINT8:
-        buffer.writeByte(Platform.getInt(targetObject, fieldOffset));
+        buffer.writeByte(UnsafeOps.getInt(targetObject, fieldOffset));
         return false;
       case DispatchId.CHAR:
-        buffer.writeChar(Platform.getChar(targetObject, fieldOffset));
+        buffer.writeChar(UnsafeOps.getChar(targetObject, fieldOffset));
         return false;
       case DispatchId.INT16:
-        buffer.writeInt16(Platform.getShort(targetObject, fieldOffset));
+        buffer.writeInt16(UnsafeOps.getShort(targetObject, fieldOffset));
         return false;
       case DispatchId.UINT16:
-        buffer.writeInt16((short) Platform.getInt(targetObject, fieldOffset));
+        buffer.writeInt16((short) UnsafeOps.getInt(targetObject, fieldOffset));
         return false;
       case DispatchId.INT32:
-        buffer.writeInt32(Platform.getInt(targetObject, fieldOffset));
+        buffer.writeInt32(UnsafeOps.getInt(targetObject, fieldOffset));
         return false;
       case DispatchId.UINT32:
-        buffer.writeInt32((int) Platform.getLong(targetObject, fieldOffset));
+        buffer.writeInt32((int) UnsafeOps.getLong(targetObject, fieldOffset));
         return false;
       case DispatchId.VARINT32:
-        buffer.writeVarInt32(Platform.getInt(targetObject, fieldOffset));
+        buffer.writeVarInt32(UnsafeOps.getInt(targetObject, fieldOffset));
         return false;
       case DispatchId.VAR_UINT32:
-        buffer.writeVarUInt32((int) Platform.getLong(targetObject, fieldOffset));
+        buffer.writeVarUInt32((int) UnsafeOps.getLong(targetObject, fieldOffset));
         return false;
       case DispatchId.FLOAT32:
-        buffer.writeFloat32(Platform.getFloat(targetObject, fieldOffset));
+        buffer.writeFloat32(UnsafeOps.getFloat(targetObject, fieldOffset));
         return false;
       case DispatchId.INT64:
       case DispatchId.UINT64:
-        buffer.writeInt64(Platform.getLong(targetObject, fieldOffset));
+        buffer.writeInt64(UnsafeOps.getLong(targetObject, fieldOffset));
         return false;
       case DispatchId.VARINT64:
-        buffer.writeVarInt64(Platform.getLong(targetObject, fieldOffset));
+        buffer.writeVarInt64(UnsafeOps.getLong(targetObject, fieldOffset));
         return false;
       case DispatchId.TAGGED_INT64:
-        buffer.writeTaggedInt64(Platform.getLong(targetObject, fieldOffset));
+        buffer.writeTaggedInt64(UnsafeOps.getLong(targetObject, fieldOffset));
         return false;
       case DispatchId.VAR_UINT64:
-        buffer.writeVarUInt64(Platform.getLong(targetObject, fieldOffset));
+        buffer.writeVarUInt64(UnsafeOps.getLong(targetObject, fieldOffset));
         return false;
       case DispatchId.TAGGED_UINT64:
-        buffer.writeTaggedUInt64(Platform.getLong(targetObject, fieldOffset));
+        buffer.writeTaggedUInt64(UnsafeOps.getLong(targetObject, fieldOffset));
         return false;
       case DispatchId.FLOAT64:
-        buffer.writeFloat64(Platform.getDouble(targetObject, fieldOffset));
+        buffer.writeFloat64(UnsafeOps.getDouble(targetObject, fieldOffset));
         return false;
       default:
         return true;
@@ -837,56 +839,57 @@ public abstract class AbstractObjectSerializer<T> extends Serializer<T> {
       MemoryBuffer buffer, Object targetObject, long fieldOffset, int dispatchId) {
     switch (dispatchId) {
       case DispatchId.BOOL:
-        Platform.putBoolean(targetObject, fieldOffset, buffer.readBoolean());
+        UnsafeOps.putBoolean(targetObject, fieldOffset, buffer.readBoolean());
         return;
       case DispatchId.INT8:
-        Platform.putByte(targetObject, fieldOffset, buffer.readByte());
+        UnsafeOps.putByte(targetObject, fieldOffset, buffer.readByte());
         return;
       case DispatchId.UINT8:
-        Platform.putInt(targetObject, fieldOffset, buffer.readByte() & 0xFF);
+        UnsafeOps.putInt(targetObject, fieldOffset, buffer.readByte() & 0xFF);
         return;
       case DispatchId.CHAR:
-        Platform.putChar(targetObject, fieldOffset, buffer.readChar());
+        UnsafeOps.putChar(targetObject, fieldOffset, buffer.readChar());
         return;
       case DispatchId.INT16:
-        Platform.putShort(targetObject, fieldOffset, buffer.readInt16());
+        UnsafeOps.putShort(targetObject, fieldOffset, buffer.readInt16());
         return;
       case DispatchId.UINT16:
-        Platform.putInt(targetObject, fieldOffset, buffer.readInt16() & 0xFFFF);
+        UnsafeOps.putInt(targetObject, fieldOffset, buffer.readInt16() & 0xFFFF);
         return;
       case DispatchId.INT32:
-        Platform.putInt(targetObject, fieldOffset, buffer.readInt32());
+        UnsafeOps.putInt(targetObject, fieldOffset, buffer.readInt32());
         return;
       case DispatchId.UINT32:
-        Platform.putLong(targetObject, fieldOffset, Integer.toUnsignedLong(buffer.readInt32()));
+        UnsafeOps.putLong(targetObject, fieldOffset, Integer.toUnsignedLong(buffer.readInt32()));
         return;
       case DispatchId.VARINT32:
-        Platform.putInt(targetObject, fieldOffset, buffer.readVarInt32());
+        UnsafeOps.putInt(targetObject, fieldOffset, buffer.readVarInt32());
         return;
       case DispatchId.VAR_UINT32:
-        Platform.putLong(targetObject, fieldOffset, Integer.toUnsignedLong(buffer.readVarUInt32()));
+        UnsafeOps.putLong(
+            targetObject, fieldOffset, Integer.toUnsignedLong(buffer.readVarUInt32()));
         return;
       case DispatchId.FLOAT32:
-        Platform.putFloat(targetObject, fieldOffset, buffer.readFloat32());
+        UnsafeOps.putFloat(targetObject, fieldOffset, buffer.readFloat32());
         return;
       case DispatchId.INT64:
       case DispatchId.UINT64:
-        Platform.putLong(targetObject, fieldOffset, buffer.readInt64());
+        UnsafeOps.putLong(targetObject, fieldOffset, buffer.readInt64());
         return;
       case DispatchId.VARINT64:
-        Platform.putLong(targetObject, fieldOffset, buffer.readVarInt64());
+        UnsafeOps.putLong(targetObject, fieldOffset, buffer.readVarInt64());
         return;
       case DispatchId.TAGGED_INT64:
-        Platform.putLong(targetObject, fieldOffset, buffer.readTaggedInt64());
+        UnsafeOps.putLong(targetObject, fieldOffset, buffer.readTaggedInt64());
         return;
       case DispatchId.VAR_UINT64:
-        Platform.putLong(targetObject, fieldOffset, buffer.readVarUInt64());
+        UnsafeOps.putLong(targetObject, fieldOffset, buffer.readVarUInt64());
         return;
       case DispatchId.TAGGED_UINT64:
-        Platform.putLong(targetObject, fieldOffset, buffer.readTaggedUInt64());
+        UnsafeOps.putLong(targetObject, fieldOffset, buffer.readTaggedUInt64());
         return;
       case DispatchId.FLOAT64:
-        Platform.putDouble(targetObject, fieldOffset, buffer.readFloat64());
+        UnsafeOps.putDouble(targetObject, fieldOffset, buffer.readFloat64());
         return;
       default:
         throw new IllegalArgumentException("Unsupported dispatch id " + dispatchId);
@@ -1018,7 +1021,7 @@ public abstract class AbstractObjectSerializer<T> extends Serializer<T> {
       copyContext.reference(originObj, t);
       return t;
     } catch (Throwable e) {
-      Platform.throwException(e);
+      ExceptionUtils.throwException(e);
     }
     return originObj;
   }
@@ -1065,8 +1068,12 @@ public abstract class AbstractObjectSerializer<T> extends Serializer<T> {
     for (SerializationFieldInfo fieldInfo : fieldInfos) {
       FieldAccessor fieldAccessor = fieldInfo.fieldAccessor;
       long fieldOffset = fieldAccessor.getFieldOffset();
-      // record class won't go to this path;
-      assert fieldOffset != -1;
+      if (fieldOffset == -1) {
+        Object fieldValue = fieldAccessor.getObject(originObj);
+        fieldAccessor.putObject(
+            newObj, copyFieldValue(copyContext, fieldValue, fieldInfo.dispatchId));
+        continue;
+      }
       if (fieldInfo.isPrimitiveField) {
         copySetPrimitiveField(originObj, newObj, fieldOffset, fieldInfo.dispatchId);
       } else {
@@ -1075,34 +1082,72 @@ public abstract class AbstractObjectSerializer<T> extends Serializer<T> {
     }
   }
 
+  private static Object copyFieldValue(CopyContext copyContext, Object fieldValue, int dispatchId) {
+    if (fieldValue == null) {
+      return null;
+    }
+    switch (dispatchId) {
+      case DispatchId.BOOL:
+      case DispatchId.INT8:
+      case DispatchId.UINT8:
+      case DispatchId.EXT_UINT8:
+      case DispatchId.CHAR:
+      case DispatchId.INT16:
+      case DispatchId.UINT16:
+      case DispatchId.EXT_UINT16:
+      case DispatchId.INT32:
+      case DispatchId.VARINT32:
+      case DispatchId.UINT32:
+      case DispatchId.EXT_UINT32:
+      case DispatchId.VAR_UINT32:
+      case DispatchId.EXT_VAR_UINT32:
+      case DispatchId.INT64:
+      case DispatchId.VARINT64:
+      case DispatchId.TAGGED_INT64:
+      case DispatchId.UINT64:
+      case DispatchId.EXT_UINT64:
+      case DispatchId.VAR_UINT64:
+      case DispatchId.EXT_VAR_UINT64:
+      case DispatchId.TAGGED_UINT64:
+      case DispatchId.FLOAT32:
+      case DispatchId.FLOAT64:
+      case DispatchId.FLOAT16:
+      case DispatchId.BFLOAT16:
+      case DispatchId.STRING:
+        return fieldValue;
+      default:
+        return copyContext.copyObject(fieldValue);
+    }
+  }
+
   private static void copySetPrimitiveField(
       Object originObj, Object newObj, long fieldOffset, int typeId) {
     switch (typeId) {
       case DispatchId.BOOL:
-        Platform.putBoolean(newObj, fieldOffset, Platform.getBoolean(originObj, fieldOffset));
+        UnsafeOps.putBoolean(newObj, fieldOffset, UnsafeOps.getBoolean(originObj, fieldOffset));
         break;
       case DispatchId.INT8:
-        Platform.putByte(newObj, fieldOffset, Platform.getByte(originObj, fieldOffset));
+        UnsafeOps.putByte(newObj, fieldOffset, UnsafeOps.getByte(originObj, fieldOffset));
         break;
       case DispatchId.UINT8:
-        Platform.putInt(newObj, fieldOffset, Platform.getInt(originObj, fieldOffset));
+        UnsafeOps.putInt(newObj, fieldOffset, UnsafeOps.getInt(originObj, fieldOffset));
         break;
       case DispatchId.CHAR:
-        Platform.putChar(newObj, fieldOffset, Platform.getChar(originObj, fieldOffset));
+        UnsafeOps.putChar(newObj, fieldOffset, UnsafeOps.getChar(originObj, fieldOffset));
         break;
       case DispatchId.INT16:
-        Platform.putShort(newObj, fieldOffset, Platform.getShort(originObj, fieldOffset));
+        UnsafeOps.putShort(newObj, fieldOffset, UnsafeOps.getShort(originObj, fieldOffset));
         break;
       case DispatchId.UINT16:
-        Platform.putInt(newObj, fieldOffset, Platform.getInt(originObj, fieldOffset));
+        UnsafeOps.putInt(newObj, fieldOffset, UnsafeOps.getInt(originObj, fieldOffset));
         break;
       case DispatchId.INT32:
       case DispatchId.VARINT32:
-        Platform.putInt(newObj, fieldOffset, Platform.getInt(originObj, fieldOffset));
+        UnsafeOps.putInt(newObj, fieldOffset, UnsafeOps.getInt(originObj, fieldOffset));
         break;
       case DispatchId.UINT32:
       case DispatchId.VAR_UINT32:
-        Platform.putLong(newObj, fieldOffset, Platform.getLong(originObj, fieldOffset));
+        UnsafeOps.putLong(newObj, fieldOffset, UnsafeOps.getLong(originObj, fieldOffset));
         break;
       case DispatchId.INT64:
       case DispatchId.VARINT64:
@@ -1110,13 +1155,13 @@ public abstract class AbstractObjectSerializer<T> extends Serializer<T> {
       case DispatchId.UINT64:
       case DispatchId.VAR_UINT64:
       case DispatchId.TAGGED_UINT64:
-        Platform.putLong(newObj, fieldOffset, Platform.getLong(originObj, fieldOffset));
+        UnsafeOps.putLong(newObj, fieldOffset, UnsafeOps.getLong(originObj, fieldOffset));
         break;
       case DispatchId.FLOAT32:
-        Platform.putFloat(newObj, fieldOffset, Platform.getFloat(originObj, fieldOffset));
+        UnsafeOps.putFloat(newObj, fieldOffset, UnsafeOps.getFloat(originObj, fieldOffset));
         break;
       case DispatchId.FLOAT64:
-        Platform.putDouble(newObj, fieldOffset, Platform.getDouble(originObj, fieldOffset));
+        UnsafeOps.putDouble(newObj, fieldOffset, UnsafeOps.getDouble(originObj, fieldOffset));
         break;
       default:
         throw new RuntimeException("Unknown primitive type: " + typeId);
@@ -1153,47 +1198,47 @@ public abstract class AbstractObjectSerializer<T> extends Serializer<T> {
       case DispatchId.FLOAT16:
       case DispatchId.BFLOAT16:
       case DispatchId.STRING:
-        Platform.putObject(newObj, fieldOffset, Platform.getObject(originObj, fieldOffset));
+        UnsafeOps.putObject(newObj, fieldOffset, UnsafeOps.getObject(originObj, fieldOffset));
         break;
       default:
-        Platform.putObject(
+        UnsafeOps.putObject(
             newObj,
             fieldOffset,
-            copyContext.copyObject(Platform.getObject(originObj, fieldOffset)));
+            copyContext.copyObject(UnsafeOps.getObject(originObj, fieldOffset)));
     }
   }
 
   private Object copyPrimitiveField(Object targetObject, long fieldOffset, int typeId) {
     switch (typeId) {
       case DispatchId.BOOL:
-        return Platform.getBoolean(targetObject, fieldOffset);
+        return UnsafeOps.getBoolean(targetObject, fieldOffset);
       case DispatchId.INT8:
-        return Platform.getByte(targetObject, fieldOffset);
+        return UnsafeOps.getByte(targetObject, fieldOffset);
       case DispatchId.UINT8:
-        return Platform.getInt(targetObject, fieldOffset);
+        return UnsafeOps.getInt(targetObject, fieldOffset);
       case DispatchId.CHAR:
-        return Platform.getChar(targetObject, fieldOffset);
+        return UnsafeOps.getChar(targetObject, fieldOffset);
       case DispatchId.INT16:
-        return Platform.getShort(targetObject, fieldOffset);
+        return UnsafeOps.getShort(targetObject, fieldOffset);
       case DispatchId.UINT16:
-        return Platform.getInt(targetObject, fieldOffset);
+        return UnsafeOps.getInt(targetObject, fieldOffset);
       case DispatchId.INT32:
       case DispatchId.VARINT32:
-        return Platform.getInt(targetObject, fieldOffset);
+        return UnsafeOps.getInt(targetObject, fieldOffset);
       case DispatchId.UINT32:
       case DispatchId.VAR_UINT32:
-        return Platform.getLong(targetObject, fieldOffset);
+        return UnsafeOps.getLong(targetObject, fieldOffset);
       case DispatchId.FLOAT32:
-        return Platform.getFloat(targetObject, fieldOffset);
+        return UnsafeOps.getFloat(targetObject, fieldOffset);
       case DispatchId.INT64:
       case DispatchId.VARINT64:
       case DispatchId.TAGGED_INT64:
       case DispatchId.UINT64:
       case DispatchId.VAR_UINT64:
       case DispatchId.TAGGED_UINT64:
-        return Platform.getLong(targetObject, fieldOffset);
+        return UnsafeOps.getLong(targetObject, fieldOffset);
       case DispatchId.FLOAT64:
-        return Platform.getDouble(targetObject, fieldOffset);
+        return UnsafeOps.getDouble(targetObject, fieldOffset);
       default:
         throw new RuntimeException("Unknown primitive type: " + typeId);
     }
@@ -1223,9 +1268,9 @@ public abstract class AbstractObjectSerializer<T> extends Serializer<T> {
       case DispatchId.FLOAT16:
       case DispatchId.BFLOAT16:
       case DispatchId.STRING:
-        return Platform.getObject(targetObject, fieldOffset);
+        return UnsafeOps.getObject(targetObject, fieldOffset);
       default:
-        return copyContext.copyObject(Platform.getObject(targetObject, fieldOffset));
+        return copyContext.copyObject(UnsafeOps.getObject(targetObject, fieldOffset));
     }
   }
 
@@ -1237,18 +1282,18 @@ public abstract class AbstractObjectSerializer<T> extends Serializer<T> {
       try {
         for (RecordComponent component : components) {
           Field field = type.getDeclaredField(component.getName());
-          descriptors.add(
-              new Descriptor(
-                  field, TypeRef.of(field.getAnnotatedType()), component.getAccessor(), null));
+          TypeRef<?> typeRef = TypeUtils.getFieldTypeRef(field);
+          descriptors.add(new Descriptor(field, typeRef, component.getAccessor(), null));
         }
       } catch (NoSuchFieldException e) {
         // impossible
-        Platform.throwException(e);
+        ExceptionUtils.throwException(e);
       }
     } else {
       for (Field field : ReflectionUtils.getFields(type, true)) {
         if (!Modifier.isStatic(field.getModifiers())) {
-          descriptors.add(new Descriptor(field, TypeRef.of(field.getAnnotatedType()), null, null));
+          TypeRef<?> typeRef = TypeUtils.getFieldTypeRef(field);
+          descriptors.add(new Descriptor(field, typeRef, null, null));
         }
       }
     }

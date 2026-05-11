@@ -24,9 +24,8 @@ import java.nio.ByteBuffer;
 import java.nio.channels.ReadableByteChannel;
 import javax.annotation.concurrent.NotThreadSafe;
 import org.apache.fory.exception.DeserializationException;
-import org.apache.fory.memory.ByteBufferUtil;
 import org.apache.fory.memory.MemoryBuffer;
-import org.apache.fory.memory.Platform;
+import org.apache.fory.platform.AndroidSupport;
 import org.apache.fory.util.Preconditions;
 
 @NotThreadSafe
@@ -36,15 +35,29 @@ public class ForyReadableChannel implements ForyStreamReader, ReadableByteChanne
   private ByteBuffer byteBuffer;
 
   public ForyReadableChannel(ReadableByteChannel channel) {
-    this(channel, ByteBuffer.allocateDirect(4096));
+    this(
+        channel,
+        AndroidSupport.IS_ANDROID ? ByteBuffer.allocate(4096) : ByteBuffer.allocateDirect(4096));
   }
 
-  public ForyReadableChannel(ReadableByteChannel channel, ByteBuffer directBuffer) {
+  public ForyReadableChannel(ReadableByteChannel channel, ByteBuffer buffer) {
     Preconditions.checkArgument(
-        directBuffer.isDirect(), "ForyReadableChannel support only direct ByteBuffer.");
+        !buffer.isReadOnly(), "ForyReadableChannel requires writable ByteBuffer.");
     this.channel = channel;
-    this.byteBuffer = directBuffer;
-    this.memoryBuffer = MemoryBuffer.fromDirectByteBuffer(directBuffer, 0, this);
+    if (AndroidSupport.IS_ANDROID && buffer.isDirect()) {
+      buffer = ByteBuffer.allocate(buffer.capacity());
+    }
+    this.byteBuffer = buffer;
+    if (buffer.isDirect()) {
+      this.memoryBuffer = MemoryBuffer.fromDirectByteBuffer(buffer, 0, this);
+    } else if (buffer.hasArray()) {
+      this.memoryBuffer =
+          MemoryBuffer.fromByteArray(
+              buffer.array(), buffer.arrayOffset() + buffer.position(), 0, this);
+    } else {
+      throw new IllegalArgumentException(
+          "ForyReadableChannel requires direct or array-backed ByteBuffer.");
+    }
   }
 
   @Override
@@ -59,11 +72,12 @@ public class ForyReadableChannel implements ForyStreamReader, ReadableByteChanne
             newLimit < MemoryBuffer.BUFFER_GROW_STEP_THRESHOLD
                 ? newLimit << 2
                 : (int) Math.min(newLimit * 1.5d, Integer.MAX_VALUE);
-        ByteBuffer newByteBuf = ByteBuffer.allocateDirect(newSize);
+        ByteBuffer newByteBuf =
+            byteBuf.isDirect() ? ByteBuffer.allocateDirect(newSize) : ByteBuffer.allocate(newSize);
         byteBuf.position(0);
         newByteBuf.put(byteBuf);
         byteBuf = byteBuffer = newByteBuf;
-        memoryBuf.initDirectBuffer(ByteBufferUtil.getAddress(byteBuf), position, byteBuf);
+        memoryBuf.initByteBuffer(byteBuf, position);
       }
       byteBuf.limit(newLimit);
       readFully(byteBuf, minFillSize);
@@ -106,15 +120,53 @@ public class ForyReadableChannel implements ForyStreamReader, ReadableByteChanne
   }
 
   @Override
-  public void readToUnsafe(Object target, long targetPointer, int numBytes) {
+  public void readBooleans(boolean[] dst, int dstIndex, int length) {
+    ensureBuffered(length);
+    memoryBuffer.readBooleans(dst, dstIndex, length);
+  }
+
+  @Override
+  public void readChars(char[] dst, int dstIndex, int length) {
+    ensureBuffered(Math.multiplyExact(length, 2));
+    memoryBuffer.readChars(dst, dstIndex, length);
+  }
+
+  @Override
+  public void readShorts(short[] dst, int dstIndex, int length) {
+    ensureBuffered(Math.multiplyExact(length, 2));
+    memoryBuffer.readShorts(dst, dstIndex, length);
+  }
+
+  @Override
+  public void readInts(int[] dst, int dstIndex, int length) {
+    ensureBuffered(Math.multiplyExact(length, 4));
+    memoryBuffer.readInts(dst, dstIndex, length);
+  }
+
+  @Override
+  public void readLongs(long[] dst, int dstIndex, int length) {
+    ensureBuffered(Math.multiplyExact(length, 8));
+    memoryBuffer.readLongs(dst, dstIndex, length);
+  }
+
+  @Override
+  public void readFloats(float[] dst, int dstIndex, int length) {
+    ensureBuffered(Math.multiplyExact(length, 4));
+    memoryBuffer.readFloats(dst, dstIndex, length);
+  }
+
+  @Override
+  public void readDoubles(double[] dst, int dstIndex, int length) {
+    ensureBuffered(Math.multiplyExact(length, 8));
+    memoryBuffer.readDoubles(dst, dstIndex, length);
+  }
+
+  private void ensureBuffered(int numBytes) {
     MemoryBuffer buf = memoryBuffer;
     int remaining = buf.remaining();
     if (remaining < numBytes) {
       fillBuffer(numBytes - remaining);
     }
-    long address = buf.getUnsafeReaderAddress();
-    Platform.copyMemory(null, address, target, targetPointer, numBytes);
-    buf.increaseReaderIndex(numBytes);
   }
 
   @Override

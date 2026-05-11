@@ -20,6 +20,7 @@
 package org.apache.fory.serializer.collection;
 
 import java.lang.invoke.MethodHandle;
+import java.lang.reflect.Constructor;
 import java.util.Collection;
 import org.apache.fory.Fory;
 import org.apache.fory.annotation.CodegenInvoke;
@@ -29,6 +30,7 @@ import org.apache.fory.context.ReadContext;
 import org.apache.fory.context.WriteContext;
 import org.apache.fory.exception.DeserializationException;
 import org.apache.fory.memory.MemoryBuffer;
+import org.apache.fory.platform.AndroidSupport;
 import org.apache.fory.reflect.ReflectionUtils;
 import org.apache.fory.resolver.ClassResolver;
 import org.apache.fory.resolver.RefMode;
@@ -463,6 +465,17 @@ public abstract class CollectionLikeSerializer<T> extends Serializer<T> {
   public Collection newCollection(ReadContext readContext) {
     MemoryBuffer buffer = readContext.getBuffer();
     numElements = readCollectionSize(buffer);
+    if (AndroidSupport.IS_ANDROID) {
+      try {
+        Constructor<?> constructor = type.getDeclaredConstructor();
+        constructor.setAccessible(true);
+        T instance = (T) constructor.newInstance();
+        readContext.reference(instance);
+        return (Collection) instance;
+      } catch (Throwable e) {
+        throw buildException(e);
+      }
+    }
     if (constructor == null) {
       constructor = ReflectionUtils.getCtrHandle(type, true);
     }
@@ -483,6 +496,15 @@ public abstract class CollectionLikeSerializer<T> extends Serializer<T> {
   /** Create a new empty collection for copy. */
   public Collection newCollection(Collection collection) {
     numElements = collection.size();
+    if (AndroidSupport.IS_ANDROID) {
+      try {
+        Constructor<?> constructor = type.getDeclaredConstructor();
+        constructor.setAccessible(true);
+        return (Collection) constructor.newInstance();
+      } catch (Throwable e) {
+        throw buildException(e);
+      }
+    }
     if (constructor == null) {
       constructor = ReflectionUtils.getCtrHandle(type, true);
     }

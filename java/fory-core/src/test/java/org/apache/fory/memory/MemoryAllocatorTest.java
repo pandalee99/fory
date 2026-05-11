@@ -122,7 +122,7 @@ public class MemoryAllocatorTest {
             // Use default grow logic but with custom marker
             int newSize = newCapacity + 10; // Add 10 as marker
             byte[] data = new byte[newSize];
-            buffer.copyToUnsafe(0, data, Platform.BYTE_ARRAY_OFFSET, buffer.size());
+            buffer.get(0, data, 0, buffer.size());
             buffer.initHeapBuffer(data, 0, data.length);
           }
         };

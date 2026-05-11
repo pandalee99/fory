@@ -40,10 +40,13 @@ import org.apache.fory.context.ReadContext;
 import org.apache.fory.context.WriteContext;
 import org.apache.fory.logging.Logger;
 import org.apache.fory.logging.LoggerFactory;
-import org.apache.fory.memory.Platform;
+import org.apache.fory.platform.AndroidSupport;
+import org.apache.fory.platform.UnsafeOps;
+import org.apache.fory.resolver.TypeInfo;
 import org.apache.fory.resolver.TypeResolver;
 import org.apache.fory.serializer.Serializer;
 import org.apache.fory.util.ExceptionUtils;
+import org.apache.fory.util.Preconditions;
 
 /** Serializer for synchronized Collections and Maps created via Collections. */
 @SuppressWarnings({"rawtypes", "unchecked"})
@@ -60,7 +63,7 @@ public class SynchronizedSerializers {
       String clsName = "java.util.Collections$SynchronizedCollection";
       try {
         SOURCE_COLLECTION_FIELD_OFFSET =
-            Platform.UNSAFE.objectFieldOffset(Class.forName(clsName).getDeclaredField("c"));
+            UnsafeOps.UNSAFE.objectFieldOffset(Class.forName(clsName).getDeclaredField("c"));
       } catch (Exception e) {
         LOG.info("Could not access source collection field in {}", clsName);
         throw new RuntimeException(e);
@@ -68,7 +71,7 @@ public class SynchronizedSerializers {
       clsName = "java.util.Collections$SynchronizedMap";
       try {
         SOURCE_MAP_FIELD_OFFSET =
-            Platform.UNSAFE.objectFieldOffset(Class.forName(clsName).getDeclaredField("m"));
+            UnsafeOps.UNSAFE.objectFieldOffset(Class.forName(clsName).getDeclaredField("m"));
       } catch (Exception e) {
         LOG.info("Could not access source map field in {}", clsName);
         throw new RuntimeException(e);
@@ -91,8 +94,24 @@ public class SynchronizedSerializers {
 
     @Override
     public void write(WriteContext writeContext, Collection object) {
+      Preconditions.checkArgument(object.getClass() == type);
+      if (AndroidSupport.IS_ANDROID) {
+        synchronized (object) {
+          Collection source;
+          if (object instanceof SortedSet) {
+            source = new TreeSet(((SortedSet) object).comparator());
+          } else if (object instanceof Set) {
+            source = new HashSet(object.size());
+          } else {
+            source = new ArrayList(object.size());
+          }
+          source.addAll(object);
+          writeContext.writeRef(source, sourceCollectionTypeInfo(typeResolver, type));
+        }
+        return;
+      }
       // the ordinal could be replaced by s.th. else (e.g. a explicitly managed "id")
-      Object unwrapped = Platform.getObject(object, offset);
+      Object unwrapped = UnsafeOps.getObject(object, offset);
       synchronized (object) {
         writeContext.writeRef(unwrapped);
       }
@@ -106,7 +125,24 @@ public class SynchronizedSerializers {
 
     @Override
     public Collection copy(CopyContext copyContext, Collection object) {
-      final Object collection = Platform.getObject(object, offset);
+      if (AndroidSupport.IS_ANDROID) {
+        synchronized (object) {
+          Collection mutableSource;
+          if (object instanceof SortedSet) {
+            Object comparator = copyContext.copyObject(((SortedSet) object).comparator());
+            mutableSource = new TreeSet((java.util.Comparator) comparator);
+          } else if (object instanceof Set) {
+            mutableSource = new HashSet(object.size());
+          } else {
+            mutableSource = new ArrayList(object.size());
+          }
+          Collection result = (Collection) factory.apply(mutableSource);
+          copyContext.reference(object, result);
+          copyElements(copyContext, object, mutableSource);
+          return result;
+        }
+      }
+      final Object collection = UnsafeOps.getObject(object, offset);
       return (Collection) factory.apply(copyContext.copyObject(collection));
     }
   }
@@ -124,8 +160,22 @@ public class SynchronizedSerializers {
 
     @Override
     public void write(WriteContext writeContext, Map object) {
+      Preconditions.checkArgument(object.getClass() == type);
+      if (AndroidSupport.IS_ANDROID) {
+        synchronized (object) {
+          Map source;
+          if (object instanceof SortedMap) {
+            source = new TreeMap(((SortedMap) object).comparator());
+          } else {
+            source = new HashMap(object.size());
+          }
+          source.putAll(object);
+          writeContext.writeRef(source, sourceMapTypeInfo(typeResolver, type));
+        }
+        return;
+      }
       // the ordinal could be replaced by s.th. else (e.g. a explicitly managed "id")
-      Object unwrapped = Platform.getObject(object, offset);
+      Object unwrapped = UnsafeOps.getObject(object, offset);
       synchronized (object) {
         writeContext.writeRef(unwrapped);
       }
@@ -133,7 +183,22 @@ public class SynchronizedSerializers {
 
     @Override
     public Map copy(CopyContext copyContext, Map originMap) {
-      final Object unwrappedMap = Platform.getObject(originMap, offset);
+      if (AndroidSupport.IS_ANDROID) {
+        synchronized (originMap) {
+          Map mutableSource;
+          if (originMap instanceof SortedMap) {
+            Object comparator = copyContext.copyObject(((SortedMap) originMap).comparator());
+            mutableSource = new TreeMap((java.util.Comparator) comparator);
+          } else {
+            mutableSource = new HashMap(originMap.size());
+          }
+          Map result = (Map) factory.apply(mutableSource);
+          copyContext.reference(originMap, result);
+          copyEntry(copyContext, originMap, mutableSource);
+          return result;
+        }
+      }
+      final Object unwrappedMap = UnsafeOps.getObject(originMap, offset);
       return (Map) factory.apply(copyContext.copyObject(unwrappedMap));
     }
 
@@ -157,10 +222,34 @@ public class SynchronizedSerializers {
       TypeResolver typeResolver, Tuple2<Class<?>, Function> factory) {
     if (Collection.class.isAssignableFrom(factory.f0)) {
       return new SynchronizedCollectionSerializer(
-          typeResolver, factory.f0, factory.f1, Offset.SOURCE_COLLECTION_FIELD_OFFSET);
+          typeResolver,
+          factory.f0,
+          factory.f1,
+          AndroidSupport.IS_ANDROID ? -1 : Offset.SOURCE_COLLECTION_FIELD_OFFSET);
     } else {
       return new SynchronizedMapSerializer(
-          typeResolver, factory.f0, factory.f1, Offset.SOURCE_MAP_FIELD_OFFSET);
+          typeResolver,
+          factory.f0,
+          factory.f1,
+          AndroidSupport.IS_ANDROID ? -1 : Offset.SOURCE_MAP_FIELD_OFFSET);
+    }
+  }
+
+  private static TypeInfo sourceCollectionTypeInfo(TypeResolver typeResolver, Class<?> cls) {
+    if (SortedSet.class.isAssignableFrom(cls)) {
+      return typeResolver.getTypeInfo(TreeSet.class);
+    } else if (Set.class.isAssignableFrom(cls)) {
+      return typeResolver.getTypeInfo(HashSet.class);
+    } else {
+      return typeResolver.getTypeInfo(ArrayList.class);
+    }
+  }
+
+  private static TypeInfo sourceMapTypeInfo(TypeResolver typeResolver, Class<?> cls) {
+    if (SortedMap.class.isAssignableFrom(cls)) {
+      return typeResolver.getTypeInfo(TreeMap.class);
+    } else {
+      return typeResolver.getTypeInfo(HashMap.class);
     }
   }
 

@@ -22,6 +22,7 @@ package org.apache.fory;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
+import java.nio.ByteBuffer;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import javax.annotation.concurrent.NotThreadSafe;
@@ -50,6 +51,7 @@ import org.apache.fory.logging.Logger;
 import org.apache.fory.logging.LoggerFactory;
 import org.apache.fory.memory.MemoryBuffer;
 import org.apache.fory.memory.MemoryUtils;
+import org.apache.fory.platform.AndroidSupport;
 import org.apache.fory.resolver.ClassResolver;
 import org.apache.fory.resolver.SharedRegistry;
 import org.apache.fory.resolver.TypeChecker;
@@ -259,13 +261,6 @@ public final class Fory implements BaseFory {
   }
 
   @Override
-  public MemoryBuffer serialize(Object obj, long address, int size) {
-    MemoryBuffer buffer = MemoryUtils.buffer(address, size);
-    serialize(buffer, obj, null);
-    return buffer;
-  }
-
-  @Override
   public byte[] serialize(Object obj) {
     MemoryBuffer buf = getBuffer();
     buf.writerIndex(0);
@@ -365,6 +360,11 @@ public final class Fory implements BaseFory {
   }
 
   @Override
+  public Object deserialize(ByteBuffer byteBuffer) {
+    return deserialize(MemoryUtils.wrap(byteBuffer));
+  }
+
+  @Override
   public <T> T deserialize(byte[] bytes, Class<T> type) {
     return deserialize(MemoryUtils.wrap(bytes), type);
   }
@@ -411,11 +411,6 @@ public final class Fory implements BaseFory {
   @Override
   public Object deserialize(byte[] bytes, Iterable<MemoryBuffer> outOfBandBuffers) {
     return deserialize(MemoryUtils.wrap(bytes), outOfBandBuffers);
-  }
-
-  @Override
-  public Object deserialize(long address, int size) {
-    return deserialize(MemoryUtils.buffer(address, size), (Iterable<MemoryBuffer>) null);
   }
 
   @Override
@@ -554,7 +549,7 @@ public final class Fory implements BaseFory {
 
   private void serializeToStream(OutputStream outputStream, Consumer<MemoryBuffer> function) {
     MemoryBuffer buf = getBuffer();
-    if (outputStream.getClass() == ByteArrayOutputStream.class) {
+    if (!AndroidSupport.IS_ANDROID && outputStream.getClass() == ByteArrayOutputStream.class) {
       byte[] oldBytes = buf.getHeapMemory(); // Note: This should not be null.
       assert oldBytes != null;
       MemoryUtils.wrap((ByteArrayOutputStream) outputStream, buf);

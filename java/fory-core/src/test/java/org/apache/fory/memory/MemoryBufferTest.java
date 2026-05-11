@@ -23,8 +23,14 @@ import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertThrows;
 import static org.testng.Assert.assertTrue;
 
+import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.IOException;
+import java.io.InputStream;
 import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
 import java.util.Random;
+import org.apache.fory.platform.AndroidSupport;
 import org.testng.Assert;
 import org.testng.annotations.Test;
 
@@ -76,36 +82,173 @@ public class MemoryBufferTest {
   }
 
   @Test
-  public void testBufferUnsafeWrite() {
-    {
-      MemoryBuffer buffer = MemoryUtils.buffer(1024);
-      byte[] heapMemory = buffer.getHeapMemory();
-      long pos = buffer.getUnsafeAddress();
-      assertEquals(buffer._unsafeWriterAddress(), pos);
-      assertEquals(buffer.getUnsafeReaderAddress(), pos);
-      Platform.putByte(heapMemory, pos, Byte.MIN_VALUE);
-      pos += 1;
-      Platform.putShort(heapMemory, pos, Short.MAX_VALUE);
-      pos += 2;
-      LittleEndian.putInt32(heapMemory, pos, Integer.MIN_VALUE);
-      pos += 4;
-      Platform.putLong(heapMemory, pos, Long.MAX_VALUE);
-      pos += 8;
-      LittleEndian.putFloat64(heapMemory, pos, -1);
-      pos += 8;
-      LittleEndian.putFloat32(heapMemory, pos, -1);
-      assertEquals(buffer.getFloat32((int) (pos - Platform.BYTE_ARRAY_OFFSET)), -1);
-      pos -= 8;
-      assertEquals(buffer.getFloat64((int) (pos - Platform.BYTE_ARRAY_OFFSET)), -1);
-      pos -= 8;
-      assertEquals(LittleEndian.getInt64(heapMemory, pos), Long.MAX_VALUE);
-      pos -= 4;
-      assertEquals(LittleEndian.getInt32(heapMemory, pos), Integer.MIN_VALUE);
-      pos -= 2;
-      assertEquals(buffer.getInt16((int) (pos - Platform.BYTE_ARRAY_OFFSET)), Short.MAX_VALUE);
-      pos -= 1;
-      assertEquals(buffer.getByte((int) (pos - Platform.BYTE_ARRAY_OFFSET)), Byte.MIN_VALUE);
+  public void testAndroidHeapMemoryBufferPaths() throws Exception {
+    String javaBin =
+        System.getProperty("java.home") + File.separator + "bin" + File.separator + "java";
+    Process process =
+        new ProcessBuilder(
+                javaBin,
+                "-cp",
+                System.getProperty("java.class.path"),
+                AndroidHeapMemoryBufferProbe.class.getName())
+            .redirectErrorStream(true)
+            .start();
+    String output = readFully(process.getInputStream());
+    assertEquals(process.waitFor(), 0, output);
+  }
+
+  private static String readFully(InputStream inputStream) throws IOException {
+    ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+    byte[] buffer = new byte[1024];
+    int read;
+    while ((read = inputStream.read(buffer)) != -1) {
+      outputStream.write(buffer, 0, read);
     }
+    return new String(outputStream.toByteArray(), StandardCharsets.UTF_8);
+  }
+
+  public static final class AndroidHeapMemoryBufferProbe {
+    public static void main(String[] args) {
+      System.setProperty("java.vm.name", "Dalvik");
+      System.setProperty("java.runtime.name", "Android Runtime");
+      if (!AndroidSupport.IS_ANDROID) {
+        throw new AssertionError("AndroidSupport should detect Dalvik runtime");
+      }
+
+      MemoryBuffer buffer = MemoryBuffer.newHeapBuffer(1);
+      buffer.writeBoolean(true);
+      buffer.writeByte(Byte.MIN_VALUE);
+      buffer.writeChar('a');
+      buffer.writeInt16(Short.MAX_VALUE);
+      buffer.writeInt32(Integer.MAX_VALUE);
+      buffer.writeInt64(Long.MAX_VALUE);
+      buffer.writeFloat32(Float.MAX_VALUE);
+      buffer.writeFloat64(Double.MAX_VALUE);
+      check(buffer.readBoolean(), true);
+      check(buffer.readByte(), Byte.MIN_VALUE);
+      check(buffer.readChar(), 'a');
+      check(buffer.readInt16(), Short.MAX_VALUE);
+      check(buffer.readInt32(), Integer.MAX_VALUE);
+      check(buffer.readInt64(), Long.MAX_VALUE);
+      check(buffer.readFloat32(), Float.MAX_VALUE);
+      check(buffer.readFloat64(), Double.MAX_VALUE);
+
+      buffer = MemoryBuffer.newHeapBuffer(32);
+      buffer.putByte(0, (byte) 7);
+      buffer.putInt16(1, (short) 8);
+      buffer.putInt32(3, 9);
+      buffer.putInt64(7, 10L);
+      check(buffer.getByte(0), (byte) 7);
+      check(buffer.getInt16(1), (short) 8);
+      check(buffer.getInt32(3), 9);
+      check(buffer.getInt64(7), 10L);
+
+      MemoryBuffer slice = buffer.slice(3, 4);
+      slice.putInt32(0, 11);
+      check(buffer.getInt32(3), 11);
+
+      buffer = MemoryBuffer.newHeapBuffer(1);
+      check(buffer.writeVarUInt32(-1), 5);
+      check(buffer.writeVarInt32(Integer.MIN_VALUE), 5);
+      check(buffer.writeVarUInt64(-1), 9);
+      check(buffer.writeVarInt64(Long.MIN_VALUE), 9);
+      check(buffer.writeTaggedInt64(Long.MAX_VALUE), 9);
+      check(buffer.writeTaggedUInt64(Long.MAX_VALUE), 9);
+      check(buffer.readVarUInt32(), -1);
+      check(buffer.readVarInt32(), Integer.MIN_VALUE);
+      check(buffer.readVarUInt64(), -1L);
+      check(buffer.readVarInt64(), Long.MIN_VALUE);
+      check(buffer.readTaggedInt64(), Long.MAX_VALUE);
+      check(buffer.readTaggedUInt64(), Long.MAX_VALUE);
+
+      buffer = MemoryBuffer.newHeapBuffer(1);
+      check(buffer.writeVarUInt32Aligned(Integer.MAX_VALUE), 8);
+      check(buffer.readAlignedVarUInt32(), Integer.MAX_VALUE);
+
+      buffer = MemoryBuffer.newHeapBuffer(1);
+      buffer.writeVarUInt32(3);
+      buffer.writeBytes(new byte[] {1, 2, 3});
+      check(buffer.readBinarySize(), 3);
+      check(buffer.readBytes(3), new byte[] {1, 2, 3});
+
+      buffer = MemoryBuffer.newHeapBuffer(1);
+      buffer.writeInt64(0x0102030405060708L);
+      check(buffer.readBytesAsInt64(3), 0x060708L);
+
+      MemoryBuffer source = MemoryBuffer.fromByteArray(new byte[] {1, 2, 3, 4});
+      MemoryBuffer target = MemoryBuffer.newHeapBuffer(4);
+      source.copyTo(0, target, 0, 4);
+      check(target.equalTo(new byte[] {1, 2, 3, 4}, 0, 0, 4), true);
+      check(source.equalTo(target, 0, 0, 4), true);
+      check(source.getBytes(1, 2), new byte[] {2, 3});
+
+      assertThrows(
+          UnsupportedOperationException.class, () -> source.copyToUnsafe(0, new byte[4], 0, 4));
+      assertThrows(
+          UnsupportedOperationException.class, () -> target.copyFromUnsafe(0, new byte[4], 0, 4));
+    }
+
+    private static void check(boolean actual, boolean expected) {
+      if (actual != expected) {
+        throw new AssertionError("Expected " + expected + " but got " + actual);
+      }
+    }
+
+    private static void check(byte actual, byte expected) {
+      if (actual != expected) {
+        throw new AssertionError("Expected " + expected + " but got " + actual);
+      }
+    }
+
+    private static void check(char actual, char expected) {
+      if (actual != expected) {
+        throw new AssertionError("Expected " + expected + " but got " + actual);
+      }
+    }
+
+    private static void check(short actual, short expected) {
+      if (actual != expected) {
+        throw new AssertionError("Expected " + expected + " but got " + actual);
+      }
+    }
+
+    private static void check(int actual, int expected) {
+      if (actual != expected) {
+        throw new AssertionError("Expected " + expected + " but got " + actual);
+      }
+    }
+
+    private static void check(long actual, long expected) {
+      if (actual != expected) {
+        throw new AssertionError("Expected " + expected + " but got " + actual);
+      }
+    }
+
+    private static void check(float actual, float expected) {
+      if (Float.floatToRawIntBits(actual) != Float.floatToRawIntBits(expected)) {
+        throw new AssertionError("Expected " + expected + " but got " + actual);
+      }
+    }
+
+    private static void check(double actual, double expected) {
+      if (Double.doubleToRawLongBits(actual) != Double.doubleToRawLongBits(expected)) {
+        throw new AssertionError("Expected " + expected + " but got " + actual);
+      }
+    }
+
+    private static void check(byte[] actual, byte[] expected) {
+      if (!java.util.Arrays.equals(actual, expected)) {
+        throw new AssertionError(
+            "Expected "
+                + java.util.Arrays.toString(expected)
+                + " but got "
+                + java.util.Arrays.toString(actual));
+      }
+    }
+  }
+
+  @Test
+  public void testBufferUnsafeWrite() {
     {
       MemoryBuffer buffer = MemoryUtils.buffer(1024);
       int index = 0;
@@ -174,24 +317,6 @@ public class MemoryBufferTest {
       direct.position(5);
       MemoryBuffer buffer = MemoryUtils.wrap(direct);
       assertEquals(buffer.sliceAsByteBuffer(), direct);
-      Assert.assertEquals(
-          ByteBufferUtil.getAddress(buffer.sliceAsByteBuffer()),
-          ByteBufferUtil.getAddress(direct) + 5);
-    }
-    {
-      long address = 0;
-      try {
-        address = Platform.allocateMemory(10);
-        ByteBuffer direct = ByteBufferUtil.wrapDirectBuffer(address, 10);
-        direct.put(data);
-        direct.flip();
-        direct.position(5);
-        MemoryBuffer buffer = MemoryUtils.wrap(direct);
-        assertEquals(buffer.sliceAsByteBuffer(), direct);
-        assertEquals(ByteBufferUtil.getAddress(buffer.sliceAsByteBuffer()), address + 5);
-      } finally {
-        Platform.freeMemory(address);
-      }
     }
   }
 
@@ -236,10 +361,12 @@ public class MemoryBufferTest {
     for (int i = 0; i < chars.length; i++) {
       chars[i] = (char) random.nextInt();
     }
-    buf.writePrimitiveArrayWithSize(bytes, Platform.BYTE_ARRAY_OFFSET, bytes.length);
-    buf.writePrimitiveArrayWithSize(chars, Platform.CHAR_ARRAY_OFFSET, chars.length * 2);
+    buf.writeBytesWithSize(bytes);
+    buf.writeCharsWithSize(chars);
     assertEquals(bytes, buf.readBytesAndSize());
-    assertEquals(chars, buf.readChars(buf.readVarUInt32()));
+    char[] readChars = new char[buf.readVarUInt32() >>> 1];
+    buf.readChars(readChars, 0, readChars.length);
+    assertEquals(chars, readChars);
   }
 
   @Test

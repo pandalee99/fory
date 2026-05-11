@@ -27,10 +27,11 @@ import org.apache.fory.context.ReadContext;
 import org.apache.fory.context.WriteContext;
 import org.apache.fory.exception.DeserializationException;
 import org.apache.fory.memory.MemoryBuffer;
-import org.apache.fory.memory.Platform;
+import org.apache.fory.memory.NativeByteOrder;
 import org.apache.fory.resolver.TypeResolver;
 import org.apache.fory.type.BFloat16Array;
 import org.apache.fory.type.Float16Array;
+import org.apache.fory.type.Types;
 
 /** Serializers for primitive dense-array carriers. */
 public final class PrimitiveArraySerializers {
@@ -38,13 +39,14 @@ public final class PrimitiveArraySerializers {
 
   public static final class PrimitiveArrayBufferObject implements BufferObject {
     private final Object array;
-    private final int offset;
+    private final int primitiveArrayTypeId;
     private final int elemSize;
     private final int length;
 
-    public PrimitiveArrayBufferObject(Object array, int offset, int elemSize, int length) {
+    public PrimitiveArrayBufferObject(
+        Object array, int primitiveArrayTypeId, int elemSize, int length) {
       this.array = array;
-      this.offset = offset;
+      this.primitiveArrayTypeId = primitiveArrayTypeId;
       this.elemSize = elemSize;
       this.length = length;
     }
@@ -56,12 +58,40 @@ public final class PrimitiveArraySerializers {
 
     @Override
     public void writeTo(MemoryBuffer buffer) {
-      int size = Math.multiplyExact(length, elemSize);
-      int writerIndex = buffer.writerIndex();
-      int end = writerIndex + size;
-      buffer.ensure(end);
-      buffer.copyFromUnsafe(writerIndex, array, offset, size);
-      buffer.writerIndex(end);
+      switch (primitiveArrayTypeId) {
+        case Types.BOOL_ARRAY:
+          buffer.writeBooleans((boolean[]) array, 0, length);
+          return;
+        case Types.INT8_ARRAY:
+        case Types.UINT8_ARRAY:
+          buffer.writeBytes((byte[]) array, 0, length);
+          return;
+        case Types.UINT16_ARRAY:
+          buffer.writeChars((char[]) array, 0, length);
+          return;
+        case Types.INT16_ARRAY:
+        case Types.FLOAT16_ARRAY:
+        case Types.BFLOAT16_ARRAY:
+          buffer.writeShorts((short[]) array, 0, length);
+          return;
+        case Types.INT32_ARRAY:
+        case Types.UINT32_ARRAY:
+          buffer.writeInts((int[]) array, 0, length);
+          return;
+        case Types.INT64_ARRAY:
+        case Types.UINT64_ARRAY:
+          buffer.writeLongs((long[]) array, 0, length);
+          return;
+        case Types.FLOAT32_ARRAY:
+          buffer.writeFloats((float[]) array, 0, length);
+          return;
+        case Types.FLOAT64_ARRAY:
+          buffer.writeDoubles((double[]) array, 0, length);
+          return;
+        default:
+          throw new IllegalArgumentException(
+              "Unsupported primitive array type " + primitiveArrayTypeId);
+      }
     }
 
     @Override
@@ -127,11 +157,10 @@ public final class PrimitiveArraySerializers {
     public void write(WriteContext writeContext, boolean[] value) {
       MemoryBuffer buffer = writeContext.getBuffer();
       if (writeContext.getBufferCallback() == null) {
-        int size = Math.multiplyExact(value.length, 1);
-        buffer.writePrimitiveArrayWithSize(value, Platform.BOOLEAN_ARRAY_OFFSET, size);
+        buffer.writeBooleansWithSize(value);
       } else {
         writeContext.writeBufferObject(
-            new PrimitiveArrayBufferObject(value, Platform.BOOLEAN_ARRAY_OFFSET, 1, value.length));
+            new PrimitiveArrayBufferObject(value, Types.BOOL_ARRAY, 1, value.length));
       }
     }
 
@@ -150,18 +179,15 @@ public final class PrimitiveArraySerializers {
           throwBinarySizeLimitExceeded(size, maxBinarySize);
         }
         boolean[] values = new boolean[size];
-        buf.copyToUnsafe(0, values, Platform.BOOLEAN_ARRAY_OFFSET, size);
+        buf.readBooleanArrayPayload(values, size);
         return values;
       }
       int size = buffer.readVarUInt32Small7();
       if (size < 0 || size > maxBinarySize) {
         throwInvalidBinarySize(size, maxBinarySize);
       }
-      if (size > buffer.remaining()) {
-        buffer.checkReadableBytes(size);
-      }
       boolean[] values = new boolean[size];
-      buffer.readToUnsafe(values, Platform.BOOLEAN_ARRAY_OFFSET, size);
+      buffer.readBooleanArrayPayload(values, size);
       return values;
     }
   }
@@ -175,11 +201,10 @@ public final class PrimitiveArraySerializers {
     public void write(WriteContext writeContext, byte[] value) {
       MemoryBuffer buffer = writeContext.getBuffer();
       if (writeContext.getBufferCallback() == null) {
-        int size = Math.multiplyExact(value.length, 1);
-        buffer.writePrimitiveArrayWithSize(value, Platform.BYTE_ARRAY_OFFSET, size);
+        buffer.writeBytesWithSize(value);
       } else {
         writeContext.writeBufferObject(
-            new PrimitiveArrayBufferObject(value, Platform.BYTE_ARRAY_OFFSET, 1, value.length));
+            new PrimitiveArrayBufferObject(value, Types.INT8_ARRAY, 1, value.length));
       }
     }
 
@@ -198,18 +223,15 @@ public final class PrimitiveArraySerializers {
           throwBinarySizeLimitExceeded(size, maxBinarySize);
         }
         byte[] values = new byte[size];
-        buf.copyToUnsafe(0, values, Platform.BYTE_ARRAY_OFFSET, size);
+        buf.readByteArrayPayload(values, size);
         return values;
       }
       int size = buffer.readVarUInt32Small7();
       if (size < 0 || size > maxBinarySize) {
         throwInvalidBinarySize(size, maxBinarySize);
       }
-      if (size > buffer.remaining()) {
-        buffer.checkReadableBytes(size);
-      }
       byte[] values = new byte[size];
-      buffer.readToUnsafe(values, Platform.BYTE_ARRAY_OFFSET, size);
+      buffer.readByteArrayPayload(values, size);
       return values;
     }
   }
@@ -226,15 +248,14 @@ public final class PrimitiveArraySerializers {
         throw new UnsupportedOperationException();
       }
       if (writeContext.getBufferCallback() == null) {
-        int size = Math.multiplyExact(value.length, 2);
-        if (Platform.IS_LITTLE_ENDIAN) {
-          buffer.writePrimitiveArrayWithSize(value, Platform.CHAR_ARRAY_OFFSET, size);
+        if (NativeByteOrder.IS_LITTLE_ENDIAN) {
+          buffer.writeCharsWithSize(value);
         } else {
           writeCharBySwapEndian(buffer, value);
         }
       } else {
         writeContext.writeBufferObject(
-            new PrimitiveArrayBufferObject(value, Platform.CHAR_ARRAY_OFFSET, 2, value.length));
+            new PrimitiveArrayBufferObject(value, Types.UINT16_ARRAY, 2, value.length));
       }
     }
 
@@ -271,8 +292,8 @@ public final class PrimitiveArraySerializers {
         }
         int numElements = size >>> 1;
         char[] values = new char[numElements];
-        if (Platform.IS_LITTLE_ENDIAN) {
-          buf.copyToUnsafe(0, values, Platform.CHAR_ARRAY_OFFSET, size);
+        if (NativeByteOrder.IS_LITTLE_ENDIAN) {
+          buf.readCharArrayPayload(values, size);
         } else {
           readCharBySwapEndian(buf, values, numElements);
         }
@@ -285,13 +306,10 @@ public final class PrimitiveArraySerializers {
       if (size < 0 || size > maxBinarySize) {
         throwInvalidBinarySize(size, maxBinarySize);
       }
-      if (size > buffer.remaining()) {
-        buffer.checkReadableBytes(size);
-      }
       int numElements = size >>> 1;
       char[] values = new char[numElements];
-      if (Platform.IS_LITTLE_ENDIAN) {
-        buffer.readToUnsafe(values, Platform.CHAR_ARRAY_OFFSET, size);
+      if (NativeByteOrder.IS_LITTLE_ENDIAN) {
+        buffer.readCharArrayPayload(values, size);
       } else {
         readCharBySwapEndian(buffer, values, numElements);
       }
@@ -299,13 +317,13 @@ public final class PrimitiveArraySerializers {
     }
 
     private void readCharBySwapEndian(MemoryBuffer buffer, char[] values, int numElements) {
-      int idx = buffer.readerIndex();
-      int size = numElements * 2;
-      buffer.checkReadableBytes(size);
+      int size = numElements << 1;
+      // Do not loop through MemoryBuffer._unsafeGet* here; those helpers carry Android dispatch.
+      // Copy the payload once, then byte-swap the destination values locally.
+      buffer.readCharArrayPayload(values, size);
       for (int i = 0; i < numElements; i++) {
-        values[i] = (char) buffer._unsafeGetInt16(idx + i * 2);
+        values[i] = Character.reverseBytes(values[i]);
       }
-      buffer._increaseReaderIndexUnsafe(size);
     }
   }
 
@@ -343,15 +361,14 @@ public final class PrimitiveArraySerializers {
           writeInt32Compressed(buffer, value);
           return;
         }
-        int size = Math.multiplyExact(value.length, 4);
-        if (Platform.IS_LITTLE_ENDIAN) {
-          buffer.writePrimitiveArrayWithSize(value, Platform.INT_ARRAY_OFFSET, size);
+        if (NativeByteOrder.IS_LITTLE_ENDIAN) {
+          buffer.writeIntsWithSize(value);
         } else {
           writeInt32BySwapEndian(buffer, value);
         }
       } else {
         writeContext.writeBufferObject(
-            new PrimitiveArrayBufferObject(value, Platform.INT_ARRAY_OFFSET, 4, value.length));
+            new PrimitiveArrayBufferObject(value, Types.INT32_ARRAY, 4, value.length));
       }
     }
 
@@ -386,8 +403,8 @@ public final class PrimitiveArraySerializers {
         int numElements = size >>> 2;
         int[] values = new int[numElements];
         if (size > 0) {
-          if (Platform.IS_LITTLE_ENDIAN) {
-            buf.copyToUnsafe(0, values, Platform.INT_ARRAY_OFFSET, size);
+          if (NativeByteOrder.IS_LITTLE_ENDIAN) {
+            buf.readInt32ArrayPayload(values, size);
           } else {
             readInt32BySwapEndian(buf, values, numElements);
           }
@@ -404,14 +421,11 @@ public final class PrimitiveArraySerializers {
       if (size < 0 || size > maxBinarySize) {
         throwInvalidBinarySize(size, maxBinarySize);
       }
-      if (size > buffer.remaining()) {
-        buffer.checkReadableBytes(size);
-      }
       int numElements = size >>> 2;
       int[] values = new int[numElements];
       if (size > 0) {
-        if (Platform.IS_LITTLE_ENDIAN) {
-          buffer.readToUnsafe(values, Platform.INT_ARRAY_OFFSET, size);
+        if (NativeByteOrder.IS_LITTLE_ENDIAN) {
+          buffer.readInt32ArrayPayload(values, size);
         } else {
           readInt32BySwapEndian(buffer, values, numElements);
         }
@@ -420,13 +434,13 @@ public final class PrimitiveArraySerializers {
     }
 
     private void readInt32BySwapEndian(MemoryBuffer buffer, int[] values, int numElements) {
-      int idx = buffer.readerIndex();
-      int size = numElements * 4;
-      buffer.checkReadableBytes(size);
+      int size = numElements << 2;
+      // Do not loop through MemoryBuffer._unsafeGet* here; those helpers carry Android dispatch.
+      // Copy the payload once, then byte-swap the destination values locally.
+      buffer.readInt32ArrayPayload(values, size);
       for (int i = 0; i < numElements; i++) {
-        values[i] = buffer._unsafeGetInt32(idx + i * 4);
+        values[i] = Integer.reverseBytes(values[i]);
       }
-      buffer._increaseReaderIndexUnsafe(size);
     }
 
     private void writeInt32Compressed(MemoryBuffer buffer, int[] value) {
@@ -468,15 +482,14 @@ public final class PrimitiveArraySerializers {
           writeInt64Compressed(buffer, value, config.longEncoding());
           return;
         }
-        int size = Math.multiplyExact(value.length, 8);
-        if (Platform.IS_LITTLE_ENDIAN) {
-          buffer.writePrimitiveArrayWithSize(value, Platform.LONG_ARRAY_OFFSET, size);
+        if (NativeByteOrder.IS_LITTLE_ENDIAN) {
+          buffer.writeLongsWithSize(value);
         } else {
           writeInt64BySwapEndian(buffer, value);
         }
       } else {
         writeContext.writeBufferObject(
-            new PrimitiveArrayBufferObject(value, Platform.LONG_ARRAY_OFFSET, 8, value.length));
+            new PrimitiveArrayBufferObject(value, Types.INT64_ARRAY, 8, value.length));
       }
     }
 
@@ -511,8 +524,8 @@ public final class PrimitiveArraySerializers {
         int numElements = size >>> 3;
         long[] values = new long[numElements];
         if (size > 0) {
-          if (Platform.IS_LITTLE_ENDIAN) {
-            buf.copyToUnsafe(0, values, Platform.LONG_ARRAY_OFFSET, size);
+          if (NativeByteOrder.IS_LITTLE_ENDIAN) {
+            buf.readInt64ArrayPayload(values, size);
           } else {
             readInt64BySwapEndian(buf, values, numElements);
           }
@@ -529,14 +542,11 @@ public final class PrimitiveArraySerializers {
       if (size < 0 || size > maxBinarySize) {
         throwInvalidBinarySize(size, maxBinarySize);
       }
-      if (size > buffer.remaining()) {
-        buffer.checkReadableBytes(size);
-      }
       int numElements = size >>> 3;
       long[] values = new long[numElements];
       if (size > 0) {
-        if (Platform.IS_LITTLE_ENDIAN) {
-          buffer.readToUnsafe(values, Platform.LONG_ARRAY_OFFSET, size);
+        if (NativeByteOrder.IS_LITTLE_ENDIAN) {
+          buffer.readInt64ArrayPayload(values, size);
         } else {
           readInt64BySwapEndian(buffer, values, numElements);
         }
@@ -545,13 +555,13 @@ public final class PrimitiveArraySerializers {
     }
 
     private void readInt64BySwapEndian(MemoryBuffer buffer, long[] values, int numElements) {
-      int idx = buffer.readerIndex();
-      int size = numElements * 8;
-      buffer.checkReadableBytes(size);
+      int size = numElements << 3;
+      // Do not loop through MemoryBuffer._unsafeGet* here; those helpers carry Android dispatch.
+      // Copy the payload once, then byte-swap the destination values locally.
+      buffer.readInt64ArrayPayload(values, size);
       for (int i = 0; i < numElements; i++) {
-        values[i] = buffer._unsafeGetInt64(idx + i * 8);
+        values[i] = Long.reverseBytes(values[i]);
       }
-      buffer._increaseReaderIndexUnsafe(size);
     }
 
     private void writeInt64Compressed(
@@ -597,15 +607,14 @@ public final class PrimitiveArraySerializers {
     public void write(WriteContext writeContext, float[] value) {
       MemoryBuffer buffer = writeContext.getBuffer();
       if (writeContext.getBufferCallback() == null) {
-        int size = Math.multiplyExact(value.length, 4);
-        if (Platform.IS_LITTLE_ENDIAN) {
-          buffer.writePrimitiveArrayWithSize(value, Platform.FLOAT_ARRAY_OFFSET, size);
+        if (NativeByteOrder.IS_LITTLE_ENDIAN) {
+          buffer.writeFloatsWithSize(value);
         } else {
           writeFloat32BySwapEndian(buffer, value);
         }
       } else {
         writeContext.writeBufferObject(
-            new PrimitiveArrayBufferObject(value, Platform.FLOAT_ARRAY_OFFSET, 4, value.length));
+            new PrimitiveArrayBufferObject(value, Types.FLOAT32_ARRAY, 4, value.length));
       }
     }
 
@@ -639,8 +648,8 @@ public final class PrimitiveArraySerializers {
         }
         int numElements = size >>> 2;
         float[] values = new float[numElements];
-        if (Platform.IS_LITTLE_ENDIAN) {
-          buf.copyToUnsafe(0, values, Platform.FLOAT_ARRAY_OFFSET, size);
+        if (NativeByteOrder.IS_LITTLE_ENDIAN) {
+          buf.readFloat32ArrayPayload(values, size);
         } else {
           readFloat32BySwapEndian(buf, values, numElements);
         }
@@ -653,13 +662,10 @@ public final class PrimitiveArraySerializers {
       if (size < 0 || size > maxBinarySize) {
         throwInvalidBinarySize(size, maxBinarySize);
       }
-      if (size > buffer.remaining()) {
-        buffer.checkReadableBytes(size);
-      }
       int numElements = size >>> 2;
       float[] values = new float[numElements];
-      if (Platform.IS_LITTLE_ENDIAN) {
-        buffer.readToUnsafe(values, Platform.FLOAT_ARRAY_OFFSET, size);
+      if (NativeByteOrder.IS_LITTLE_ENDIAN) {
+        buffer.readFloat32ArrayPayload(values, size);
       } else {
         readFloat32BySwapEndian(buffer, values, numElements);
       }
@@ -667,13 +673,13 @@ public final class PrimitiveArraySerializers {
     }
 
     private void readFloat32BySwapEndian(MemoryBuffer buffer, float[] values, int numElements) {
-      int idx = buffer.readerIndex();
-      int size = numElements * 4;
-      buffer.checkReadableBytes(size);
+      int size = numElements << 2;
+      // Do not loop through MemoryBuffer._unsafeGet* here; those helpers carry Android dispatch.
+      // Copy the payload once, then byte-swap the destination values locally.
+      buffer.readFloat32ArrayPayload(values, size);
       for (int i = 0; i < numElements; i++) {
-        values[i] = Float.intBitsToFloat(buffer._unsafeGetInt32(idx + i * 4));
+        values[i] = Float.intBitsToFloat(Integer.reverseBytes(Float.floatToRawIntBits(values[i])));
       }
-      buffer._increaseReaderIndexUnsafe(size);
     }
   }
 
@@ -686,15 +692,14 @@ public final class PrimitiveArraySerializers {
     public void write(WriteContext writeContext, double[] value) {
       MemoryBuffer buffer = writeContext.getBuffer();
       if (writeContext.getBufferCallback() == null) {
-        int size = Math.multiplyExact(value.length, 8);
-        if (Platform.IS_LITTLE_ENDIAN) {
-          buffer.writePrimitiveArrayWithSize(value, Platform.DOUBLE_ARRAY_OFFSET, size);
+        if (NativeByteOrder.IS_LITTLE_ENDIAN) {
+          buffer.writeDoublesWithSize(value);
         } else {
           writeFloat64BySwapEndian(buffer, value);
         }
       } else {
         writeContext.writeBufferObject(
-            new PrimitiveArrayBufferObject(value, Platform.DOUBLE_ARRAY_OFFSET, 8, value.length));
+            new PrimitiveArrayBufferObject(value, Types.FLOAT64_ARRAY, 8, value.length));
       }
     }
 
@@ -728,8 +733,8 @@ public final class PrimitiveArraySerializers {
         }
         int numElements = size >>> 3;
         double[] values = new double[numElements];
-        if (Platform.IS_LITTLE_ENDIAN) {
-          buf.copyToUnsafe(0, values, Platform.DOUBLE_ARRAY_OFFSET, size);
+        if (NativeByteOrder.IS_LITTLE_ENDIAN) {
+          buf.readFloat64ArrayPayload(values, size);
         } else {
           readFloat64BySwapEndian(buf, values, numElements);
         }
@@ -742,13 +747,10 @@ public final class PrimitiveArraySerializers {
       if (size < 0 || size > maxBinarySize) {
         throwInvalidBinarySize(size, maxBinarySize);
       }
-      if (size > buffer.remaining()) {
-        buffer.checkReadableBytes(size);
-      }
       int numElements = size >>> 3;
       double[] values = new double[numElements];
-      if (Platform.IS_LITTLE_ENDIAN) {
-        buffer.readToUnsafe(values, Platform.DOUBLE_ARRAY_OFFSET, size);
+      if (NativeByteOrder.IS_LITTLE_ENDIAN) {
+        buffer.readFloat64ArrayPayload(values, size);
       } else {
         readFloat64BySwapEndian(buffer, values, numElements);
       }
@@ -756,13 +758,14 @@ public final class PrimitiveArraySerializers {
     }
 
     private void readFloat64BySwapEndian(MemoryBuffer buffer, double[] values, int numElements) {
-      int idx = buffer.readerIndex();
-      int size = numElements * 8;
-      buffer.checkReadableBytes(size);
+      int size = numElements << 3;
+      // Do not loop through MemoryBuffer._unsafeGet* here; those helpers carry Android dispatch.
+      // Copy the payload once, then byte-swap the destination values locally.
+      buffer.readFloat64ArrayPayload(values, size);
       for (int i = 0; i < numElements; i++) {
-        values[i] = Double.longBitsToDouble(buffer._unsafeGetInt64(idx + i * 8));
+        values[i] =
+            Double.longBitsToDouble(Long.reverseBytes(Double.doubleToRawLongBits(values[i])));
       }
-      buffer._increaseReaderIndexUnsafe(size);
     }
   }
 
@@ -812,15 +815,14 @@ public final class PrimitiveArraySerializers {
   private static void writeShortBits(WriteContext writeContext, short[] value) {
     MemoryBuffer buffer = writeContext.getBuffer();
     if (writeContext.getBufferCallback() == null) {
-      int size = Math.multiplyExact(value.length, 2);
-      if (Platform.IS_LITTLE_ENDIAN) {
-        buffer.writePrimitiveArrayWithSize(value, Platform.SHORT_ARRAY_OFFSET, size);
+      if (NativeByteOrder.IS_LITTLE_ENDIAN) {
+        buffer.writeShortsWithSize(value);
       } else {
         writeInt16BySwapEndian(buffer, value);
       }
     } else {
       writeContext.writeBufferObject(
-          new PrimitiveArrayBufferObject(value, Platform.SHORT_ARRAY_OFFSET, 2, value.length));
+          new PrimitiveArrayBufferObject(value, Types.INT16_ARRAY, 2, value.length));
     }
   }
 
@@ -848,8 +850,8 @@ public final class PrimitiveArraySerializers {
       }
       int numElements = size >>> 1;
       short[] values = new short[numElements];
-      if (Platform.IS_LITTLE_ENDIAN) {
-        buf.copyToUnsafe(0, values, Platform.SHORT_ARRAY_OFFSET, size);
+      if (NativeByteOrder.IS_LITTLE_ENDIAN) {
+        buf.readInt16ArrayPayload(values, size);
       } else {
         readInt16BySwapEndian(buf, values, numElements);
       }
@@ -862,13 +864,10 @@ public final class PrimitiveArraySerializers {
     if (size < 0 || size > maxBinarySize) {
       throwInvalidBinarySize(size, maxBinarySize);
     }
-    if (size > buffer.remaining()) {
-      buffer.checkReadableBytes(size);
-    }
     int numElements = size >>> 1;
     short[] values = new short[numElements];
-    if (Platform.IS_LITTLE_ENDIAN) {
-      buffer.readToUnsafe(values, Platform.SHORT_ARRAY_OFFSET, size);
+    if (NativeByteOrder.IS_LITTLE_ENDIAN) {
+      buffer.readInt16ArrayPayload(values, size);
     } else {
       readInt16BySwapEndian(buffer, values, numElements);
     }
@@ -876,13 +875,13 @@ public final class PrimitiveArraySerializers {
   }
 
   private static void readInt16BySwapEndian(MemoryBuffer buffer, short[] values, int numElements) {
-    int idx = buffer.readerIndex();
-    int size = numElements * 2;
-    buffer.checkReadableBytes(size);
+    int size = numElements << 1;
+    // Do not loop through MemoryBuffer._unsafeGet* here; those helpers carry Android dispatch.
+    // Copy the payload once, then byte-swap the destination values locally.
+    buffer.readInt16ArrayPayload(values, size);
     for (int i = 0; i < numElements; i++) {
-      values[i] = buffer._unsafeGetInt16(idx + i * 2);
+      values[i] = Short.reverseBytes(values[i]);
     }
-    buffer._increaseReaderIndexUnsafe(size);
   }
 
   public static void registerDefaultSerializers(TypeResolver resolver) {
@@ -898,18 +897,7 @@ public final class PrimitiveArraySerializers {
     resolver.registerInternalSerializer(BFloat16Array.class, new BFloat16ArraySerializer(resolver));
   }
 
-  static void writePrimitiveArray(
-      MemoryBuffer buffer, Object arr, int offset, int numElements, int elemSize) {
-    int size = Math.multiplyExact(numElements, elemSize);
-    buffer.writeVarUInt32Small7(size);
-    int writerIndex = buffer.writerIndex();
-    int end = writerIndex + size;
-    buffer.ensure(end);
-    buffer.copyFromUnsafe(writerIndex, arr, offset, size);
-    buffer.writerIndex(end);
-  }
-
   public static PrimitiveArrayBufferObject byteArrayBufferObject(byte[] array) {
-    return new PrimitiveArrayBufferObject(array, Platform.BYTE_ARRAY_OFFSET, 1, array.length);
+    return new PrimitiveArrayBufferObject(array, Types.INT8_ARRAY, 1, array.length);
   }
 }

@@ -24,7 +24,6 @@ import java.io.InputStream;
 import java.nio.ByteBuffer;
 import javax.annotation.concurrent.NotThreadSafe;
 import org.apache.fory.memory.MemoryBuffer;
-import org.apache.fory.memory.Platform;
 
 /**
  * A buffered stream by fory. Do not use original {@link InputStream} when this stream object
@@ -116,16 +115,53 @@ public class ForyInputStream extends InputStream implements ForyStreamReader {
   }
 
   @Override
-  public void readToUnsafe(Object target, long targetPointer, int numBytes) {
+  public void readBooleans(boolean[] dst, int dstIndex, int length) {
+    ensureBuffered(length);
+    buffer.readBooleans(dst, dstIndex, length);
+  }
+
+  @Override
+  public void readChars(char[] dst, int dstIndex, int length) {
+    ensureBuffered(Math.multiplyExact(length, 2));
+    buffer.readChars(dst, dstIndex, length);
+  }
+
+  @Override
+  public void readShorts(short[] dst, int dstIndex, int length) {
+    ensureBuffered(Math.multiplyExact(length, 2));
+    buffer.readShorts(dst, dstIndex, length);
+  }
+
+  @Override
+  public void readInts(int[] dst, int dstIndex, int length) {
+    ensureBuffered(Math.multiplyExact(length, 4));
+    buffer.readInts(dst, dstIndex, length);
+  }
+
+  @Override
+  public void readLongs(long[] dst, int dstIndex, int length) {
+    ensureBuffered(Math.multiplyExact(length, 8));
+    buffer.readLongs(dst, dstIndex, length);
+  }
+
+  @Override
+  public void readFloats(float[] dst, int dstIndex, int length) {
+    ensureBuffered(Math.multiplyExact(length, 4));
+    buffer.readFloats(dst, dstIndex, length);
+  }
+
+  @Override
+  public void readDoubles(double[] dst, int dstIndex, int length) {
+    ensureBuffered(Math.multiplyExact(length, 8));
+    buffer.readDoubles(dst, dstIndex, length);
+  }
+
+  private void ensureBuffered(int numBytes) {
     MemoryBuffer buf = buffer;
     int remaining = buf.remaining();
     if (remaining < numBytes) {
       fillBuffer(numBytes - remaining);
     }
-    byte[] heapMemory = buf.getHeapMemory();
-    long address = buf.getUnsafeReaderAddress();
-    Platform.copyMemory(heapMemory, address, target, targetPointer, numBytes);
-    buf.increaseReaderIndex(numBytes);
   }
 
   @Override

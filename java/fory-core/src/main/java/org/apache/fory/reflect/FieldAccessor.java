@@ -22,6 +22,7 @@ package org.apache.fory.reflect;
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
 import java.lang.reflect.Field;
+import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
@@ -32,9 +33,11 @@ import java.util.function.ToIntFunction;
 import java.util.function.ToLongFunction;
 import org.apache.fory.collection.ClassValueCache;
 import org.apache.fory.collection.Tuple2;
-import org.apache.fory.memory.Platform;
+import org.apache.fory.exception.ForyException;
+import org.apache.fory.platform.AndroidSupport;
+import org.apache.fory.platform.GraalvmSupport;
+import org.apache.fory.platform.UnsafeOps;
 import org.apache.fory.type.TypeUtils;
-import org.apache.fory.util.GraalvmSupport;
 import org.apache.fory.util.Preconditions;
 import org.apache.fory.util.function.Functions;
 import org.apache.fory.util.function.ToByteFunction;
@@ -47,8 +50,7 @@ import org.apache.fory.util.unsafe._JDKAccess;
 /**
  * Field accessor for primitive types and object types.
  *
- * <p>Note for primitive types, there will be box/unbox overhead. Use {@link UnsafeFieldAccessor} if
- * possible to avoid this overhead.
+ * <p>Note for primitive types, there will be box/unbox overhead.
  */
 @SuppressWarnings({"unchecked", "rawtypes"})
 public abstract class FieldAccessor {
@@ -83,20 +85,21 @@ public abstract class FieldAccessor {
   }
 
   public final void putObject(Object targetObject, Object object) {
-    // For primitive fields, we must use set() which calls the correct Platform.putXxx method.
-    // Platform.putObject writes object references, not primitive values.
+    // For primitive fields, we must use set() which calls the correct UnsafeOps.putXxx method.
+    // UnsafeOps.putObject writes object references, not primitive values.
     if (fieldOffset != -1 && !field.getType().isPrimitive()) {
-      Platform.putObject(targetObject, fieldOffset, object);
+      UnsafeOps.putObject(targetObject, fieldOffset, object);
     } else {
       set(targetObject, object);
     }
   }
 
   public final Object getObject(Object targetObject) {
-    // For primitive fields, we must use get() which calls the correct Platform.getXxx method
-    // and returns the boxed value. Platform.getObject interprets primitive bytes as object refs.
+    // For primitive fields, we must use get() which calls the correct UnsafeOps.getXxx method
+    // and returns the boxed value. UnsafeOps.getObject interprets primitive bytes as object
+    // refs.
     if (fieldOffset != -1 && !field.getType().isPrimitive()) {
-      return Platform.getObject(targetObject, fieldOffset);
+      return UnsafeOps.getObject(targetObject, fieldOffset);
     } else {
       return get(targetObject);
     }
@@ -133,6 +136,9 @@ public abstract class FieldAccessor {
 
   public static FieldAccessor createAccessor(Field field) {
     if (RecordUtils.isRecord(field.getDeclaringClass())) {
+      if (AndroidSupport.IS_ANDROID || GraalvmSupport.IN_GRAALVM_NATIVE_IMAGE) {
+        return new ReflectiveRecordFieldAccessor(field);
+      }
       Object getter;
       try {
         Method getterMethod = field.getDeclaringClass().getDeclaredMethod(field.getName());
@@ -160,7 +166,12 @@ public abstract class FieldAccessor {
         return new ObjectGetter(field, (Function) getter);
       }
     }
-    if (GraalvmSupport.isGraalBuildtime()) {
+    if (AndroidSupport.IS_ANDROID) {
+      // Android field access must stay reflection-owned: no Unsafe offsets, trusted lookups,
+      // generated accessors, or primitive-specific reflection subclasses.
+      return new ReflectionFieldAccessor(field);
+    }
+    if (GraalvmSupport.isGraalBuildTime()) {
       return new GeneratedAccessor(field);
     }
     if (field.getType() == boolean.class) {
@@ -184,6 +195,38 @@ public abstract class FieldAccessor {
     }
   }
 
+  static final class ReflectiveRecordFieldAccessor extends FieldGetter {
+    private final Method accessor;
+
+    ReflectiveRecordFieldAccessor(Field field) {
+      super(field, null);
+      try {
+        accessor = field.getDeclaringClass().getDeclaredMethod(field.getName());
+        accessor.setAccessible(true);
+      } catch (NoSuchMethodException | RuntimeException e) {
+        throw new ForyException("Failed to create record field accessor for " + field, e);
+      }
+    }
+
+    @Override
+    public Object get(Object obj) {
+      checkObj(obj);
+      try {
+        return accessor.invoke(obj);
+      } catch (IllegalAccessException | IllegalArgumentException e) {
+        throw new ForyException("Failed to read record field reflectively: " + field, e);
+      } catch (InvocationTargetException e) {
+        throw new ForyException(
+            "Record accessor threw while reading field: " + field, e.getCause());
+      }
+    }
+
+    @Override
+    public void set(Object obj, Object value) {
+      throw new UnsupportedOperationException("Record field is read-only: " + field);
+    }
+  }
+
   /** Primitive boolean accessor. */
   public static class BooleanAccessor extends FieldAccessor {
     public BooleanAccessor(Field field) {
@@ -194,13 +237,13 @@ public abstract class FieldAccessor {
     @Override
     public Object get(Object obj) {
       checkObj(obj);
-      return Platform.getBoolean(obj, fieldOffset);
+      return UnsafeOps.getBoolean(obj, fieldOffset);
     }
 
     @Override
     public void set(Object obj, Object value) {
       checkObj(obj);
-      Platform.putBoolean(obj, fieldOffset, (Boolean) value);
+      UnsafeOps.putBoolean(obj, fieldOffset, (Boolean) value);
     }
   }
 
@@ -230,13 +273,13 @@ public abstract class FieldAccessor {
     @Override
     public Byte get(Object obj) {
       checkObj(obj);
-      return Platform.getByte(obj, fieldOffset);
+      return UnsafeOps.getByte(obj, fieldOffset);
     }
 
     @Override
     public void set(Object obj, Object value) {
       checkObj(obj);
-      Platform.putByte(obj, fieldOffset, (Byte) value);
+      UnsafeOps.putByte(obj, fieldOffset, (Byte) value);
     }
   }
 
@@ -266,13 +309,13 @@ public abstract class FieldAccessor {
     @Override
     public Character get(Object obj) {
       checkObj(obj);
-      return Platform.getChar(obj, fieldOffset);
+      return UnsafeOps.getChar(obj, fieldOffset);
     }
 
     @Override
     public void set(Object obj, Object value) {
       checkObj(obj);
-      Platform.putChar(obj, fieldOffset, (Character) value);
+      UnsafeOps.putChar(obj, fieldOffset, (Character) value);
     }
   }
 
@@ -301,13 +344,13 @@ public abstract class FieldAccessor {
     @Override
     public Short get(Object obj) {
       checkObj(obj);
-      return Platform.getShort(obj, fieldOffset);
+      return UnsafeOps.getShort(obj, fieldOffset);
     }
 
     @Override
     public void set(Object obj, Object value) {
       checkObj(obj);
-      Platform.putShort(obj, fieldOffset, (Short) value);
+      UnsafeOps.putShort(obj, fieldOffset, (Short) value);
     }
   }
 
@@ -336,13 +379,13 @@ public abstract class FieldAccessor {
     @Override
     public Integer get(Object obj) {
       checkObj(obj);
-      return Platform.getInt(obj, fieldOffset);
+      return UnsafeOps.getInt(obj, fieldOffset);
     }
 
     @Override
     public void set(Object obj, Object value) {
       checkObj(obj);
-      Platform.putInt(obj, fieldOffset, (Integer) value);
+      UnsafeOps.putInt(obj, fieldOffset, (Integer) value);
     }
   }
 
@@ -371,13 +414,13 @@ public abstract class FieldAccessor {
     @Override
     public Long get(Object obj) {
       checkObj(obj);
-      return Platform.getLong(obj, fieldOffset);
+      return UnsafeOps.getLong(obj, fieldOffset);
     }
 
     @Override
     public void set(Object obj, Object value) {
       checkObj(obj);
-      Platform.putLong(obj, fieldOffset, (Long) value);
+      UnsafeOps.putLong(obj, fieldOffset, (Long) value);
     }
   }
 
@@ -406,13 +449,13 @@ public abstract class FieldAccessor {
     @Override
     public Object get(Object obj) {
       checkObj(obj);
-      return Platform.getFloat(obj, fieldOffset);
+      return UnsafeOps.getFloat(obj, fieldOffset);
     }
 
     @Override
     public void set(Object obj, Object value) {
       checkObj(obj);
-      Platform.putFloat(obj, fieldOffset, (Float) value);
+      UnsafeOps.putFloat(obj, fieldOffset, (Float) value);
     }
   }
 
@@ -441,13 +484,13 @@ public abstract class FieldAccessor {
     @Override
     public Object get(Object obj) {
       checkObj(obj);
-      return Platform.getDouble(obj, fieldOffset);
+      return UnsafeOps.getDouble(obj, fieldOffset);
     }
 
     @Override
     public void set(Object obj, Object value) {
       checkObj(obj);
-      Platform.putDouble(obj, fieldOffset, (Double) value);
+      UnsafeOps.putDouble(obj, fieldOffset, (Double) value);
     }
   }
 
@@ -476,13 +519,13 @@ public abstract class FieldAccessor {
     @Override
     public Object get(Object obj) {
       checkObj(obj);
-      return Platform.getObject(obj, fieldOffset);
+      return UnsafeOps.getObject(obj, fieldOffset);
     }
 
     @Override
     public void set(Object obj, Object value) {
       checkObj(obj);
-      Platform.putObject(obj, fieldOffset, value);
+      UnsafeOps.putObject(obj, fieldOffset, value);
     }
   }
 

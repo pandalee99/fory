@@ -386,7 +386,8 @@ Primitive byte arrays are encoded as:
 
 ### Primitive arrays
 
-Primitive arrays use `writePrimitiveArrayWithSize` unless compression is enabled:
+Primitive arrays write a byte-length prefix followed by the little-endian primitive payload unless
+compression is enabled:
 
 ```
 | varuint32: byte_length | raw bytes |
@@ -463,6 +464,36 @@ Entries with null key or null value are encoded as special single-entry chunks w
 - null key and null value: `KV_NULL` header only
 
 These chunks always represent exactly one entry.
+
+`EnumMap` has an EnumMap-owned one-byte payload mode before its map payload:
+
+- `0`: normal payload, then `varuint32_small7` size, key enum class info, and the map chunks above.
+- `1`: Java-serialized empty `EnumMap` payload. Android uses this mode when an empty map has no
+  public key from which to derive the enum class. Readers on Android and JVM must accept both modes.
+
+### JDK collection/map wrappers and views
+
+Java native mode may use specialized serializers for JDK collection/map wrappers and views. These
+serializers do not introduce a new collection/map protocol branch; they write ordinary object,
+collection, or map payloads in serializer-owned value slots.
+
+- Unmodifiable and synchronized wrappers keep the outer wrapper type metadata. The wrapper value
+  payload is the wrapped source collection or map written as a normal referencable object. Android
+  writers use public source implementations for that payload: `ArrayList`, `HashSet`, `TreeSet`,
+  `HashMap`, or `TreeMap`. Readers rewrap the source through `Collections.unmodifiable*` or
+  `Collections.synchronized*`.
+- Recognized sublist view classes keep their outer sublist type metadata and use a
+  serializer-local one-byte payload mode. Mode `0` writes visible elements as a normal collection
+  payload. Mode `1` writes view metadata as `offset`, `size`, and source list reference. Android
+  writers use mode `0`; JVM writers may use mode `1` when the view fields match the supported JDK
+  shape. Readers on Android and JVM must accept both modes.
+- `Collections.newSetFromMap` writes a backing-map payload. Android writers use `HashMap` backing
+  type metadata.
+- Immutable JDK collection serializers keep ordinary list/set/map payload semantics. Android readers
+  materialize public unmodifiable containers when JDK internal immutable constructors are not
+  available.
+
+Xlang mode uses the xlang collection/map protocol and does not encode Java wrapper or view internals.
 
 ### Objects and structs
 

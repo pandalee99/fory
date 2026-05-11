@@ -1,58 +1,48 @@
 /*
- * Licensed to the Apache Software Foundation (ASF) under one or more
- * contributor license agreements.  See the NOTICE file distributed with
- * this work for additional information regarding copyright ownership.
- * The ASF licenses this file to You under the Apache License, Version 2.0
- * (the "License"); you may not use this file except in compliance with
- * the License.  You may obtain a copy of the License at
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
  *
- *    http://www.apache.org/licenses/LICENSE-2.0
+ *   http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
  */
 
-package org.apache.fory.memory;
+package org.apache.fory.platform;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
-import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
+import org.apache.fory.annotation.Internal;
+import org.apache.fory.util.ExceptionUtils;
 import org.apache.fory.util.unsafe._JDKAccess;
 import sun.misc.Unsafe;
 
-// Derived from
-// https://github.com/apache/spark/blob/921fb289f003317d89120faa6937e4abd359195c/common/unsafe/src/main/java/org/apache/spark/unsafe/Platform.java.
+// Derived from Apache Spark's unsafe memory utility.
 
 /** A utility class for unsafe memory operations. */
+@Internal
 @SuppressWarnings("restriction")
-public final class Platform {
+public final class UnsafeOps {
   @SuppressWarnings("restriction")
   public static final Unsafe UNSAFE = _JDKAccess.UNSAFE;
 
-  public static final int JAVA_VERSION = _JDKAccess.JAVA_VERSION;
-  public static final boolean IS_LITTLE_ENDIAN = ByteOrder.nativeOrder() == ByteOrder.LITTLE_ENDIAN;
-  public static final Class<?> HEAP_BYTE_BUFFER_CLASS = ByteBuffer.allocate(1).getClass();
-  public static final Class<?> DIRECT_BYTE_BUFFER_CLASS = ByteBuffer.allocateDirect(1).getClass();
   public static final int BOOLEAN_ARRAY_OFFSET;
-
   public static final int BYTE_ARRAY_OFFSET;
-
   public static final int CHAR_ARRAY_OFFSET;
-
   public static final int SHORT_ARRAY_OFFSET;
-
   public static final int INT_ARRAY_OFFSET;
-
   public static final int LONG_ARRAY_OFFSET;
-
   public static final int FLOAT_ARRAY_OFFSET;
-
   public static final int DOUBLE_ARRAY_OFFSET;
-
   private static final boolean unaligned;
 
   /**
@@ -60,6 +50,8 @@ public final class Platform {
    * safepoint polling during a large copy.
    */
   private static final long UNSAFE_COPY_THRESHOLD = 1024L * 1024L;
+
+  private UnsafeOps() {}
 
   static {
     BOOLEAN_ARRAY_OFFSET = UNSAFE.arrayBaseOffset(boolean[].class);
@@ -72,7 +64,7 @@ public final class Platform {
     DOUBLE_ARRAY_OFFSET = UNSAFE.arrayBaseOffset(double[].class);
   }
 
-  // This requires `JAVA_VERSION` and `_UNSAFE`.
+  // This requires `JdkVersion.MAJOR_VERSION` and `_UNSAFE`.
   static {
     boolean unalign;
     String arch = System.getProperty("os.arch", "");
@@ -84,10 +76,11 @@ public final class Platform {
       try {
         Class<?> bitsClass =
             Class.forName("java.nio.Bits", false, ClassLoader.getSystemClassLoader());
-        if (JAVA_VERSION >= 9) {
+        if (JdkVersion.MAJOR_VERSION >= 9) {
           // Java 9/10 and 11/12 have different field names.
           Field unalignedField =
-              bitsClass.getDeclaredField(JAVA_VERSION >= 11 ? "UNALIGNED" : "unaligned");
+              bitsClass.getDeclaredField(
+                  JdkVersion.MAJOR_VERSION >= 11 ? "UNALIGNED" : "unaligned");
           unalign =
               UNSAFE.getBoolean(
                   UNSAFE.staticFieldBase(unalignedField), UNSAFE.staticFieldOffset(unalignedField));
@@ -150,11 +143,11 @@ public final class Platform {
   }
 
   public static char getChar(Object obj, long offset) {
-    return Platform.UNSAFE.getChar(obj, offset);
+    return UnsafeOps.UNSAFE.getChar(obj, offset);
   }
 
   public static void putChar(Object obj, long offset, char value) {
-    Platform.UNSAFE.putChar(obj, offset, value);
+    UnsafeOps.UNSAFE.putChar(obj, offset, value);
   }
 
   public static long getLong(Object object, long offset) {
@@ -253,8 +246,8 @@ public final class Platform {
     // check if stars align and we can get both offsets to be aligned
     if ((leftOffset % 8) == (rightOffset % 8)) {
       while ((leftOffset + i) % 8 != 0 && i < length) {
-        if (Platform.getByte(leftBase, leftOffset + i)
-            != Platform.getByte(rightBase, rightOffset + i)) {
+        if (UnsafeOps.getByte(leftBase, leftOffset + i)
+            != UnsafeOps.getByte(rightBase, rightOffset + i)) {
           return false;
         }
         i += 1;
@@ -263,8 +256,8 @@ public final class Platform {
     // for architectures that support unaligned accesses, chew it up 8 bytes at a time
     if (unaligned || (((leftOffset + i) % 8 == 0) && ((rightOffset + i) % 8 == 0))) {
       while (i <= length - 8) {
-        if (Platform.getLong(leftBase, leftOffset + i)
-            != Platform.getLong(rightBase, rightOffset + i)) {
+        if (UnsafeOps.getLong(leftBase, leftOffset + i)
+            != UnsafeOps.getLong(rightBase, rightOffset + i)) {
           return false;
         }
         i += 8;
@@ -273,8 +266,8 @@ public final class Platform {
     // this will finish off the unaligned comparisons, or do the entire aligned
     // comparison whichever is needed.
     while (i < length) {
-      if (Platform.getByte(leftBase, leftOffset + i)
-          != Platform.getByte(rightBase, rightOffset + i)) {
+      if (UnsafeOps.getByte(leftBase, leftOffset + i)
+          != UnsafeOps.getByte(rightBase, rightOffset + i)) {
         return false;
       }
       i += 1;
@@ -282,17 +275,12 @@ public final class Platform {
     return true;
   }
 
-  /** Raises an exception bypassing compiler checks for checked exceptions. */
-  public static void throwException(Throwable t) {
-    UNSAFE.throwException(t);
-  }
-
   /** Create an instance of <code>type</code>. This method don't call constructor. */
   public static <T> T newInstance(Class<T> type) {
     try {
       return type.cast(UNSAFE.allocateInstance(type));
     } catch (InstantiationException e) {
-      throwException(e);
+      ExceptionUtils.throwException(e);
     }
     throw new IllegalStateException("unreachable");
   }

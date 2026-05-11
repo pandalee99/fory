@@ -39,7 +39,9 @@ import org.apache.fory.context.ReadContext;
 import org.apache.fory.context.WriteContext;
 import org.apache.fory.logging.Logger;
 import org.apache.fory.logging.LoggerFactory;
-import org.apache.fory.memory.Platform;
+import org.apache.fory.platform.AndroidSupport;
+import org.apache.fory.platform.UnsafeOps;
+import org.apache.fory.resolver.TypeInfo;
 import org.apache.fory.resolver.TypeResolver;
 import org.apache.fory.serializer.Serializer;
 import org.apache.fory.util.ExceptionUtils;
@@ -61,7 +63,7 @@ public class UnmodifiableSerializers {
       String clsName = "java.util.Collections$UnmodifiableCollection";
       try {
         SOURCE_COLLECTION_FIELD_OFFSET =
-            Platform.UNSAFE.objectFieldOffset(Class.forName(clsName).getDeclaredField("c"));
+            UnsafeOps.UNSAFE.objectFieldOffset(Class.forName(clsName).getDeclaredField("c"));
       } catch (Exception e) {
         LOG.info("Could not access source collection field in {}", clsName);
         throw new RuntimeException(e);
@@ -70,7 +72,7 @@ public class UnmodifiableSerializers {
       try {
         // UnmodifiableSortedMap/UnmodifiableNavigableMap extends UnmodifiableMap
         SOURCE_MAP_FIELD_OFFSET =
-            Platform.UNSAFE.objectFieldOffset(Class.forName(clsName).getDeclaredField("m"));
+            UnsafeOps.UNSAFE.objectFieldOffset(Class.forName(clsName).getDeclaredField("m"));
       } catch (Exception e) {
         LOG.info("Could not access source map field in {}", clsName);
         throw new RuntimeException(e);
@@ -93,7 +95,20 @@ public class UnmodifiableSerializers {
     @Override
     public void write(WriteContext writeContext, Collection value) {
       Preconditions.checkArgument(value.getClass() == type);
-      writeContext.writeRef(Platform.getObject(value, offset));
+      if (AndroidSupport.IS_ANDROID) {
+        Collection source;
+        if (value instanceof SortedSet) {
+          source = new TreeSet(((SortedSet) value).comparator());
+        } else if (value instanceof Set) {
+          source = new HashSet(value.size());
+        } else {
+          source = new ArrayList(value.size());
+        }
+        source.addAll(value);
+        writeContext.writeRef(source, sourceCollectionTypeInfo(typeResolver, type));
+        return;
+      }
+      writeContext.writeRef(UnsafeOps.getObject(value, offset));
     }
 
     @Override
@@ -103,7 +118,23 @@ public class UnmodifiableSerializers {
 
     @Override
     public Collection copy(CopyContext copyContext, Collection object) {
-      return (Collection) factory.apply(copyContext.copyObject(Platform.getObject(object, offset)));
+      if (AndroidSupport.IS_ANDROID) {
+        Collection mutableSource;
+        if (object instanceof SortedSet) {
+          Object comparator = copyContext.copyObject(((SortedSet) object).comparator());
+          mutableSource = new TreeSet((java.util.Comparator) comparator);
+        } else if (object instanceof Set) {
+          mutableSource = new HashSet(object.size());
+        } else {
+          mutableSource = new ArrayList(object.size());
+        }
+        Collection result = (Collection) factory.apply(mutableSource);
+        copyContext.reference(object, result);
+        copyElements(copyContext, object, mutableSource);
+        return result;
+      }
+      return (Collection)
+          factory.apply(copyContext.copyObject(UnsafeOps.getObject(object, offset)));
     }
   }
 
@@ -121,12 +152,36 @@ public class UnmodifiableSerializers {
     @Override
     public void write(WriteContext writeContext, Map value) {
       Preconditions.checkArgument(value.getClass() == type);
-      writeContext.writeRef(Platform.getObject(value, offset));
+      if (AndroidSupport.IS_ANDROID) {
+        Map source;
+        if (value instanceof SortedMap) {
+          source = new TreeMap(((SortedMap) value).comparator());
+        } else {
+          source = new HashMap(value.size());
+        }
+        source.putAll(value);
+        writeContext.writeRef(source, sourceMapTypeInfo(typeResolver, type));
+        return;
+      }
+      writeContext.writeRef(UnsafeOps.getObject(value, offset));
     }
 
     @Override
     public Map copy(CopyContext copyContext, Map originMap) {
-      return (Map) factory.apply(copyContext.copyObject(Platform.getObject(originMap, offset)));
+      if (AndroidSupport.IS_ANDROID) {
+        Map mutableSource;
+        if (originMap instanceof SortedMap) {
+          Object comparator = copyContext.copyObject(((SortedMap) originMap).comparator());
+          mutableSource = new TreeMap((java.util.Comparator) comparator);
+        } else {
+          mutableSource = new HashMap(originMap.size());
+        }
+        Map result = (Map) factory.apply(mutableSource);
+        copyContext.reference(originMap, result);
+        copyEntry(copyContext, originMap, mutableSource);
+        return result;
+      }
+      return (Map) factory.apply(copyContext.copyObject(UnsafeOps.getObject(originMap, offset)));
     }
 
     @Override
@@ -148,10 +203,34 @@ public class UnmodifiableSerializers {
       TypeResolver typeResolver, Tuple2<Class<?>, Function> factory) {
     if (Collection.class.isAssignableFrom(factory.f0)) {
       return new UnmodifiableCollectionSerializer(
-          typeResolver, factory.f0, factory.f1, Offset.SOURCE_COLLECTION_FIELD_OFFSET);
+          typeResolver,
+          factory.f0,
+          factory.f1,
+          AndroidSupport.IS_ANDROID ? -1 : Offset.SOURCE_COLLECTION_FIELD_OFFSET);
     } else {
       return new UnmodifiableMapSerializer(
-          typeResolver, factory.f0, factory.f1, Offset.SOURCE_MAP_FIELD_OFFSET);
+          typeResolver,
+          factory.f0,
+          factory.f1,
+          AndroidSupport.IS_ANDROID ? -1 : Offset.SOURCE_MAP_FIELD_OFFSET);
+    }
+  }
+
+  private static TypeInfo sourceCollectionTypeInfo(TypeResolver typeResolver, Class<?> cls) {
+    if (SortedSet.class.isAssignableFrom(cls)) {
+      return typeResolver.getTypeInfo(TreeSet.class);
+    } else if (Set.class.isAssignableFrom(cls)) {
+      return typeResolver.getTypeInfo(HashSet.class);
+    } else {
+      return typeResolver.getTypeInfo(ArrayList.class);
+    }
+  }
+
+  private static TypeInfo sourceMapTypeInfo(TypeResolver typeResolver, Class<?> cls) {
+    if (SortedMap.class.isAssignableFrom(cls)) {
+      return typeResolver.getTypeInfo(TreeMap.class);
+    } else {
+      return typeResolver.getTypeInfo(HashMap.class);
     }
   }
 

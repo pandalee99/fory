@@ -22,6 +22,8 @@ package org.apache.fory.memory;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.nio.ByteBuffer;
+import org.apache.fory.platform.AndroidSupport;
+import org.apache.fory.platform.UnsafeOps;
 import org.apache.fory.util.Preconditions;
 
 /** Memory utils for fory. */
@@ -29,10 +31,6 @@ public class MemoryUtils {
 
   public static MemoryBuffer buffer(int size) {
     return wrap(new byte[size]);
-  }
-
-  public static MemoryBuffer buffer(long address, int size) {
-    return MemoryBuffer.fromNativeAddress(address, size);
   }
 
   /**
@@ -58,11 +56,18 @@ public class MemoryUtils {
    * @param buffer a direct buffer or heap buffer
    */
   public static MemoryBuffer wrap(ByteBuffer buffer) {
-    if (buffer.isDirect()) {
+    if (AndroidSupport.IS_ANDROID) {
+      // Android ByteBuffer roots copy into a Fory-owned heap buffer; never read direct-buffer
+      // native
+      // addresses or depend on read-only buffers exposing arrays.
+      return copyToHeapBuffer(buffer);
+    } else if (buffer.isDirect()) {
       return MemoryBuffer.fromByteBuffer(buffer);
-    } else {
+    } else if (buffer.hasArray()) {
       int offset = buffer.arrayOffset() + buffer.position();
       return MemoryBuffer.fromByteArray(buffer.array(), offset, buffer.remaining());
+    } else {
+      return copyToHeapBuffer(buffer);
     }
   }
 
@@ -77,15 +82,15 @@ public class MemoryUtils {
     static {
       try {
         BAS_BUF_BUF =
-            Platform.objectFieldOffset(ByteArrayOutputStream.class.getDeclaredField("buf"));
+            UnsafeOps.objectFieldOffset(ByteArrayOutputStream.class.getDeclaredField("buf"));
         BAS_BUF_COUNT =
-            Platform.objectFieldOffset(ByteArrayOutputStream.class.getDeclaredField("count"));
+            UnsafeOps.objectFieldOffset(ByteArrayOutputStream.class.getDeclaredField("count"));
         BIS_BUF_BUF =
-            Platform.objectFieldOffset(ByteArrayInputStream.class.getDeclaredField("buf"));
+            UnsafeOps.objectFieldOffset(ByteArrayInputStream.class.getDeclaredField("buf"));
         BIS_BUF_POS =
-            Platform.objectFieldOffset(ByteArrayInputStream.class.getDeclaredField("pos"));
+            UnsafeOps.objectFieldOffset(ByteArrayInputStream.class.getDeclaredField("pos"));
         BIS_BUF_COUNT =
-            Platform.objectFieldOffset(ByteArrayInputStream.class.getDeclaredField("count"));
+            UnsafeOps.objectFieldOffset(ByteArrayInputStream.class.getDeclaredField("count"));
       } catch (NoSuchFieldException e) {
         throw new RuntimeException(e);
       }
@@ -97,9 +102,13 @@ public class MemoryUtils {
    * will be the count of stream.
    */
   public static void wrap(ByteArrayOutputStream stream, MemoryBuffer buffer) {
+    if (AndroidSupport.IS_ANDROID) {
+      throw new UnsupportedOperationException(
+          "ByteArrayOutputStream direct wrapping is not supported on Android");
+    }
     Preconditions.checkNotNull(stream);
-    byte[] buf = (byte[]) Platform.getObject(stream, Offset.BAS_BUF_BUF);
-    int count = Platform.getInt(stream, Offset.BAS_BUF_COUNT);
+    byte[] buf = (byte[]) UnsafeOps.getObject(stream, Offset.BAS_BUF_BUF);
+    int count = UnsafeOps.getInt(stream, Offset.BAS_BUF_COUNT);
     buffer.pointTo(buf, 0, buf.length);
     buffer.writerIndex(count);
   }
@@ -109,11 +118,15 @@ public class MemoryUtils {
    * the writerIndex of buffer.
    */
   public static void wrap(MemoryBuffer buffer, ByteArrayOutputStream stream) {
+    if (AndroidSupport.IS_ANDROID) {
+      throw new UnsupportedOperationException(
+          "ByteArrayOutputStream direct wrapping is not supported on Android");
+    }
     Preconditions.checkNotNull(stream);
     byte[] bytes = buffer.getHeapMemory();
     Preconditions.checkNotNull(bytes);
-    Platform.putObject(stream, Offset.BAS_BUF_BUF, bytes);
-    Platform.putInt(stream, Offset.BAS_BUF_COUNT, buffer.writerIndex());
+    UnsafeOps.putObject(stream, Offset.BAS_BUF_BUF, bytes);
+    UnsafeOps.putInt(stream, Offset.BAS_BUF_COUNT, buffer.writerIndex());
   }
 
   /**
@@ -121,11 +134,22 @@ public class MemoryUtils {
    * be the pos of stream.
    */
   public static void wrap(ByteArrayInputStream stream, MemoryBuffer buffer) {
+    if (AndroidSupport.IS_ANDROID) {
+      throw new UnsupportedOperationException(
+          "ByteArrayInputStream direct wrapping is not supported on Android");
+    }
     Preconditions.checkNotNull(stream);
-    byte[] buf = (byte[]) Platform.getObject(stream, Offset.BIS_BUF_BUF);
-    int count = Platform.getInt(stream, Offset.BIS_BUF_COUNT);
-    int pos = Platform.getInt(stream, Offset.BIS_BUF_POS);
+    byte[] buf = (byte[]) UnsafeOps.getObject(stream, Offset.BIS_BUF_BUF);
+    int count = UnsafeOps.getInt(stream, Offset.BIS_BUF_COUNT);
+    int pos = UnsafeOps.getInt(stream, Offset.BIS_BUF_POS);
     buffer.pointTo(buf, 0, count);
     buffer.readerIndex(pos);
+  }
+
+  private static MemoryBuffer copyToHeapBuffer(ByteBuffer buffer) {
+    ByteBuffer duplicate = buffer.duplicate();
+    byte[] bytes = new byte[duplicate.remaining()];
+    duplicate.get(bytes);
+    return MemoryBuffer.fromByteArray(bytes);
   }
 }

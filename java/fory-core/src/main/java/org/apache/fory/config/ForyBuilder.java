@@ -29,9 +29,10 @@ import org.apache.fory.ThreadLocalFory;
 import org.apache.fory.ThreadSafeFory;
 import org.apache.fory.logging.Logger;
 import org.apache.fory.logging.LoggerFactory;
-import org.apache.fory.memory.Platform;
 import org.apache.fory.meta.DeflaterMetaCompressor;
 import org.apache.fory.meta.MetaCompressor;
+import org.apache.fory.platform.AndroidSupport;
+import org.apache.fory.platform.GraalvmSupport;
 import org.apache.fory.pool.ThreadPoolFory;
 import org.apache.fory.reflect.ReflectionUtils;
 import org.apache.fory.resolver.SharedRegistry;
@@ -41,7 +42,7 @@ import org.apache.fory.serializer.ObjectStreamSerializer;
 import org.apache.fory.serializer.Serializer;
 import org.apache.fory.serializer.TimeSerializers;
 import org.apache.fory.serializer.collection.GuavaCollectionSerializers;
-import org.apache.fory.util.GraalvmSupport;
+import org.apache.fory.util.ExceptionUtils;
 import org.apache.fory.util.Preconditions;
 
 /** Builder class to config and create {@link Fory}. */
@@ -85,7 +86,7 @@ public final class ForyBuilder {
   boolean requireClassRegistration = true;
   Boolean metaShareEnabled;
   Boolean scopedMetaShareEnabled;
-  boolean codeGenEnabled = true;
+  Boolean codeGenEnabled;
   Boolean deserializeUnknownClass;
   boolean asyncCompilationEnabled = false;
   boolean registerGuavaTypes = true;
@@ -441,14 +442,14 @@ public final class ForyBuilder {
   /**
    * Whether enable jit for serialization. When disabled, the first serialization will be faster
    * since no need to generate code, but later will be much slower compared jit mode.
+   *
+   * <p>When unset, codegen defaults to disabled on Android and GraalVM native image, and enabled on
+   * ordinary JVM. Explicitly enabling codegen on a platform without runtime code generation support
+   * is accepted by the builder, but final build configuration will force interpreter serializers.
    */
   public ForyBuilder withCodegen(boolean codeGen) {
-    if (GraalvmSupport.IN_GRAALVM_NATIVE_IMAGE) {
-      codeGen = true;
-    }
     this.codeGenEnabled = codeGen;
-    boolean enableCodegen = codeGen;
-    recordAction(b -> b.withCodegen(enableCodegen));
+    recordAction(b -> b.withCodegen(codeGen));
     return this;
   }
 
@@ -628,8 +629,27 @@ public final class ForyBuilder {
                 + "`ForyBuilder#withTypeChecker` or `TypeResolver#setTypeChecker`");
       }
     }
-    if (GraalvmSupport.IN_GRAALVM_NATIVE_IMAGE && asyncCompilationEnabled) {
-      LOG.info("Use sync compilation for graalvm native image since it doesn't support JIT.");
+    finishCodegen();
+  }
+
+  private void finishCodegen() {
+    boolean runtimeCodegenUnsupported =
+        AndroidSupport.IS_ANDROID || GraalvmSupport.IN_GRAALVM_NATIVE_IMAGE;
+    boolean resolvedCodegen =
+        codeGenEnabled != null ? codeGenEnabled.booleanValue() : !runtimeCodegenUnsupported;
+    if (runtimeCodegenUnsupported && resolvedCodegen) {
+      if (Boolean.TRUE.equals(codeGenEnabled)) {
+        LOG.warn(
+            "The current platform does not support Fory runtime code generation; "
+                + "interpreter serializers will be used instead.");
+      }
+      resolvedCodegen = false;
+    }
+    codeGenEnabled = resolvedCodegen;
+    if (runtimeCodegenUnsupported && asyncCompilationEnabled) {
+      LOG.info(
+          "Async compilation is disabled because the current platform does not support Fory "
+              + "runtime code generation.");
       asyncCompilationEnabled = false;
     }
   }
@@ -650,7 +670,7 @@ public final class ForyBuilder {
     } catch (Throwable t) {
       t.printStackTrace();
       LOG.error("Fory creation failed with classloader {}", classLoader);
-      Platform.throwException(t);
+      ExceptionUtils.throwException(t);
       throw new RuntimeException(t);
     }
   }

@@ -59,11 +59,12 @@ import org.apache.fory.annotation.UInt64Type;
 import org.apache.fory.annotation.UInt8Type;
 import org.apache.fory.collection.Cache;
 import org.apache.fory.collection.CacheBuilder;
+import org.apache.fory.collection.ClassValueCache;
 import org.apache.fory.collection.Collections;
 import org.apache.fory.collection.Tuple2;
-import org.apache.fory.memory.Platform;
 import org.apache.fory.reflect.TypeRef;
 import org.apache.fory.serializer.converter.FieldConverter;
+import org.apache.fory.util.ExceptionUtils;
 import org.apache.fory.util.StringUtils;
 import org.apache.fory.util.record.RecordComponent;
 import org.apache.fory.util.record.RecordUtils;
@@ -152,7 +153,7 @@ public class Descriptor {
   private Descriptor(Field field, Method readMethod) {
     this.field = field;
     // Compute typeRef from field's generic type to include generic info
-    this.typeRef = TypeRef.of(field.getAnnotatedType());
+    this.typeRef = TypeUtils.getFieldTypeRef(field);
     // Use typeRef.getType().getTypeName() to include generic type info (e.g., Collection<Object>)
     // This ensures consistent typeName between serialization and deserialization.
     this.typeName = typeRef.getType().getTypeName();
@@ -308,7 +309,7 @@ public class Descriptor {
   public TypeRef<?> getTypeRef() {
     TypeRef<?> typeRef = this.typeRef;
     if (typeRef == null && field != null) {
-      this.typeRef = typeRef = TypeRef.of(field.getAnnotatedType());
+      this.typeRef = typeRef = TypeUtils.getFieldTypeRef(field);
     }
     return typeRef;
   }
@@ -370,32 +371,8 @@ public class Descriptor {
     return map;
   }
 
-  private static final ClassValue<Map<String, List<Member>>> sortedDuplicatedMembers =
-      new ClassValue<Map<String, List<Member>>>() {
-        @Override
-        protected Map<String, List<Member>> computeValue(Class<?> type) {
-          SortedMap<Member, Descriptor> allFields = Descriptor.getAllDescriptorsMap(type);
-          Map<String, List<Member>> duplicated = Descriptor.getDuplicateNames(allFields);
-          Map<String, List<Member>> map = new HashMap<>();
-          for (Map.Entry<String, List<Member>> e : duplicated.entrySet()) {
-            e.getValue()
-                .sort(
-                    (f1, f2) -> {
-                      if (f1.getDeclaringClass() == f2.getDeclaringClass()) {
-                        return 0;
-                      } else {
-                        return f1.getDeclaringClass().isAssignableFrom(f2.getDeclaringClass())
-                            ? -1
-                            : 1;
-                      }
-                    });
-            if (map.put(e.getKey(), e.getValue()) != null) {
-              throw new IllegalStateException("Duplicate key");
-            }
-          }
-          return map;
-        }
-      };
+  private static final ClassValueCache<Map<String, List<Member>>> sortedDuplicatedMembers =
+      ClassValueCache.newClassKeyCache(32);
 
   public static Map<String, List<Member>> getDuplicateNames(
       SortedMap<Member, Descriptor> allDescriptorsMap) {
@@ -421,7 +398,28 @@ public class Descriptor {
   }
 
   public static Map<String, List<Member>> getSortedDuplicatedMembers(Class<?> cls) {
-    return sortedDuplicatedMembers.get(cls);
+    return sortedDuplicatedMembers.get(cls, () -> sortedDuplicatedMembers(cls));
+  }
+
+  private static Map<String, List<Member>> sortedDuplicatedMembers(Class<?> type) {
+    SortedMap<Member, Descriptor> allFields = Descriptor.getAllDescriptorsMap(type);
+    Map<String, List<Member>> duplicated = Descriptor.getDuplicateNames(allFields);
+    Map<String, List<Member>> map = new HashMap<>();
+    for (Map.Entry<String, List<Member>> e : duplicated.entrySet()) {
+      e.getValue()
+          .sort(
+              (f1, f2) -> {
+                if (f1.getDeclaringClass() == f2.getDeclaringClass()) {
+                  return 0;
+                } else {
+                  return f1.getDeclaringClass().isAssignableFrom(f2.getDeclaringClass()) ? -1 : 1;
+                }
+              });
+      if (map.put(e.getKey(), e.getValue()) != null) {
+        throw new IllegalStateException("Duplicate key");
+      }
+    }
+    return map;
   }
 
   /**
@@ -494,7 +492,7 @@ public class Descriptor {
         }
       } catch (NoSuchFieldException e) {
         // impossible
-        Platform.throwException(e);
+        ExceptionUtils.throwException(e);
       }
       currentDescriptorMap = new TreeMap<>(descriptorMap);
       return Tuple2.of(descriptorMap, currentDescriptorMap);
@@ -581,11 +579,11 @@ public class Descriptor {
     } else if (TypeUtils.isCollection(fieldRawType) || TypeUtils.isMap(fieldRawType)) {
       // warm up generic type, sun.reflect.generics.repository.FieldRepository
       // is expensive.
-      compilationService.submit(() -> warmGenericTask(TypeRef.of(field.getAnnotatedType())));
+      compilationService.submit(() -> warmGenericTask(TypeUtils.getFieldTypeRef(field)));
     } else if (fieldRawType.isArray()) {
       Class<?> componentType = fieldRawType.getComponentType();
       if (!componentType.isPrimitive()) {
-        compilationService.submit(() -> warmGenericTask(TypeRef.of(field.getAnnotatedType())));
+        compilationService.submit(() -> warmGenericTask(TypeUtils.getFieldTypeRef(field)));
       }
     }
   }
@@ -676,7 +674,7 @@ public class Descriptor {
           setter = null;
         }
       }
-      TypeRef<?> fieldType = TypeRef.of(field.getAnnotatedType());
+      TypeRef<?> fieldType = TypeUtils.getFieldTypeRef(field);
       descriptorMap.put(field, new Descriptor(field, fieldType, getter, setter));
     }
     // Don't cache descriptors using a static `WeakHashMap<Class<?>, SortedMap<Field, Descriptor>>`，
@@ -699,7 +697,11 @@ public class Descriptor {
   }
 
   public static Annotation getAnnotation(Field field) {
-    return getTypeUseAnnotation(field.getAnnotatedType(), field.getName());
+    AnnotatedType annotatedType = TypeUtils.getFieldAnnotatedType(field);
+    if (annotatedType == null) {
+      return getAnnotation(field.getDeclaredAnnotations(), field.getName());
+    }
+    return getTypeUseAnnotation(annotatedType, field.getName());
   }
 
   public static Annotation getAnnotation(Annotation[] declaredAnnotations, String name) {

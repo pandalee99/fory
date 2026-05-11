@@ -24,7 +24,13 @@ import java.nio.ByteBuffer;
 import java.nio.channels.SeekableByteChannel;
 import org.apache.fory.memory.MemoryBuffer;
 
-/** A streaming reader to make {@link MemoryBuffer} to support streaming reading. */
+/**
+ * A streaming reader to make {@link MemoryBuffer} to support streaming reading.
+ *
+ * <p>Typed array defaults are the stream fallback for MemoryBuffer payload readers. Keep callers on
+ * typed destination arrays instead of raw object offsets; implementations may override these
+ * methods for specialized bulk IO.
+ */
 public interface ForyStreamReader {
 
   /**
@@ -39,10 +45,84 @@ public interface ForyStreamReader {
   void readTo(byte[] dst, int dstIndex, int length);
 
   /**
-   * Read data into `target`. This method will block until the enough data are written into the
-   * `target`.
+   * Read boolean data into `dst`. This method will block until enough data is written into `dst`.
    */
-  void readToUnsafe(Object target, long targetPointer, int numBytes);
+  default void readBooleans(boolean[] dst, int dstIndex, int length) {
+    MemoryBuffer buffer = getBuffer();
+    int remaining = buffer.remaining();
+    if (remaining < length) {
+      fillBuffer(length - remaining);
+    }
+    buffer.readBooleans(dst, dstIndex, length);
+  }
+
+  /** Read char data into `dst`. This method will block until enough data is written into `dst`. */
+  default void readChars(char[] dst, int dstIndex, int length) {
+    int numBytes = Math.multiplyExact(length, 2);
+    MemoryBuffer buffer = getBuffer();
+    int remaining = buffer.remaining();
+    if (remaining < numBytes) {
+      fillBuffer(numBytes - remaining);
+    }
+    buffer.readChars(dst, dstIndex, length);
+  }
+
+  /** Read short data into `dst`. This method will block until enough data is written into `dst`. */
+  default void readShorts(short[] dst, int dstIndex, int length) {
+    int numBytes = Math.multiplyExact(length, 2);
+    MemoryBuffer buffer = getBuffer();
+    int remaining = buffer.remaining();
+    if (remaining < numBytes) {
+      fillBuffer(numBytes - remaining);
+    }
+    buffer.readShorts(dst, dstIndex, length);
+  }
+
+  /** Read int data into `dst`. This method will block until enough data is written into `dst`. */
+  default void readInts(int[] dst, int dstIndex, int length) {
+    int numBytes = Math.multiplyExact(length, 4);
+    MemoryBuffer buffer = getBuffer();
+    int remaining = buffer.remaining();
+    if (remaining < numBytes) {
+      fillBuffer(numBytes - remaining);
+    }
+    buffer.readInts(dst, dstIndex, length);
+  }
+
+  /** Read long data into `dst`. This method will block until enough data is written into `dst`. */
+  default void readLongs(long[] dst, int dstIndex, int length) {
+    int numBytes = Math.multiplyExact(length, 8);
+    MemoryBuffer buffer = getBuffer();
+    int remaining = buffer.remaining();
+    if (remaining < numBytes) {
+      fillBuffer(numBytes - remaining);
+    }
+    buffer.readLongs(dst, dstIndex, length);
+  }
+
+  /** Read float data into `dst`. This method will block until enough data is written into `dst`. */
+  default void readFloats(float[] dst, int dstIndex, int length) {
+    int numBytes = Math.multiplyExact(length, 4);
+    MemoryBuffer buffer = getBuffer();
+    int remaining = buffer.remaining();
+    if (remaining < numBytes) {
+      fillBuffer(numBytes - remaining);
+    }
+    buffer.readFloats(dst, dstIndex, length);
+  }
+
+  /**
+   * Read double data into `dst`. This method will block until enough data is written into `dst`.
+   */
+  default void readDoubles(double[] dst, int dstIndex, int length) {
+    int numBytes = Math.multiplyExact(length, 8);
+    MemoryBuffer buffer = getBuffer();
+    int remaining = buffer.remaining();
+    if (remaining < numBytes) {
+      fillBuffer(numBytes - remaining);
+    }
+    buffer.readDoubles(dst, dstIndex, length);
+  }
 
   /**
    * Read data into `dst`. This method will block until the enough data are written into the `dst`.

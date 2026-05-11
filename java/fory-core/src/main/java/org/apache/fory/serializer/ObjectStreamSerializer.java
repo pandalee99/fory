@@ -44,6 +44,7 @@ import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 import org.apache.fory.builder.CodecUtils;
 import org.apache.fory.builder.LayerMarkerClassGenerator;
+import org.apache.fory.collection.ClassValueCache;
 import org.apache.fory.collection.LongMap;
 import org.apache.fory.collection.ObjectArray;
 import org.apache.fory.collection.ObjectIntMap;
@@ -55,11 +56,12 @@ import org.apache.fory.exception.ForyException;
 import org.apache.fory.logging.Logger;
 import org.apache.fory.logging.LoggerFactory;
 import org.apache.fory.memory.MemoryBuffer;
-import org.apache.fory.memory.Platform;
 import org.apache.fory.meta.FieldInfo;
 import org.apache.fory.meta.FieldTypes;
 import org.apache.fory.meta.NativeTypeDefEncoder;
 import org.apache.fory.meta.TypeDef;
+import org.apache.fory.platform.AndroidSupport;
+import org.apache.fory.platform.GraalvmSupport;
 import org.apache.fory.reflect.ObjectCreator;
 import org.apache.fory.reflect.ObjectCreators;
 import org.apache.fory.reflect.ReflectionUtils;
@@ -71,7 +73,6 @@ import org.apache.fory.type.Descriptor;
 import org.apache.fory.type.TypeUtils;
 import org.apache.fory.type.Types;
 import org.apache.fory.util.ExceptionUtils;
-import org.apache.fory.util.GraalvmSupport;
 import org.apache.fory.util.Preconditions;
 import org.apache.fory.util.unsafe._JDKAccess;
 
@@ -609,7 +610,11 @@ public class ObjectStreamSerializer extends AbstractObjectSerializer {
       Method writeMethod = null;
       Method readMethod = null;
       Method noDataMethod = null;
-      if (objectStreamClass != null) {
+      if (AndroidSupport.IS_ANDROID) {
+        writeMethod = JavaSerializer.getWriteObjectMethod(type, false);
+        readMethod = JavaSerializer.getReadRefMethod(type, false);
+        noDataMethod = JavaSerializer.getReadRefNoData(type, false);
+      } else if (objectStreamClass != null) {
         writeMethod =
             (Method) ReflectionUtils.getObjectFieldValue(objectStreamClass, "writeObjectMethod");
         readMethod =
@@ -620,6 +625,15 @@ public class ObjectStreamSerializer extends AbstractObjectSerializer {
       this.writeObjectMethod = writeMethod;
       this.readObjectMethod = readMethod;
       this.readObjectNoData = noDataMethod;
+      if (AndroidSupport.IS_ANDROID) {
+        makeAccessible(writeObjectMethod);
+        makeAccessible(readObjectMethod);
+        makeAccessible(readObjectNoData);
+        this.writeObjectFunc = null;
+        this.readObjectFunc = null;
+        this.readObjectNoDataFunc = null;
+        return;
+      }
       MethodHandles.Lookup lookup = _JDKAccess._trustedLookup(type);
       BiConsumer writeObjectFunc = null, readObjectFunc = null;
       Consumer readObjectNoDataFunc = null;
@@ -642,15 +656,21 @@ public class ObjectStreamSerializer extends AbstractObjectSerializer {
       this.readObjectFunc = readObjectFunc;
       this.readObjectNoDataFunc = readObjectNoDataFunc;
     }
+
+    private static void makeAccessible(Method method) {
+      if (method == null) {
+        return;
+      }
+      try {
+        method.setAccessible(true);
+      } catch (RuntimeException e) {
+        throw new ForyException("Failed to make Java serialization hook accessible: " + method, e);
+      }
+    }
   }
 
-  private static final ClassValue<StreamTypeInfo> STREAM_CLASS_INFO_CACHE =
-      new ClassValue<StreamTypeInfo>() {
-        @Override
-        protected StreamTypeInfo computeValue(Class<?> type) {
-          return new StreamTypeInfo(type);
-        }
-      };
+  private static final ClassValueCache<StreamTypeInfo> STREAM_CLASS_INFO_CACHE =
+      ClassValueCache.newClassKeyCache(32);
 
   /**
    * Full implementation of SlotInfo for handling object stream serialization. This class manages
@@ -674,7 +694,7 @@ public class ObjectStreamSerializer extends AbstractObjectSerializer {
     public SlotsInfo(TypeResolver typeResolver, Class<?> type) {
       this.cls = type;
       ObjectStreamClass objectStreamClass = safeObjectStreamClassLookup(type);
-      streamTypeInfo = STREAM_CLASS_INFO_CACHE.get(type);
+      streamTypeInfo = STREAM_CLASS_INFO_CACHE.get(type, () -> new StreamTypeInfo(type));
 
       // Build TypeDef from ObjectStreamClass fields (handles serialPersistentFields).
       // This ensures the serializer uses the same field layout as defined by
@@ -699,7 +719,9 @@ public class ObjectStreamSerializer extends AbstractObjectSerializer {
           new MetaSharedLayerSerializer(typeResolver, type, layerTypeDef, layerMarkerClass);
 
       // Register JIT callback to replace with JIT serializer when ready
-      if (config.isCodeGenEnabled() && !GraalvmSupport.isGraalRuntime()) {
+      if (config.isCodeGenEnabled()
+          && !AndroidSupport.IS_ANDROID
+          && !GraalvmSupport.isGraalRuntime()) {
         SlotsInfo thisInfo = this;
         typeResolver
             .getJITContext()
@@ -724,7 +746,7 @@ public class ObjectStreamSerializer extends AbstractObjectSerializer {
 
       // In GraalVM, ensure serializers are generated for all field types at build time
       // so they're available when new Fory instances are created at runtime
-      if (GraalvmSupport.isGraalBuildtime()) {
+      if (GraalvmSupport.isGraalBuildTime()) {
         ensureFieldSerializersGenerated(typeResolver, layerTypeDef, type);
       }
 
@@ -747,7 +769,7 @@ public class ObjectStreamSerializer extends AbstractObjectSerializer {
         try {
           objectOutputStream = new ForyStructOutputStream(this);
         } catch (IOException e) {
-          Platform.throwException(e);
+          ExceptionUtils.throwException(e);
           throw new IllegalStateException("unreachable");
         }
       } else {
@@ -757,7 +779,7 @@ public class ObjectStreamSerializer extends AbstractObjectSerializer {
         try {
           objectInputStream = new ForyStructInputStream(this);
         } catch (IOException e) {
-          Platform.throwException(e);
+          ExceptionUtils.throwException(e);
           throw new IllegalStateException("unreachable");
         }
       } else {

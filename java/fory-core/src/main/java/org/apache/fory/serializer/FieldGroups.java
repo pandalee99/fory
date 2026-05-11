@@ -73,7 +73,8 @@ public class FieldGroups {
     List<Descriptor> descriptors = new ArrayList<>();
     for (Field field : fields) {
       if (!Modifier.isTransient(field.getModifiers()) && !Modifier.isStatic(field.getModifiers())) {
-        descriptors.add(new Descriptor(field, TypeRef.of(field.getAnnotatedType()), null, null));
+        TypeRef<?> typeRef = TypeUtils.getFieldTypeRef(field);
+        descriptors.add(new Descriptor(field, typeRef, null, null));
       }
     }
     DescriptorGrouper descriptorGrouper =
@@ -213,7 +214,7 @@ public class FieldGroups {
         this.fieldAccessor = null;
       }
       // Use local field type to determine if field is primitive.
-      // This determines how to write the value to the object (Platform.putInt vs putObject).
+      // This determines how to write the value to the object (UnsafeOps.putInt vs putObject).
       isPrimitiveField = typeRef.getRawType().isPrimitive();
       fieldConverter = d.getFieldConverter();
       // For xlang compatibility, check TypeExtMeta first (from remote peer's type meta)
@@ -248,7 +249,7 @@ public class FieldGroups {
       genericType = t;
       Field field = descriptor.getField();
       if (field != null) {
-        TypeUtils.applyRefTrackingOverride(t, field.getAnnotatedType(), resolver.trackingRef());
+        TypeUtils.applyFieldRefTrackingOverride(t, field, resolver.trackingRef());
       }
       if (needsClassInfoHolder(resolver, cls)) {
         classInfoHolder = resolver.nilTypeInfoHolder();

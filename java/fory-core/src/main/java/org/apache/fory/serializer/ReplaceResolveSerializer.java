@@ -28,17 +28,20 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.function.Function;
 import org.apache.fory.Fory;
+import org.apache.fory.collection.ClassValueCache;
 import org.apache.fory.context.CopyContext;
 import org.apache.fory.context.ReadContext;
 import org.apache.fory.context.WriteContext;
+import org.apache.fory.exception.ForyException;
 import org.apache.fory.logging.Logger;
 import org.apache.fory.logging.LoggerFactory;
 import org.apache.fory.memory.MemoryBuffer;
-import org.apache.fory.memory.Platform;
+import org.apache.fory.platform.AndroidSupport;
 import org.apache.fory.reflect.ReflectionUtils;
 import org.apache.fory.resolver.ClassResolver;
 import org.apache.fory.resolver.TypeInfo;
 import org.apache.fory.resolver.TypeResolver;
+import org.apache.fory.util.ExceptionUtils;
 import org.apache.fory.util.Preconditions;
 import org.apache.fory.util.unsafe._JDKAccess;
 
@@ -72,7 +75,10 @@ public class ReplaceResolveSerializer extends Serializer {
       Method writeReplaceMethod, readResolveMethod;
       // In JDK17, set private jdk method accessible will fail by default, use ObjectStreamClass
       // instead, since it set accessible.
-      if (Serializable.class.isAssignableFrom(cls)) {
+      if (AndroidSupport.IS_ANDROID) {
+        writeReplaceMethod = JavaSerializer.getWriteReplaceMethod(cls);
+        readResolveMethod = JavaSerializer.getReadResolveMethod(cls);
+      } else if (Serializable.class.isAssignableFrom(cls)) {
         ObjectStreamClass objectStreamClass = ObjectStreamClass.lookup(cls);
         writeReplaceMethod =
             (Method) ReflectionUtils.getObjectFieldValue(objectStreamClass, "writeReplaceMethod");
@@ -107,27 +113,43 @@ public class ReplaceResolveSerializer extends Serializer {
               : (readResolveMethod != null ? readResolveMethod.getDeclaringClass() : null);
       Function writeReplaceFunc = null, readResolveFunc = null;
       if (declaringClass != null) {
-        MethodHandles.Lookup lookup = _JDKAccess._trustedLookup(declaringClass);
-        try {
-          if (writeReplaceMethod != null) {
-            writeReplaceFunc =
-                _JDKAccess.makeJDKFunction(lookup, lookup.unreflect(writeReplaceMethod));
-          }
-          if (readResolveMethod != null) {
-            readResolveFunc =
-                _JDKAccess.makeJDKFunction(lookup, lookup.unreflect(readResolveMethod));
-          }
-        } catch (Exception e) {
-          if (writeReplaceMethod != null && !writeReplaceMethod.isAccessible()) {
-            writeReplaceMethod.setAccessible(true);
-          }
-          if (readResolveMethod != null && !readResolveMethod.isAccessible()) {
-            readResolveMethod.setAccessible(true);
+        if (AndroidSupport.IS_ANDROID) {
+          makeAccessible(writeReplaceMethod);
+          makeAccessible(readResolveMethod);
+        } else {
+          MethodHandles.Lookup lookup = _JDKAccess._trustedLookup(declaringClass);
+          try {
+            if (writeReplaceMethod != null) {
+              writeReplaceFunc =
+                  _JDKAccess.makeJDKFunction(lookup, lookup.unreflect(writeReplaceMethod));
+            }
+            if (readResolveMethod != null) {
+              readResolveFunc =
+                  _JDKAccess.makeJDKFunction(lookup, lookup.unreflect(readResolveMethod));
+            }
+          } catch (Exception e) {
+            if (writeReplaceMethod != null && !writeReplaceMethod.isAccessible()) {
+              writeReplaceMethod.setAccessible(true);
+            }
+            if (readResolveMethod != null && !readResolveMethod.isAccessible()) {
+              readResolveMethod.setAccessible(true);
+            }
           }
         }
       }
       this.writeReplaceFunc = writeReplaceFunc;
       this.readResolveFunc = readResolveFunc;
+    }
+
+    private static void makeAccessible(Method method) {
+      if (method == null) {
+        return;
+      }
+      try {
+        method.setAccessible(true);
+      } catch (RuntimeException e) {
+        throw new ForyException("Failed to make Java replacement hook accessible: " + method, e);
+      }
     }
 
     Object writeReplace(Object o) {
@@ -137,7 +159,7 @@ public class ReplaceResolveSerializer extends Serializer {
         try {
           return writeReplaceMethod.invoke(o);
         } catch (Exception e) {
-          Platform.throwException(e);
+          ExceptionUtils.throwException(e);
           throw new IllegalStateException(e);
         }
       }
@@ -150,20 +172,15 @@ public class ReplaceResolveSerializer extends Serializer {
         try {
           return readResolveMethod.invoke(o);
         } catch (Exception e) {
-          Platform.throwException(e);
+          ExceptionUtils.throwException(e);
           throw new IllegalStateException(e);
         }
       }
     }
   }
 
-  private static final ClassValue<ReplaceResolveInfo> REPLACE_RESOLVE_INFO_CACHE =
-      new ClassValue<ReplaceResolveInfo>() {
-        @Override
-        protected ReplaceResolveInfo computeValue(Class<?> type) {
-          return new ReplaceResolveInfo(type);
-        }
-      };
+  private static final ClassValueCache<ReplaceResolveInfo> REPLACE_RESOLVE_INFO_CACHE =
+      ClassValueCache.newClassKeyCache(32);
 
   protected static class MethodInfoCache {
     protected final ReplaceResolveInfo info;
@@ -180,7 +197,8 @@ public class ReplaceResolveSerializer extends Serializer {
   }
 
   static MethodInfoCache newJDKMethodInfoCache(TypeResolver typeResolver, Class<?> cls) {
-    ReplaceResolveInfo replaceResolveInfo = REPLACE_RESOLVE_INFO_CACHE.get(cls);
+    ReplaceResolveInfo replaceResolveInfo =
+        REPLACE_RESOLVE_INFO_CACHE.get(cls, () -> new ReplaceResolveInfo(cls));
     MethodInfoCache methodInfoCache = new MethodInfoCache(replaceResolveInfo);
     ClassResolver classResolver = (ClassResolver) typeResolver;
     Class<? extends Serializer> serializerClass;

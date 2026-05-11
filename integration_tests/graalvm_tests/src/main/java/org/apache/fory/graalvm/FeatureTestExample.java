@@ -24,7 +24,7 @@ import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 import org.apache.fory.Fory;
 import org.apache.fory.builder.Generated;
-import org.apache.fory.util.GraalvmSupport;
+import org.apache.fory.platform.GraalvmSupport;
 import org.apache.fory.util.Preconditions;
 
 public class FeatureTestExample {
@@ -89,8 +89,9 @@ public class FeatureTestExample {
     PrivateConstructorClass original = new PrivateConstructorClass("test-value");
     PrivateConstructorClass deserialized =
         (PrivateConstructorClass) fory.deserialize(fory.serialize(original));
-    Preconditions.checkArgument(
-        fory.getTypeResolver().getSerializer(PrivateConstructorClass.class) instanceof Generated);
+    boolean generated =
+        fory.getTypeResolver().getSerializer(PrivateConstructorClass.class) instanceof Generated;
+    Preconditions.checkArgument(GraalvmSupport.IN_GRAALVM_NATIVE_IMAGE != generated);
     Preconditions.checkArgument("test-value".equals(deserialized.getValue()));
     System.out.println("Private constructor class test passed");
 

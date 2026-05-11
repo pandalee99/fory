@@ -23,7 +23,7 @@ import java.nio.ByteBuffer;
 import java.util.Random;
 import org.apache.fory.memory.MemoryBuffer;
 import org.apache.fory.memory.MemoryUtils;
-import org.apache.fory.memory.Platform;
+import org.apache.fory.platform.UnsafeOps;
 import org.apache.fory.util.StringUtils;
 import org.openjdk.jmh.Main;
 import org.openjdk.jmh.annotations.BenchmarkMode;
@@ -101,8 +101,7 @@ public class MemorySuite {
   // @Benchmark
   public Object charsCopyAligned(MemoryState state) {
     state.heapBuffer.writerIndex(0);
-    state.heapBuffer.writePrimitiveArrayWithSize(
-        state.chars, Platform.CHAR_ARRAY_OFFSET, state.chars.length * 2);
+    state.heapBuffer.writeCharsWithSize(state.chars);
     return state.heapBuffer;
   }
 
@@ -110,16 +109,14 @@ public class MemorySuite {
   public Object charsCopyUnaligned(MemoryState state) {
     state.heapBuffer.writerIndex(0);
     state.heapBuffer.writeBoolean(false);
-    state.heapBuffer.writePrimitiveArrayWithSize(
-        state.chars, Platform.CHAR_ARRAY_OFFSET, state.chars.length * 2);
+    state.heapBuffer.writeCharsWithSize(state.chars);
     return state.heapBuffer;
   }
 
   // @Benchmark
   public Object longsCopyAligned(MemoryState state) {
     state.heapBuffer.writerIndex(0);
-    state.heapBuffer.writePrimitiveArrayWithSize(
-        state.longs, Platform.LONG_ARRAY_OFFSET, state.longs.length * 8);
+    state.heapBuffer.writeLongsWithSize(state.longs);
     return state.heapBuffer;
   }
 
@@ -127,8 +124,7 @@ public class MemorySuite {
   public Object longsCopyUnaligned(MemoryState state) {
     state.heapBuffer.writerIndex(0);
     state.heapBuffer.writeBoolean(false);
-    state.heapBuffer.writePrimitiveArrayWithSize(
-        state.longs, Platform.LONG_ARRAY_OFFSET, state.longs.length * 8);
+    state.heapBuffer.writeLongsWithSize(state.longs);
     return state.heapBuffer;
   }
 
@@ -142,11 +138,11 @@ public class MemorySuite {
 
   @org.openjdk.jmh.annotations.Benchmark
   public Object unsafeCopy(MemoryState state) {
-    Platform.UNSAFE.copyMemory(
+    UnsafeOps.UNSAFE.copyMemory(
         state.bytes,
-        Platform.BYTE_ARRAY_OFFSET,
+        UnsafeOps.BYTE_ARRAY_OFFSET,
         target,
-        Platform.BYTE_ARRAY_OFFSET,
+        UnsafeOps.BYTE_ARRAY_OFFSET,
         state.bytes.length);
     return target;
   }

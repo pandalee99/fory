@@ -57,7 +57,9 @@ import org.apache.fory.context.WriteContext;
 import org.apache.fory.exception.DeserializationException;
 import org.apache.fory.exception.ForyException;
 import org.apache.fory.memory.MemoryBuffer;
-import org.apache.fory.memory.Platform;
+import org.apache.fory.platform.AndroidSupport;
+import org.apache.fory.platform.GraalvmSupport;
+import org.apache.fory.platform.UnsafeOps;
 import org.apache.fory.reflect.ReflectionUtils;
 import org.apache.fory.resolver.ClassResolver;
 import org.apache.fory.resolver.TypeInfo;
@@ -127,15 +129,17 @@ public class CollectionSerializers {
   }
 
   public static final class ArraysAsListSerializer extends CollectionSerializer<List<?>> {
-    // Make offset compatible with graalvm native image.
-    private static final long arrayFieldOffset;
+    private static final class ArrayFieldOffset {
+      // Make offset compatible with graalvm native image.
+      private static final long VALUE;
 
-    static {
-      try {
-        Field arrayField = Class.forName("java.util.Arrays$ArrayList").getDeclaredField("a");
-        arrayFieldOffset = Platform.objectFieldOffset(arrayField);
-      } catch (final Exception e) {
-        throw new RuntimeException(e);
+      static {
+        try {
+          Field arrayField = Class.forName("java.util.Arrays$ArrayList").getDeclaredField("a");
+          VALUE = UnsafeOps.objectFieldOffset(arrayField);
+        } catch (final Exception e) {
+          throw new RuntimeException(e);
+        }
       }
     }
 
@@ -157,7 +161,10 @@ public class CollectionSerializers {
       if (config.isXlang()) {
         super.write(writeContext, value);
       } else {
-        Object[] array = (Object[]) Platform.getObject(value, arrayFieldOffset);
+        Object[] array =
+            AndroidSupport.IS_ANDROID || GraalvmSupport.IN_GRAALVM_NATIVE_IMAGE
+                ? value.toArray()
+                : (Object[]) UnsafeOps.getObject(value, ArrayFieldOffset.VALUE);
         writeContext.writeRef(array);
       }
     }
@@ -543,21 +550,24 @@ public class CollectionSerializers {
   }
 
   public static final class SetFromMapSerializer extends CollectionSerializer<Set<?>> {
-    private static final long MAP_FIELD_OFFSET;
     private static final List EMPTY_COLLECTION_STUB = new ArrayList<>();
-    private static final MethodHandle m;
-    private static final MethodHandle s;
 
-    static {
-      try {
-        Class<?> type = Class.forName("java.util.Collections$SetFromMap");
-        Field mapField = type.getDeclaredField("m");
-        MAP_FIELD_OFFSET = Platform.objectFieldOffset(mapField);
-        MethodHandles.Lookup lookup = _JDKAccess._trustedLookup(type);
-        m = lookup.findSetter(type, "m", Map.class);
-        s = lookup.findSetter(type, "s", Set.class);
-      } catch (final Exception e) {
-        throw new RuntimeException(e);
+    private static final class JvmSetFromMapAccess {
+      private static final long MAP_FIELD_OFFSET;
+      private static final MethodHandle M_SETTER;
+      private static final MethodHandle S_SETTER;
+
+      static {
+        try {
+          Class<?> type = Class.forName("java.util.Collections$SetFromMap");
+          Field mapField = type.getDeclaredField("m");
+          MAP_FIELD_OFFSET = UnsafeOps.objectFieldOffset(mapField);
+          MethodHandles.Lookup lookup = _JDKAccess._trustedLookup(type);
+          M_SETTER = lookup.findSetter(type, "m", Map.class);
+          S_SETTER = lookup.findSetter(type, "s", Set.class);
+        } catch (final Exception e) {
+          throw new RuntimeException(e);
+        }
       }
     }
 
@@ -578,11 +588,16 @@ public class CollectionSerializers {
         set = Collections.newSetFromMap(mapSerializer.newMap(readContext));
         setNumElements(mapSerializer.getAndClearNumElements());
       } else {
+        if (AndroidSupport.IS_ANDROID || GraalvmSupport.IN_GRAALVM_NATIVE_IMAGE) {
+          throw new UnsupportedOperationException(
+              "This runtime cannot read legacy SetFromMap payloads that require hidden JDK field "
+                  + "restoration");
+        }
         Map map = (Map) mapSerializer.read(readContext);
         try {
-          set = Platform.newInstance(type);
-          m.invoke(set, map);
-          s.invoke(set, map.keySet());
+          set = UnsafeOps.newInstance(type);
+          JvmSetFromMapAccess.M_SETTER.invoke(set, map);
+          JvmSetFromMapAccess.S_SETTER.invoke(set, map.keySet());
         } catch (Throwable e) {
           throw new RuntimeException(e);
         }
@@ -595,8 +610,12 @@ public class CollectionSerializers {
     @Override
     public Collection newCollection(CopyContext copyContext, Collection originCollection) {
       assert !config.isXlang();
+      if (AndroidSupport.IS_ANDROID || GraalvmSupport.IN_GRAALVM_NATIVE_IMAGE) {
+        return Collections.newSetFromMap(new HashMap(originCollection.size()));
+      }
       Map<?, Boolean> map =
-          (Map<?, Boolean>) Platform.getObject(originCollection, MAP_FIELD_OFFSET);
+          (Map<?, Boolean>)
+              UnsafeOps.getObject(originCollection, JvmSetFromMapAccess.MAP_FIELD_OFFSET);
       MapLikeSerializer mapSerializer =
           (MapLikeSerializer) typeResolver.getSerializer(map.getClass());
       Map newMap = mapSerializer.newMap(copyContext, map);
@@ -606,8 +625,19 @@ public class CollectionSerializers {
     @Override
     public Collection onCollectionWrite(WriteContext writeContext, Set<?> value) {
       MemoryBuffer buffer = writeContext.getBuffer();
-      final Map<?, Boolean> map = (Map<?, Boolean>) Platform.getObject(value, MAP_FIELD_OFFSET);
-      final TypeInfo typeInfo = typeResolver.getTypeInfo(map.getClass());
+      final Map<?, Boolean> map;
+      final TypeInfo typeInfo;
+      if (AndroidSupport.IS_ANDROID || GraalvmSupport.IN_GRAALVM_NATIVE_IMAGE) {
+        HashMap source = new HashMap<>(value.size());
+        for (Object element : value) {
+          source.put(element, Boolean.TRUE);
+        }
+        map = source;
+        typeInfo = typeResolver.getTypeInfo(HashMap.class);
+      } else {
+        map = (Map<?, Boolean>) UnsafeOps.getObject(value, JvmSetFromMapAccess.MAP_FIELD_OFFSET);
+        typeInfo = typeResolver.getTypeInfo(map.getClass());
+      }
       MapLikeSerializer mapSerializer = (MapLikeSerializer) typeInfo.getSerializer();
       typeResolver.writeTypeInfo(writeContext, typeInfo);
       if (mapSerializer.supportCodegenHook) {
@@ -757,8 +787,7 @@ public class CollectionSerializers {
     public void write(WriteContext writeContext, BitSet set) {
       MemoryBuffer buffer = writeContext.getBuffer();
       long[] values = set.toLongArray();
-      buffer.writePrimitiveArrayWithSize(
-          values, Platform.LONG_ARRAY_OFFSET, Math.multiplyExact(values.length, 8));
+      buffer.writeLongsWithSize(values);
     }
 
     @Override
@@ -779,10 +808,8 @@ public class CollectionSerializers {
       if (size > maxBinarySize) {
         throwBinarySizeLimitExceeded(size, maxBinarySize);
       }
-      if (size > buffer.remaining()) {
-        buffer.checkReadableBytes(size);
-      }
-      long[] values = buffer.readLongs(size);
+      long[] values = new long[size >>> 3];
+      buffer.readInt64ArrayPayload(values, size);
       return BitSet.valueOf(values);
     }
   }
@@ -834,14 +861,16 @@ public class CollectionSerializers {
 
     // Use reflection to get the items array length which represents the capacity.
     // This avoids race conditions when reading remainingCapacity() and size() separately.
-    private static final long ITEMS_OFFSET;
+    private static final class ItemsOffset {
+      private static final long VALUE;
 
-    static {
-      try {
-        Field itemsField = ArrayBlockingQueue.class.getDeclaredField("items");
-        ITEMS_OFFSET = Platform.objectFieldOffset(itemsField);
-      } catch (NoSuchFieldException e) {
-        throw new RuntimeException(e);
+      static {
+        try {
+          Field itemsField = ArrayBlockingQueue.class.getDeclaredField("items");
+          VALUE = UnsafeOps.objectFieldOffset(itemsField);
+        } catch (NoSuchFieldException e) {
+          throw new RuntimeException(e);
+        }
       }
     }
 
@@ -850,7 +879,10 @@ public class CollectionSerializers {
     }
 
     private static int getCapacity(ArrayBlockingQueue queue) {
-      Object[] items = (Object[]) Platform.getObject(queue, ITEMS_OFFSET);
+      if (AndroidSupport.IS_ANDROID || GraalvmSupport.IN_GRAALVM_NATIVE_IMAGE) {
+        return queue.size() + queue.remainingCapacity();
+      }
+      Object[] items = (Object[]) UnsafeOps.getObject(queue, ItemsOffset.VALUE);
       return items.length;
     }
 
@@ -895,14 +927,16 @@ public class CollectionSerializers {
       extends ConcurrentCollectionSerializer<LinkedBlockingQueue> {
     // Use reflection to get the capacity field directly.
     // This avoids race conditions when reading remainingCapacity() and size() separately.
-    private static final long CAPACITY_OFFSET;
+    private static final class CapacityOffset {
+      private static final long VALUE;
 
-    static {
-      try {
-        Field capacityField = LinkedBlockingQueue.class.getDeclaredField("capacity");
-        CAPACITY_OFFSET = Platform.objectFieldOffset(capacityField);
-      } catch (NoSuchFieldException e) {
-        throw new RuntimeException(e);
+      static {
+        try {
+          Field capacityField = LinkedBlockingQueue.class.getDeclaredField("capacity");
+          VALUE = UnsafeOps.objectFieldOffset(capacityField);
+        } catch (NoSuchFieldException e) {
+          throw new RuntimeException(e);
+        }
       }
     }
 
@@ -912,7 +946,10 @@ public class CollectionSerializers {
     }
 
     private static int getCapacity(LinkedBlockingQueue queue) {
-      return Platform.getInt(queue, CAPACITY_OFFSET);
+      if (AndroidSupport.IS_ANDROID || GraalvmSupport.IN_GRAALVM_NATIVE_IMAGE) {
+        return queue.size() + queue.remainingCapacity();
+      }
+      return UnsafeOps.getInt(queue, CapacityOffset.VALUE);
     }
 
     @Override

@@ -24,9 +24,11 @@ import static org.apache.fory.collection.Collections.ofHashSet;
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.MethodType;
+import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Set;
 import org.apache.fory.builder.LayerMarkerClassGenerator;
@@ -36,13 +38,14 @@ import org.apache.fory.context.ReadContext;
 import org.apache.fory.context.WriteContext;
 import org.apache.fory.exception.ForyException;
 import org.apache.fory.memory.MemoryBuffer;
-import org.apache.fory.memory.Platform;
 import org.apache.fory.meta.TypeDef;
+import org.apache.fory.platform.AndroidSupport;
+import org.apache.fory.platform.GraalvmSupport;
+import org.apache.fory.platform.UnsafeOps;
 import org.apache.fory.reflect.ObjectCreator;
 import org.apache.fory.reflect.ObjectCreators;
 import org.apache.fory.reflect.ReflectionUtils;
 import org.apache.fory.resolver.TypeResolver;
-import org.apache.fory.util.GraalvmSupport;
 import org.apache.fory.util.unsafe._JDKAccess;
 
 /** Serializers for {@link Throwable} and {@link StackTraceElement}. */
@@ -56,6 +59,7 @@ public final class ExceptionSerializers {
     private final Config config;
     private final TypeResolver typeResolver;
     private final ObjectCreator<T> objectCreator;
+    private final Constructor<T> messageConstructor;
     private volatile Serializer[] slotsSerializers;
     private volatile boolean rebuildSlotsSerializersAtRuntime;
 
@@ -63,8 +67,20 @@ public final class ExceptionSerializers {
       super(typeResolver.getConfig(), type);
       this.config = typeResolver.getConfig();
       this.typeResolver = typeResolver;
-      objectCreator = createThrowableObjectCreator(type);
+      messageConstructor = getOptionalMessageConstructor(type);
+      objectCreator =
+          messageConstructor == null && !AndroidSupport.IS_ANDROID
+              ? createThrowableObjectCreator(type)
+              : null;
       slotsSerializers = buildSlotsSerializers(typeResolver, type);
+      if (AndroidSupport.IS_ANDROID
+          && isJdkThrowable(type)
+          && hasSubclassFields(slotsSerializers)) {
+        throw new ForyException(
+            "Android doesn't support JDK Throwable type "
+                + type.getName()
+                + " with subclass fields because JDK private field layouts aren't stable on Android.");
+      }
       // Native-image runtime must rebuild slot serializers once so field accessors and
       // descriptors are created against the runtime heap layout instead of reusing
       // any build-time initialized state.
@@ -92,20 +108,89 @@ public final class ExceptionSerializers {
     @Override
     public T read(ReadContext readContext) {
       Serializer[] slotsSerializers = getSlotsSerializers();
-      T obj = objectCreator.newInstance();
-      readContext.reference(obj);
       StackTraceElement[] stackTrace = (StackTraceElement[]) readContext.readRef();
+      if (AndroidSupport.IS_ANDROID) {
+        return readAndroidThrowableWithoutDetailMessageField(
+            readContext, stackTrace, slotsSerializers);
+      }
+      T obj = newThrowableForRead();
+      readContext.reference(obj);
       Throwable cause = (Throwable) readContext.readRef();
       String detailMessage = readContext.readStringRef();
       List<Throwable> suppressedExceptions = readSuppressedExceptions(readContext);
       skipExtraFields(readContext);
-      Platform.putObject(obj, ThrowableOffsets.DETAIL_MESSAGE_FIELD_OFFSET, detailMessage);
-      Platform.putObject(obj, ThrowableOffsets.CAUSE_FIELD_OFFSET, cause == null ? obj : cause);
-      Platform.putObject(obj, ThrowableOffsets.STACK_TRACE_FIELD_OFFSET, stackTrace);
-      Platform.putObject(
-          obj, ThrowableOffsets.SUPPRESSED_EXCEPTIONS_FIELD_OFFSET, suppressedExceptions);
+      UnsafeOps.putObject(obj, ThrowableOffsets.DETAIL_MESSAGE_FIELD_OFFSET, detailMessage);
+      if (stackTrace != null) {
+        obj.setStackTrace(stackTrace);
+      }
+      if (cause != null) {
+        obj.initCause(cause);
+      }
+      addSuppressedExceptions(obj, suppressedExceptions);
       readAndSetFields(readContext, obj, slotsSerializers, config);
       return obj;
+    }
+
+    private T readAndroidThrowableWithoutDetailMessageField(
+        ReadContext readContext, StackTraceElement[] stackTrace, Serializer[] slotsSerializers) {
+      if (messageConstructor == null) {
+        throw new ForyException(
+            "Android doesn't support deserializing Throwable type "
+                + type.getName()
+                + " without a String message constructor because private JDK field access is "
+                + "unsupported.");
+      }
+      int refId = readContext.lastPreservedRefId();
+      if (refId >= 0) {
+        readContext.setReadRef(refId, PendingThrowable.INSTANCE);
+      }
+      Throwable cause = (Throwable) readContext.readRef();
+      String detailMessage = readContext.readStringRef();
+      List<Throwable> suppressedExceptions = readSuppressedExceptions(readContext);
+      skipExtraFields(readContext);
+      if (containsPendingThrowable(cause) || containsPendingThrowable(suppressedExceptions)) {
+        throw new ForyException(
+            "Android doesn't support deserializing cyclic Throwable references for type "
+                + type.getName()
+                + " because private JDK field access is unsupported.");
+      }
+      T obj = newThrowableWithMessage(detailMessage);
+      readContext.reference(obj);
+      if (stackTrace != null) {
+        obj.setStackTrace(stackTrace);
+      }
+      if (cause != null) {
+        obj.initCause(cause);
+      }
+      addSuppressedExceptions(obj, suppressedExceptions);
+      readAndSetFields(readContext, obj, slotsSerializers, config);
+      return obj;
+    }
+
+    private T newThrowableForRead() {
+      if (messageConstructor != null) {
+        return newThrowableWithMessage(null);
+      }
+      if (AndroidSupport.IS_ANDROID) {
+        throw new ForyException(
+            "Android doesn't support deserializing Throwable type "
+                + type.getName()
+                + " without a String message constructor because it requires Unsafe allocation "
+                + "or unsupported private-field access.");
+      }
+      return objectCreator.newInstance();
+    }
+
+    private T newThrowableWithMessage(String detailMessage) {
+      try {
+        return messageConstructor.newInstance(detailMessage);
+      } catch (Throwable t) {
+        throw new ForyException(
+            "Failed to construct Throwable type "
+                + type.getName()
+                + " with a String message constructor.",
+            t);
+      }
     }
 
     private Serializer[] getSlotsSerializers() {
@@ -133,23 +218,27 @@ public final class ExceptionSerializers {
 
   public static final class StackTraceElementSerializer extends Serializer<StackTraceElement> {
     private static final MethodHandles.Lookup LOOKUP =
-        _JDKAccess._trustedLookup(StackTraceElement.class);
+        AndroidSupport.IS_ANDROID ? null : _JDKAccess._trustedLookup(StackTraceElement.class);
     private static final MethodHandle CLASS_LOADER_NAME_GETTER =
-        getOptionalGetter("getClassLoaderName");
+        AndroidSupport.IS_ANDROID ? null : getOptionalGetter("getClassLoaderName");
     private static final MethodHandle MODULE_NAME_GETTER = getOptionalGetter("getModuleName");
     private static final MethodHandle MODULE_VERSION_GETTER = getOptionalGetter("getModuleVersion");
     private static final MethodHandle STACK_TRACE_ELEMENT_CTR_V1 =
-        ReflectionUtils.getCtrHandle(
-            StackTraceElement.class, String.class, String.class, String.class, int.class);
+        AndroidSupport.IS_ANDROID
+            ? null
+            : ReflectionUtils.getCtrHandle(
+                StackTraceElement.class, String.class, String.class, String.class, int.class);
     private static final MethodHandle STACK_TRACE_ELEMENT_CTR_V2 =
-        getOptionalCtr(
-            String.class,
-            String.class,
-            String.class,
-            String.class,
-            String.class,
-            String.class,
-            int.class);
+        AndroidSupport.IS_ANDROID
+            ? null
+            : getOptionalCtr(
+                String.class,
+                String.class,
+                String.class,
+                String.class,
+                String.class,
+                String.class,
+                int.class);
 
     public StackTraceElementSerializer(Config config) {
       super(config, StackTraceElement.class, false, true);
@@ -194,6 +283,9 @@ public final class ExceptionSerializers {
     }
 
     private static MethodHandle getOptionalGetter(String methodName) {
+      if (LOOKUP == null) {
+        return null;
+      }
       try {
         return LOOKUP.findVirtual(
             StackTraceElement.class, methodName, MethodType.methodType(String.class));
@@ -205,6 +297,9 @@ public final class ExceptionSerializers {
     }
 
     private static MethodHandle getOptionalCtr(Class<?>... parameterTypes) {
+      if (LOOKUP == null) {
+        return null;
+      }
       try {
         return LOOKUP.findConstructor(
             StackTraceElement.class, MethodType.methodType(void.class, parameterTypes));
@@ -234,6 +329,9 @@ public final class ExceptionSerializers {
         String methodName,
         String fileName,
         int lineNumber) {
+      if (AndroidSupport.IS_ANDROID) {
+        return new StackTraceElement(declaringClass, methodName, fileName, lineNumber);
+      }
       try {
         if (STACK_TRACE_ELEMENT_CTR_V2 != null) {
           return (StackTraceElement)
@@ -263,6 +361,44 @@ public final class ExceptionSerializers {
       return ObjectCreators.getObjectCreator(type);
     }
     return new ObjectCreators.ParentNoArgCtrObjectCreator<>(type);
+  }
+
+  private static <T extends Throwable> Constructor<T> getOptionalMessageConstructor(Class<T> type) {
+    Constructor<T> constructor;
+    try {
+      constructor = type.getDeclaredConstructor(String.class);
+    } catch (NoSuchMethodException e) {
+      return null;
+    }
+    try {
+      constructor.setAccessible(true);
+      return constructor;
+    } catch (RuntimeException e) {
+      return null;
+    }
+  }
+
+  private static boolean isJdkThrowable(Class<?> type) {
+    String name = type.getName();
+    return name.startsWith("java.")
+        || name.startsWith("javax.")
+        || name.startsWith("jdk.")
+        || name.startsWith("sun.");
+  }
+
+  private static boolean hasSubclassFields(Serializer[] slotsSerializers) {
+    for (Serializer slotsSerializer : slotsSerializers) {
+      if (slotsSerializer instanceof ObjectSerializer) {
+        if (((ObjectSerializer) slotsSerializer).getNumFields() > 0) {
+          return true;
+        }
+      } else if (slotsSerializer instanceof MetaSharedLayerSerializerBase) {
+        if (((MetaSharedLayerSerializerBase) slotsSerializer).getNumFields() > 0) {
+          return true;
+        }
+      }
+    }
+    return false;
   }
 
   private static <T> Serializer[] buildSlotsSerializers(TypeResolver typeResolver, Class<T> type) {
@@ -325,35 +461,73 @@ public final class ExceptionSerializers {
   private static List<Throwable> readSuppressedExceptions(ReadContext readContext) {
     MemoryBuffer buffer = readContext.getBuffer();
     int numSuppressedExceptions = buffer.readVarUInt32();
-    List<Throwable> suppressedExceptionsList = new ArrayList<>(numSuppressedExceptions);
+    List<Throwable> suppressedExceptions = new ArrayList<>(numSuppressedExceptions);
     for (int i = 0; i < numSuppressedExceptions; i++) {
-      suppressedExceptionsList.add((Throwable) readContext.readRef());
+      suppressedExceptions.add((Throwable) readContext.readRef());
     }
-    return suppressedExceptionsList;
+    return suppressedExceptions;
+  }
+
+  private static void addSuppressedExceptions(Throwable obj, List<Throwable> suppressedExceptions) {
+    for (Throwable suppressedException : suppressedExceptions) {
+      obj.addSuppressed(suppressedException);
+    }
+  }
+
+  private static boolean containsPendingThrowable(List<Throwable> throwables) {
+    for (Throwable throwable : throwables) {
+      if (containsPendingThrowable(throwable)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private static boolean containsPendingThrowable(Throwable throwable) {
+    return containsPendingThrowable(throwable, Collections.newSetFromMap(new IdentityHashMap<>()));
+  }
+
+  private static boolean containsPendingThrowable(Throwable throwable, Set<Throwable> seen) {
+    if (throwable == null) {
+      return false;
+    }
+    if (throwable == PendingThrowable.INSTANCE) {
+      return true;
+    }
+    if (!seen.add(throwable)) {
+      return false;
+    }
+    if (containsPendingThrowable(throwable.getCause(), seen)) {
+      return true;
+    }
+    for (Throwable suppressedException : throwable.getSuppressed()) {
+      if (containsPendingThrowable(suppressedException, seen)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   private static final class ThrowableOffsets {
     // Graalvm unsafe offset substitution support: Make the call followed by a field store
     // directly or by a sign extend node followed directly by a field store.
     private static final long DETAIL_MESSAGE_FIELD_OFFSET;
-    private static final long CAUSE_FIELD_OFFSET;
-    private static final long STACK_TRACE_FIELD_OFFSET;
-    private static final long SUPPRESSED_EXCEPTIONS_FIELD_OFFSET;
 
     static {
       try {
         Field detailMessageField = Throwable.class.getDeclaredField("detailMessage");
-        DETAIL_MESSAGE_FIELD_OFFSET = Platform.UNSAFE.objectFieldOffset(detailMessageField);
-        Field causeField = Throwable.class.getDeclaredField("cause");
-        CAUSE_FIELD_OFFSET = Platform.UNSAFE.objectFieldOffset(causeField);
-        Field stackTraceField = Throwable.class.getDeclaredField("stackTrace");
-        STACK_TRACE_FIELD_OFFSET = Platform.UNSAFE.objectFieldOffset(stackTraceField);
-        Field suppressedExceptionsField = Throwable.class.getDeclaredField("suppressedExceptions");
-        SUPPRESSED_EXCEPTIONS_FIELD_OFFSET =
-            Platform.UNSAFE.objectFieldOffset(suppressedExceptionsField);
+        DETAIL_MESSAGE_FIELD_OFFSET = UnsafeOps.UNSAFE.objectFieldOffset(detailMessageField);
       } catch (Exception e) {
         throw new RuntimeException(e);
       }
+    }
+  }
+
+  private static final class PendingThrowable extends Throwable {
+    private static final PendingThrowable INSTANCE = new PendingThrowable();
+
+    private PendingThrowable() {
+      super(null, null, false, false);
     }
   }
 }

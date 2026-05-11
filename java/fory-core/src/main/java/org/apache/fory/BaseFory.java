@@ -20,6 +20,7 @@
 package org.apache.fory;
 
 import java.io.OutputStream;
+import java.nio.ByteBuffer;
 import java.util.function.Function;
 import org.apache.fory.io.ForyInputStream;
 import org.apache.fory.io.ForyReadableChannel;
@@ -172,12 +173,6 @@ public interface BaseFory {
   /** Return serialized <code>obj</code> as a byte array. */
   byte[] serialize(Object obj, BufferCallback callback);
 
-  /**
-   * Serialize <code>obj</code> to a off-heap buffer specified by <code>address</code> and <code>
-   * size</code>.
-   */
-  MemoryBuffer serialize(Object obj, long address, int size);
-
   /** Serialize data into buffer. */
   MemoryBuffer serialize(MemoryBuffer buffer, Object obj);
 
@@ -191,6 +186,13 @@ public interface BaseFory {
   /** Deserialize <code>obj</code> from a byte array. */
   Object deserialize(byte[] bytes);
 
+  /**
+   * Deserialize <code>obj</code> from {@code byteBuffer.position()} to {@code byteBuffer.limit()}
+   * without changing the caller buffer position or limit. On Android, heap, direct, and readonly
+   * buffers are copied into Fory-owned heap memory before deserialization.
+   */
+  Object deserialize(ByteBuffer byteBuffer);
+
   <T> T deserialize(byte[] bytes, Class<T> type);
 
   <T> T deserialize(MemoryBuffer buffer, Class<T> type);
@@ -200,12 +202,6 @@ public interface BaseFory {
   <T> T deserialize(ForyReadableChannel channel, Class<T> type);
 
   Object deserialize(byte[] bytes, Iterable<MemoryBuffer> outOfBandBuffers);
-
-  /**
-   * Deserialize <code>obj</code> from a off-heap buffer specified by <code>address</code> and
-   * <code>size</code>.
-   */
-  Object deserialize(long address, int size);
 
   /** Deserialize <code>obj</code> from a <code>buffer</code>. */
   Object deserialize(MemoryBuffer buffer);

@@ -72,11 +72,12 @@ import org.apache.fory.exception.ClassUnregisteredException;
 import org.apache.fory.exception.SerializerUnregisteredException;
 import org.apache.fory.logging.Logger;
 import org.apache.fory.logging.LoggerFactory;
+import org.apache.fory.memory.ByteBufferUtil;
 import org.apache.fory.memory.MemoryBuffer;
-import org.apache.fory.memory.Platform;
 import org.apache.fory.meta.EncodedMetaString;
 import org.apache.fory.meta.TypeDef;
 import org.apache.fory.meta.TypeExtMeta;
+import org.apache.fory.platform.GraalvmSupport;
 import org.apache.fory.reflect.ReflectionUtils;
 import org.apache.fory.serializer.ArraySerializers;
 import org.apache.fory.serializer.BigIntegerSerializer;
@@ -124,7 +125,6 @@ import org.apache.fory.type.unsigned.UInt16;
 import org.apache.fory.type.unsigned.UInt32;
 import org.apache.fory.type.unsigned.UInt64;
 import org.apache.fory.type.unsigned.UInt8;
-import org.apache.fory.util.GraalvmSupport;
 import org.apache.fory.util.Preconditions;
 
 @SuppressWarnings({"unchecked", "rawtypes"})
@@ -159,7 +159,7 @@ public class XtypeResolver extends TypeResolver {
       Serializer serializer = new UnknownStructSerializer(this, null);
       register(UnknownStruct.class, serializer, "", "unknown_struct", Types.COMPATIBLE_STRUCT, -1);
     }
-    if (GraalvmSupport.isGraalBuildtime()) {
+    if (GraalvmSupport.isGraalBuildTime()) {
       classInfoMap.forEach(
           (cls, classInfo) -> {
             if (classInfo.serializer != null) {
@@ -962,18 +962,18 @@ public class XtypeResolver extends TypeResolver {
         Types.BINARY, byte[].class, new PrimitiveArraySerializers.ByteArraySerializer(this));
     @SuppressWarnings("unchecked")
     Class<java.nio.ByteBuffer> heapByteBufferClass =
-        (Class<java.nio.ByteBuffer>) Platform.HEAP_BYTE_BUFFER_CLASS;
+        (Class<java.nio.ByteBuffer>) ByteBufferUtil.HEAP_BYTE_BUFFER_CLASS;
     registerType(
         Types.BINARY,
-        Platform.HEAP_BYTE_BUFFER_CLASS,
+        ByteBufferUtil.HEAP_BYTE_BUFFER_CLASS,
         new org.apache.fory.serializer.BufferSerializers.ByteBufferSerializer(
             this, heapByteBufferClass));
     @SuppressWarnings("unchecked")
     Class<java.nio.ByteBuffer> directByteBufferClass =
-        (Class<java.nio.ByteBuffer>) Platform.DIRECT_BYTE_BUFFER_CLASS;
+        (Class<java.nio.ByteBuffer>) ByteBufferUtil.DIRECT_BYTE_BUFFER_CLASS;
     registerType(
         Types.BINARY,
-        Platform.DIRECT_BYTE_BUFFER_CLASS,
+        ByteBufferUtil.DIRECT_BYTE_BUFFER_CLASS,
         new org.apache.fory.serializer.BufferSerializers.ByteBufferSerializer(
             this, directByteBufferClass));
 
@@ -1384,7 +1384,7 @@ public class XtypeResolver extends TypeResolver {
             }
           }
           // For enums at GraalVM build time, also handle anonymous enum value classes
-          if (cls.isEnum() && GraalvmSupport.isGraalBuildtime()) {
+          if (cls.isEnum() && GraalvmSupport.isGraalBuildTime()) {
             for (Object enumConstant : cls.getEnumConstants()) {
               Class<?> enumValueClass = enumConstant.getClass();
               if (enumValueClass != cls) {
@@ -1392,12 +1392,12 @@ public class XtypeResolver extends TypeResolver {
               }
             }
           }
-          if (GraalvmSupport.isGraalBuildtime() && classInfo.serializer != null) {
+          if (GraalvmSupport.isGraalBuildTime() && classInfo.serializer != null) {
             getGraalvmClassRegistry()
                 .putSerializerClass(cls, getGraalvmSerializerClass(classInfo.serializer));
           }
         });
-    if (GraalvmSupport.isGraalBuildtime()) {
+    if (GraalvmSupport.isGraalBuildTime()) {
       clearGraalvmGeneratedTypeInfoSerializers();
       getGraalvmClassRegistry().clearResolvers();
     }

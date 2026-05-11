@@ -48,8 +48,12 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import org.apache.fory.annotation.CodegenInvoke;
 import org.apache.fory.annotation.Internal;
-import org.apache.fory.memory.Platform;
-import org.apache.fory.util.GraalvmSupport;
+import org.apache.fory.collection.ClassValueCache;
+import org.apache.fory.exception.ForyException;
+import org.apache.fory.platform.AndroidSupport;
+import org.apache.fory.platform.GraalvmSupport;
+import org.apache.fory.platform.UnsafeOps;
+import org.apache.fory.util.ExceptionUtils;
 import org.apache.fory.util.Preconditions;
 import org.apache.fory.util.StringUtils;
 import org.apache.fory.util.function.Functions;
@@ -72,7 +76,9 @@ public class ReflectionUtils {
 
   public static boolean hasPublicNoArgConstructor(Class<?> clazz) {
     Constructor<?> constructor = getNoArgConstructor(clazz);
-    return constructor != null && Modifier.isPublic(constructor.getModifiers());
+    return constructor != null
+        && Modifier.isPublic(clazz.getModifiers())
+        && Modifier.isPublic(constructor.getModifiers());
   }
 
   static <T> Constructor<T> getNoArgConstructor(Class<T> clazz) {
@@ -91,24 +97,25 @@ public class ReflectionUtils {
     return ctr;
   }
 
-  private static final ClassValue<MethodHandle> ctrHandleCache =
-      new ClassValue<MethodHandle>() {
-        @Override
-        protected MethodHandle computeValue(Class<?> type) {
-          return createNoArgCtrHandle(type);
-        }
-      };
+  private static final ClassValueCache<MethodHandle> ctrHandleCache =
+      ClassValueCache.newClassKeyCache(32);
 
   private static MethodHandle createNoArgCtrHandle(Class<?> cls) {
     Constructor<?> ctr = getNoArgConstructor(cls);
     if (ctr == null) {
       return null;
     }
+    if (AndroidSupport.IS_ANDROID) {
+      if (!Modifier.isPublic(cls.getModifiers()) || !Modifier.isPublic(ctr.getModifiers())) {
+        return null;
+      }
+      return findPublicConstructor(cls);
+    }
     MethodHandles.Lookup lookup = _JDKAccess._trustedLookup(ctr.getDeclaringClass());
     try {
       return lookup.findConstructor(ctr.getDeclaringClass(), MethodType.methodType(void.class));
     } catch (NoSuchMethodException | IllegalAccessException e) {
-      Platform.throwException(e);
+      ExceptionUtils.throwException(e);
       throw new IllegalStateException("unreachable");
     }
   }
@@ -118,7 +125,7 @@ public class ReflectionUtils {
    * no-arg constructor if `checked` not enabled, throws exception if `check` enabled.
    */
   public static MethodHandle getCtrHandle(Class<?> cls, boolean checked) {
-    MethodHandle methodHandle = ctrHandleCache.get(cls);
+    MethodHandle methodHandle = ctrHandleCache.get(cls, () -> createNoArgCtrHandle(cls));
     if (checked && methodHandle == null) {
       throw new RuntimeException(
           String.format(
@@ -129,28 +136,47 @@ public class ReflectionUtils {
     return methodHandle;
   }
 
-  private static final ClassValue<ConcurrentMap<List<Class<?>>, MethodHandle>>
-      ctrHandleParamsCache =
-          new ClassValue<ConcurrentMap<List<Class<?>>, MethodHandle>>() {
-            @Override
-            protected ConcurrentMap<List<Class<?>>, MethodHandle> computeValue(Class<?> type) {
-              return new ConcurrentHashMap<>();
-            }
-          };
+  private static final ClassValueCache<ConcurrentMap<List<Class<?>>, MethodHandle>>
+      ctrHandleParamsCache = ClassValueCache.newClassKeyCache(32);
 
   public static MethodHandle getCtrHandle(Class<?> cls, Class<?>... types) {
+    if (AndroidSupport.IS_ANDROID) {
+      if (!Modifier.isPublic(cls.getModifiers())) {
+        throw new ForyException("Public constructor access is not supported for non-public " + cls);
+      }
+      try {
+        Constructor<?> constructor = cls.getConstructor(types);
+        if (!Modifier.isPublic(constructor.getModifiers())) {
+          throw new ForyException("Public constructor is not available for " + cls);
+        }
+      } catch (NoSuchMethodException e) {
+        ExceptionUtils.throwException(e);
+      }
+      return findPublicConstructor(cls, types);
+    }
     MethodHandles.Lookup lookup = _JDKAccess._trustedLookup(cls);
-    ConcurrentMap<List<Class<?>>, MethodHandle> map = ctrHandleParamsCache.get(cls);
+    ConcurrentMap<List<Class<?>>, MethodHandle> map =
+        ctrHandleParamsCache.get(cls, ConcurrentHashMap::new);
     return map.computeIfAbsent(
         Arrays.asList(types),
         k -> {
           try {
             return lookup.findConstructor(cls, MethodType.methodType(void.class, types));
           } catch (NoSuchMethodException | IllegalAccessException e) {
-            Platform.throwException(e);
+            ExceptionUtils.throwException(e);
             throw new IllegalStateException("unreachable");
           }
         });
+  }
+
+  private static MethodHandle findPublicConstructor(Class<?> cls, Class<?>... types) {
+    try {
+      return MethodHandles.publicLookup()
+          .findConstructor(cls, MethodType.methodType(void.class, types));
+    } catch (NoSuchMethodException | IllegalAccessException e) {
+      ExceptionUtils.throwException(e);
+      throw new IllegalStateException("unreachable");
+    }
   }
 
   /**
@@ -304,7 +330,7 @@ public class ReflectionUtils {
     try {
       return cls.getDeclaredField(fieldName);
     } catch (NoSuchFieldException e) {
-      Platform.throwException(e);
+      ExceptionUtils.throwException(e);
       throw new IllegalStateException("Unreachable");
     }
   }
@@ -430,7 +456,7 @@ public class ReflectionUtils {
   public static List<Object> getFieldValues(Collection<Field> fields, Object o) {
     List<Object> results = new ArrayList<>(fields.size());
     for (Field field : fields) {
-      // Platform.objectFieldOffset(field) can't handle primitive field.
+      // UnsafeOps.objectFieldOffset(field) can't handle primitive field.
       Object fieldValue = FieldAccessor.createAccessor(field).get(o);
       results.add(fieldValue);
     }
@@ -438,7 +464,11 @@ public class ReflectionUtils {
   }
 
   public static long getFieldOffset(Field field) {
-    if (GraalvmSupport.isGraalBuildtime()) {
+    if (AndroidSupport.IS_ANDROID) {
+      throw new UnsupportedOperationException(
+          "Field offsets are not supported on Android: " + field);
+    }
+    if (GraalvmSupport.isGraalBuildTime()) {
       // See more details at
       // https://www.graalvm.org/latest/reference-manual/native-image/metadata/Compatibility/#unsafe-memory-access
       throw new IllegalStateException(
@@ -448,7 +478,7 @@ public class ReflectionUtils {
     if (field == null) {
       return -1;
     }
-    return Platform.objectFieldOffset(field);
+    return UnsafeOps.objectFieldOffset(field);
   }
 
   public static long getFieldOffset(Class<?> cls, String fieldName) {
@@ -469,11 +499,30 @@ public class ReflectionUtils {
   public static void setObjectFieldValue(Object obj, Field field, Object value) {
     Preconditions.checkArgument(
         !field.getType().isPrimitive(), "Field %s is primitive type", field);
-    Platform.putObject(obj, Platform.objectFieldOffset(field), value);
+    if (AndroidSupport.IS_ANDROID) {
+      try {
+        field.setAccessible(true);
+        field.set(obj, value);
+        return;
+      } catch (IllegalAccessException | IllegalArgumentException e) {
+        throw new ForyException("Failed to write object field reflectively: " + field, e);
+      }
+    }
+    UnsafeOps.putObject(obj, UnsafeOps.objectFieldOffset(field), value);
   }
 
   public static <T> T getObjectFieldValue(Object obj, Field field) {
-    return (T) Platform.getObject(obj, Platform.objectFieldOffset(field));
+    Preconditions.checkArgument(
+        !field.getType().isPrimitive(), "Field %s is primitive type", field);
+    if (AndroidSupport.IS_ANDROID) {
+      try {
+        field.setAccessible(true);
+        return (T) field.get(obj);
+      } catch (IllegalAccessException | IllegalArgumentException e) {
+        throw new ForyException("Failed to read object field reflectively: " + field, e);
+      }
+    }
+    return (T) UnsafeOps.getObject(obj, UnsafeOps.objectFieldOffset(field));
   }
 
   /**
@@ -487,8 +536,18 @@ public class ReflectionUtils {
     while (cls != Object.class) {
       try {
         Field field = cls.getDeclaredField(fieldName);
-        long fieldOffset = Platform.objectFieldOffset(field);
-        return Platform.getObject(obj, fieldOffset);
+        Preconditions.checkArgument(
+            !field.getType().isPrimitive(), "Field %s is primitive type", field);
+        if (AndroidSupport.IS_ANDROID) {
+          try {
+            field.setAccessible(true);
+            return field.get(obj);
+          } catch (IllegalAccessException | IllegalArgumentException e) {
+            throw new ForyException("Failed to read object field reflectively: " + field, e);
+          }
+        }
+        long fieldOffset = UnsafeOps.objectFieldOffset(field);
+        return UnsafeOps.getObject(obj, fieldOffset);
         // CHECKSTYLE.OFF:EmptyCatchBlock
       } catch (NoSuchFieldException ignored) {
       }

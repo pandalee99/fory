@@ -19,7 +19,6 @@
 
 package org.apache.fory;
 
-import java.nio.ByteBuffer;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import org.apache.fory.annotation.Internal;
@@ -40,9 +39,6 @@ public interface ThreadSafeFory extends BaseFory {
    * result.
    */
   <R> R execute(Function<Fory, R> action);
-
-  /** Deserialize <code>obj</code> from a {@link ByteBuffer}. */
-  Object deserialize(ByteBuffer byteBuffer);
 
   /**
    * Set TypeChecker of serializer for current thread only.

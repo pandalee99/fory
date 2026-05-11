@@ -23,10 +23,12 @@ import java.lang.reflect.Field;
 import java.util.Map;
 import org.apache.fory.context.ReadContext;
 import org.apache.fory.context.WriteContext;
-import org.apache.fory.memory.Platform;
+import org.apache.fory.exception.ForyException;
+import org.apache.fory.platform.AndroidSupport;
+import org.apache.fory.platform.GraalvmSupport;
+import org.apache.fory.platform.UnsafeOps;
 import org.apache.fory.resolver.TypeResolver;
 import org.apache.fory.serializer.collection.MapLikeSerializer;
-import org.apache.fory.util.GraalvmSupport;
 import org.apache.fory.util.Preconditions;
 
 /**
@@ -43,9 +45,19 @@ public class SingletonMapSerializer extends MapLikeSerializer {
   public SingletonMapSerializer(TypeResolver typeResolver, Class cls) {
     super(typeResolver, cls, false);
     try {
+      Class.forName(type.getName(), true, type.getClassLoader());
+    } catch (final ClassNotFoundException e) {
+      throw new RuntimeException(e);
+    }
+    try {
       field = type.getDeclaredField("MODULE$");
+      if (AndroidSupport.IS_ANDROID) {
+        field.setAccessible(true);
+      }
     } catch (NoSuchFieldException e) {
       throw new RuntimeException(type + " doesn't have `MODULE$` field", e);
+    } catch (RuntimeException e) {
+      throw new ForyException("Failed to make Scala singleton field accessible: " + type, e);
     }
   }
 
@@ -59,13 +71,20 @@ public class SingletonMapSerializer extends MapLikeSerializer {
 
   @Override
   public Object read(ReadContext readContext) {
+    if (AndroidSupport.IS_ANDROID) {
+      try {
+        return field.get(null);
+      } catch (IllegalAccessException | RuntimeException e) {
+        throw new ForyException("Failed to read Scala singleton field: " + type, e);
+      }
+    }
     long offset = this.offset;
     if (offset == -1) {
-      Preconditions.checkArgument(!GraalvmSupport.isGraalBuildtime());
-      offset = this.offset = Platform.UNSAFE.staticFieldOffset(field);
-      base = Platform.UNSAFE.staticFieldBase(field);
+      Preconditions.checkArgument(!GraalvmSupport.isGraalBuildTime());
+      offset = this.offset = UnsafeOps.UNSAFE.staticFieldOffset(field);
+      base = UnsafeOps.UNSAFE.staticFieldBase(field);
     }
-    return Platform.getObject(base, offset);
+    return UnsafeOps.getObject(base, offset);
   }
 
   @Override

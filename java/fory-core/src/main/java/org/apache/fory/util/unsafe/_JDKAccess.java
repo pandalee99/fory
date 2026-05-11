@@ -37,11 +37,12 @@ import java.util.function.Predicate;
 import java.util.function.ToDoubleFunction;
 import java.util.function.ToIntFunction;
 import java.util.function.ToLongFunction;
+import org.apache.fory.collection.ClassValueCache;
 import org.apache.fory.collection.Tuple2;
-import org.apache.fory.memory.Platform;
+import org.apache.fory.platform.GraalvmSupport;
+import org.apache.fory.platform.JdkVersion;
 import org.apache.fory.type.TypeUtils;
 import org.apache.fory.util.ExceptionUtils;
-import org.apache.fory.util.GraalvmSupport;
 import org.apache.fory.util.Preconditions;
 import org.apache.fory.util.function.ToByteFunction;
 import org.apache.fory.util.function.ToCharFunction;
@@ -53,20 +54,14 @@ import sun.misc.Unsafe;
 // CHECKSTYLE.OFF:TypeName
 public class _JDKAccess {
   // CHECKSTYLE.ON:TypeName
-  public static final int JAVA_VERSION;
   public static final boolean IS_OPEN_J9;
   public static final Unsafe UNSAFE;
   public static final Class<?> _INNER_UNSAFE_CLASS;
   public static final Object _INNER_UNSAFE;
 
   static {
-    String property = System.getProperty("java.specification.version");
-    if (property.startsWith("1.")) {
-      property = property.substring(2);
-    }
     String jmvName = System.getProperty("java.vm.name", "");
     IS_OPEN_J9 = jmvName.contains("OpenJ9");
-    JAVA_VERSION = Integer.parseInt(property);
     Unsafe unsafe;
     try {
       Field unsafeField = Unsafe.class.getDeclaredField("theUnsafe");
@@ -76,7 +71,7 @@ public class _JDKAccess {
       throw new UnsupportedOperationException("Unsafe is not supported in this platform.");
     }
     UNSAFE = unsafe;
-    if (JAVA_VERSION >= 11) {
+    if (JdkVersion.MAJOR_VERSION >= 11) {
       try {
         Field theInternalUnsafeField = Unsafe.class.getDeclaredField("theInternalUnsafe");
         theInternalUnsafeField.setAccessible(true);
@@ -91,24 +86,18 @@ public class _JDKAccess {
     }
   }
 
-  private static final ClassValue<Lookup> lookupCache =
-      new ClassValue<Lookup>() {
-        @Override
-        protected Lookup computeValue(Class type) {
-          return _Lookup._trustedLookup(type);
-        }
-      };
+  private static final ClassValueCache<Lookup> lookupCache = ClassValueCache.newClassKeyCache(32);
 
   // CHECKSTYLE.OFF:MethodName
 
   public static Lookup _trustedLookup(Class<?> objectClass) {
     // CHECKSTYLE.ON:MethodName
-    if (GraalvmSupport.isGraalBuildtime()) {
+    if (GraalvmSupport.isGraalBuildTime()) {
       // Lookup will init `java.io.FilePermission`,which is not allowed at graalvm build time
       // as a reachable object.
       return _Lookup._trustedLookup(objectClass);
     }
-    return lookupCache.get(objectClass);
+    return lookupCache.get(objectClass, () -> _Lookup._trustedLookup(objectClass));
   }
 
   public static <T> T tryMakeFunction(
@@ -315,7 +304,7 @@ public class _JDKAccess {
   private static volatile Method getModuleMethod;
 
   public static Object getModule(Class<?> cls) {
-    Preconditions.checkArgument(Platform.JAVA_VERSION >= 9);
+    Preconditions.checkArgument(JdkVersion.MAJOR_VERSION >= 9);
     if (getModuleMethod == null) {
       try {
         getModuleMethod = Class.class.getDeclaredMethod("getModule");
@@ -334,7 +323,7 @@ public class _JDKAccess {
   private static volatile MethodHandle addReadsHandle;
 
   public static Object addReads(Object thisModule, Object otherModule) {
-    Preconditions.checkArgument(Platform.JAVA_VERSION >= 9);
+    Preconditions.checkArgument(JdkVersion.MAJOR_VERSION >= 9);
     try {
       if (addReadsHandle == null) {
         Class<?> cls = Class.forName("java.lang.Module");

@@ -22,6 +22,7 @@ package org.apache.fory.util;
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
 import java.lang.reflect.Constructor;
+import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -32,7 +33,8 @@ import org.apache.fory.annotation.Internal;
 import org.apache.fory.collection.ClassValueCache;
 import org.apache.fory.logging.Logger;
 import org.apache.fory.logging.LoggerFactory;
-import org.apache.fory.memory.Platform;
+import org.apache.fory.platform.AndroidSupport;
+import org.apache.fory.platform.UnsafeOps;
 import org.apache.fory.reflect.FieldAccessor;
 import org.apache.fory.resolver.TypeResolver;
 import org.apache.fory.type.ScalaTypes;
@@ -295,7 +297,8 @@ public class DefaultValueUtils {
             cls.getName());
         return values;
       }
-      MethodHandles.Lookup lookup = _JDKAccess._trustedLookup(companionClass);
+      MethodHandles.Lookup lookup =
+          AndroidSupport.IS_ANDROID ? null : _JDKAccess._trustedLookup(companionClass);
 
       // Look for methods named `apply$default$1`, `apply$default$2`, etc.
       Method[] companionMethods = companionClass.getDeclaredMethods();
@@ -307,9 +310,7 @@ public class DefaultValueUtils {
             String indexStr =
                 methodName.substring(methodName.lastIndexOf("$default$") + "$default$".length());
             int paramIndex = Integer.parseInt(indexStr);
-            // Create method handle for the default value method
-            MethodHandle methodHandle = lookup.unreflect(method);
-            Object defaultValue = methodHandle.invoke(companionInstance);
+            Object defaultValue = invokeDefaultValueMethod(lookup, method, companionInstance);
             values.put(paramIndex, defaultValue);
           } catch (Throwable e) {
             LOG.warn(
@@ -327,7 +328,8 @@ public class DefaultValueUtils {
     private static Map<Integer, Object> getDefaultValuesForRegularScalaClass(Class<?> cls) {
       Map<Integer, Object> values = new HashMap<>();
       try {
-        MethodHandles.Lookup lookup = _JDKAccess._trustedLookup(cls);
+        MethodHandles.Lookup lookup =
+            AndroidSupport.IS_ANDROID ? null : _JDKAccess._trustedLookup(cls);
         Method[] classMethods = cls.getDeclaredMethods();
         for (Method method : classMethods) {
           String methodName = method.getName();
@@ -337,11 +339,9 @@ public class DefaultValueUtils {
               String indexStr =
                   methodName.substring(methodName.lastIndexOf("$default$") + "$default$".length());
               int paramIndex = Integer.parseInt(indexStr);
-              // Create method handle for the default value method
-              MethodHandle methodHandle = lookup.unreflect(method);
               // For regular Scala classes, we need to create an instance to call instance methods
               // Since these are default value methods, we can try to call them as static methods
-              Object defaultValue = methodHandle.invoke();
+              Object defaultValue = invokeDefaultValueMethod(lookup, method, null);
               values.put(paramIndex, defaultValue);
             } catch (Throwable e) {
               LOG.warn(
@@ -362,6 +362,23 @@ public class DefaultValueUtils {
         return values;
       }
       return values;
+    }
+
+    private static Object invokeDefaultValueMethod(
+        MethodHandles.Lookup lookup, Method method, Object target) throws Throwable {
+      if (AndroidSupport.IS_ANDROID) {
+        try {
+          method.setAccessible(true);
+          return method.invoke(target);
+        } catch (InvocationTargetException e) {
+          throw e.getCause();
+        }
+      }
+      MethodHandle methodHandle = lookup.unreflect(method);
+      if (target == null) {
+        return methodHandle.invoke();
+      }
+      return methodHandle.invoke(target);
     }
   }
 
@@ -401,31 +418,35 @@ public class DefaultValueUtils {
       FieldAccessor fieldAccessor = defaultField.getFieldAccessor();
       if (fieldAccessor != null) {
         Object defaultValue = defaultField.getDefaultValue();
+        if (AndroidSupport.IS_ANDROID) {
+          fieldAccessor.set(obj, defaultValue);
+          continue;
+        }
         long fieldOffset = fieldAccessor.getFieldOffset();
         switch (defaultField.dispatchId) {
           case Types.BOOL:
-            Platform.putBoolean(obj, fieldOffset, (Boolean) defaultValue);
+            UnsafeOps.putBoolean(obj, fieldOffset, (Boolean) defaultValue);
             break;
           case Types.INT8:
-            Platform.putByte(obj, fieldOffset, (Byte) defaultValue);
+            UnsafeOps.putByte(obj, fieldOffset, (Byte) defaultValue);
             break;
           case Types.INT16:
-            Platform.putShort(obj, fieldOffset, (Short) defaultValue);
+            UnsafeOps.putShort(obj, fieldOffset, (Short) defaultValue);
             break;
           case Types.INT32:
           case Types.VARINT32:
-            Platform.putInt(obj, fieldOffset, (Integer) defaultValue);
+            UnsafeOps.putInt(obj, fieldOffset, (Integer) defaultValue);
             break;
           case Types.INT64:
           case Types.VARINT64:
           case Types.TAGGED_INT64:
-            Platform.putLong(obj, fieldOffset, (Long) defaultValue);
+            UnsafeOps.putLong(obj, fieldOffset, (Long) defaultValue);
             break;
           case Types.FLOAT32:
-            Platform.putFloat(obj, fieldOffset, (Float) defaultValue);
+            UnsafeOps.putFloat(obj, fieldOffset, (Float) defaultValue);
             break;
           case Types.FLOAT64:
-            Platform.putDouble(obj, fieldOffset, (Double) defaultValue);
+            UnsafeOps.putDouble(obj, fieldOffset, (Double) defaultValue);
             break;
           default:
             // Object type (including String, char, boxed types not covered above)

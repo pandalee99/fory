@@ -25,6 +25,30 @@ Load this file when changing anything under `java/` or when Java drives a cross-
 - In Java codec hot paths, avoid `Preconditions.checkArgument` for attacker-controlled primitive
   validation. Use direct primitive branches and throw on the cold error path to preserve inlining and
   avoid varargs/helper overhead.
+- Do not introduce codegen or generated-serializer changes that may cause behavior or performance
+  regressions. When editing `java/fory-core/src/main/java/org/apache/fory/builder/**` or APIs used
+  by generated serializers, do extra self-review: inspect the generated output impact, preserve
+  unsafe/codegen optimizations unless intentionally changing them, and run validation appropriate to
+  the regression risk.
+- Android and JVM serializers must use a unified wire protocol: each side must be able to
+  deserialize data written by the other side. If implementation paths diverge, the writer must emit
+  enough metadata for either reader to identify and parse that path correctly; add both
+  Android-read-JVM and JVM-read-Android regression coverage.
+- In `MemoryBuffer`, Android branches are intentional method-boundary exits. Each
+  `if (AndroidSupport.IS_ANDROID)` branch must contain exactly one `MemoryOps` call and no local
+  Android heap logic. Keep heap index math, direct field updates, typed array loops, and
+  reader/writer index changes in `MemoryOps`; do not add Android-named helpers, heap wrapper
+  helpers, or Android-specific `MemoryBuffer` subclasses.
+- In `MemoryBuffer` and `MemoryOps` hot paths, duplicate small straight-line copy/read/write logic
+  when that keeps control flow direct. Do not add private helper indirection to hot paths just to
+  reduce local code duplication; keep helpers for slow, cold, or error paths.
+- In `MemoryBuffer` small-varint read/write hot paths, once Android has exited through the single
+  `MemoryOps` call, keep JVM bulk loads/stores local with raw Unsafe operations instead of routing
+  through branchful `_unsafeGet*` or `_unsafePut*` helpers. Add or preserve source comments that
+  explain this inlining invariant when editing these methods.
+- In primitive-array swap-endian readers, do not loop through `MemoryBuffer._unsafeGet*` helpers.
+  Copy the payload through the typed payload API, then swap destination values locally so the path
+  stays stream-safe and avoids Android-dispatch helper drift.
 - Keep GraalVM feature code as a thin metadata/registration layer. Build time should publish metadata needed for runtime reconstruction, not retain concrete generated or user serializer instances in the image heap.
 - If changes touch GraalVM bootstrap, serializer retention, native-image metadata, or `ObjectStreamSerializer` GraalVM behavior, verify the native-image build and run the produced binary; a plain Java compile is insufficient.
 - Put latest-JDK or virtual-thread tests in the latest-JDK test modules with the matching compiler/profile floor, and centralize runtime-version probing in existing compatibility utilities.
