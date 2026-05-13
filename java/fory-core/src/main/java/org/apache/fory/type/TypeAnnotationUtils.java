@@ -297,6 +297,29 @@ public class TypeAnnotationUtils {
     return true;
   }
 
+  public static boolean isBoxedListArrayType(Descriptor descriptor) {
+    Field field = descriptor.getField();
+    if (field != null) {
+      return isBoxedListArrayType(field);
+    }
+    if (!descriptor.isArrayType()) {
+      return false;
+    }
+    Class<?> rawType = descriptor.getRawType();
+    if (TypeUtils.isPrimitiveListClass(rawType)) {
+      return false;
+    }
+    if (rawType.isArray() && rawType.getComponentType().isPrimitive()) {
+      return false;
+    }
+    // Fieldless descriptors can be TypeDef-reified schema views. Validate real source annotations
+    // through the Field overload; schema-only non-list descriptors are not boxed-list arrays.
+    if (!List.class.isAssignableFrom(rawType)) {
+      return false;
+    }
+    return true;
+  }
+
   public static int getBoxedListArrayTypeId(Field field) {
     validateBoxedListArrayType(field);
     TypeRef<?> elementTypeRef = TypeUtils.getElementType(TypeUtils.getFieldTypeRef(field));
@@ -305,6 +328,25 @@ public class TypeAnnotationUtils {
       throw new IllegalArgumentException(
           "@ArrayType List<T> field "
               + field
+              + " must use a bool, numeric, float16, or bfloat16 element type");
+    }
+    return typeId;
+  }
+
+  public static int getBoxedListArrayTypeId(Descriptor descriptor) {
+    Field field = descriptor.getField();
+    if (field != null) {
+      return getBoxedListArrayTypeId(field);
+    }
+    if (!isBoxedListArrayType(descriptor)) {
+      return Types.UNKNOWN;
+    }
+    TypeRef<?> elementTypeRef = TypeUtils.getElementType(descriptor.getTypeRef());
+    int typeId = getArrayTypeIdFromElementType(elementTypeRef);
+    if (typeId == Types.UNKNOWN) {
+      throw new IllegalArgumentException(
+          "@ArrayType List<T> field "
+              + descriptor.getName()
               + " must use a bool, numeric, float16, or bfloat16 element type");
     }
     return typeId;
@@ -499,10 +541,34 @@ public class TypeAnnotationUtils {
     if (elementTypeId == Types.UNKNOWN || elementClass == null) {
       return null;
     }
-    return TypeRef.of(elementClass, TypeExtMeta.of(elementTypeId, true, false));
+    return TypeRef.of(elementClass, TypeExtMeta.of(elementTypeId, false, false));
+  }
+
+  public static TypeRef<?> getPrimitiveListElementTypeRef(Descriptor descriptor) {
+    TypeRef<?> typeRef = descriptor.getTypeRef();
+    TypeExtMeta inlineMeta = typeRef.getTypeExtMeta();
+    if (inlineMeta != null && Types.isPrimitiveType(inlineMeta.typeId())) {
+      Class<?> elementClass = getPrimitiveListElementClass(typeRef.getRawType());
+      if (elementClass != null) {
+        return TypeRef.of(
+            elementClass,
+            TypeExtMeta.of(inlineMeta.typeId(), inlineMeta.nullable(), inlineMeta.trackingRef()));
+      }
+    }
+    if (typeRef.hasExplicitTypeArguments()) {
+      TypeRef<?> elementTypeRef = TypeUtils.getElementType(typeRef);
+      TypeExtMeta elementMeta = elementTypeRef.getTypeExtMeta();
+      if (elementMeta != null && Types.isPrimitiveType(elementMeta.typeId())) {
+        return elementTypeRef;
+      }
+    }
+    return getPrimitiveListElementTypeRef(descriptor.getTypeAnnotation(), typeRef.getRawType());
   }
 
   public static boolean isArrayType(Descriptor descriptor) {
+    if (descriptor.isArrayType()) {
+      return true;
+    }
     if (descriptor.getField() != null
         && descriptor.getField().isAnnotationPresent(ArrayType.class)) {
       return true;

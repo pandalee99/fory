@@ -42,10 +42,12 @@ import org.apache.fory.context.RefReader;
 import org.apache.fory.exception.DeserializationException;
 import org.apache.fory.memory.MemoryBuffer;
 import org.apache.fory.memory.NativeByteOrder;
+import org.apache.fory.meta.FieldInfo;
 import org.apache.fory.meta.FieldTypes;
 import org.apache.fory.meta.TypeExtMeta;
 import org.apache.fory.reflect.TypeRef;
 import org.apache.fory.resolver.RefMode;
+import org.apache.fory.resolver.TypeInfo;
 import org.apache.fory.resolver.TypeResolver;
 import org.apache.fory.serializer.collection.CollectionFlags;
 import org.apache.fory.type.BFloat16;
@@ -53,12 +55,14 @@ import org.apache.fory.type.BFloat16Array;
 import org.apache.fory.type.Descriptor;
 import org.apache.fory.type.Float16;
 import org.apache.fory.type.Float16Array;
+import org.apache.fory.type.TypeAnnotationUtils;
 import org.apache.fory.type.TypeUtils;
 import org.apache.fory.type.Types;
 
 final class CompatibleCollectionArrayReader {
   static final int READ_LIST_TO_ARRAY = 1;
   static final int READ_ARRAY_TO_LIST = 2;
+  static final int READ_LIST_TO_LIST = 3;
 
   static final class ReadAction {
     final int mode;
@@ -82,26 +86,186 @@ final class CompatibleCollectionArrayReader {
       return null;
     }
     FieldTypes.FieldType localFieldType = FieldTypes.buildFieldType(resolver, field);
-    int peerListElementTypeId = listElementTypeId(descriptor.getTypeRef());
+    int peerListElementTypeId = listElementTypeId(descriptor);
     if (peerListElementTypeId != Types.UNKNOWN) {
+      // Element nullable/ref flags in TypeDef describe what the peer schema can encode, not what
+      // this payload actually contains. Dense-array compatibility is decided here by element type;
+      // readListPayloadAsPrimitiveArray rejects payloads that carry null/ref element markers.
       int localArrayTypeId = arrayTypeId(localFieldType);
       if (localArrayTypeId != Types.UNKNOWN
           && localArrayTypeId == denseArrayTypeId(peerListElementTypeId)) {
         return new ReadAction(
             READ_LIST_TO_ARRAY, localArrayTypeId, peerListElementTypeId, field.getType());
       }
+      int nonNullablePeerListElementTypeId = nonNullableListElementTypeId(descriptor);
+      int localListElementTypeId = nonNullableListElementTypeId(localFieldType);
+      int peerArrayTypeId = denseArrayTypeId(peerListElementTypeId);
+      // List-to-array and list-to-list materialize through a dense primitive array, so they cannot
+      // preserve nullable or ref-tracked peer elements.
+      if (nonNullablePeerListElementTypeId != Types.UNKNOWN
+          && localListElementTypeId != Types.UNKNOWN
+          && peerArrayTypeId != Types.UNKNOWN
+          && peerArrayTypeId == denseArrayTypeId(localListElementTypeId)
+          && canMaterializeListTarget(field.getType(), peerArrayTypeId)) {
+        return new ReadAction(
+            READ_LIST_TO_LIST, peerArrayTypeId, peerListElementTypeId, field.getType());
+      }
       return null;
     }
-    int peerArrayTypeId = arrayTypeId(descriptor.getTypeRef());
+    int peerArrayTypeId = arrayTypeId(descriptor);
     if (peerArrayTypeId != Types.UNKNOWN) {
       int localListElementTypeId = listElementTypeId(localFieldType);
       if (localListElementTypeId != Types.UNKNOWN
-          && peerArrayTypeId == denseArrayTypeId(localListElementTypeId)) {
+          && peerArrayTypeId == denseArrayTypeId(localListElementTypeId)
+          && canMaterializeListTarget(field.getType(), peerArrayTypeId)) {
         return new ReadAction(
             READ_ARRAY_TO_LIST, peerArrayTypeId, localListElementTypeId, field.getType());
       }
     }
     return null;
+  }
+
+  static ReadAction readAction(
+      TypeResolver resolver, FieldInfo remoteFieldInfo, Descriptor localDescriptor) {
+    if (localDescriptor == null || !resolver.isCrossLanguage()) {
+      return null;
+    }
+    FieldTypes.FieldType remoteFieldType = remoteFieldInfo.getFieldType();
+    TypeRef<?> localType = localDescriptor.getTypeRef();
+    int peerListElementTypeId = listElementTypeId(remoteFieldType);
+    if (peerListElementTypeId != Types.UNKNOWN) {
+      int localArrayTypeId = arrayTypeId(localDescriptor);
+      if (localArrayTypeId != Types.UNKNOWN
+          && localArrayTypeId == denseArrayTypeId(peerListElementTypeId)) {
+        // Remote element nullable/ref flags describe what the schema can encode. Actual payload
+        // null/ref markers are validated while reading so nullable list<T> payloads without nulls
+        // remain compatible with local array<T> fields.
+        return new ReadAction(
+            READ_LIST_TO_ARRAY,
+            localArrayTypeId,
+            peerListElementTypeId,
+            localDescriptor.getRawType());
+      }
+      int nonNullablePeerListElementTypeId = nonNullableListElementTypeId(remoteFieldType);
+      int localListElementTypeId = nonNullableListElementTypeId(localType);
+      int peerArrayTypeId = denseArrayTypeId(peerListElementTypeId);
+      // List-to-array and list-to-list materialize through a dense primitive array, so they cannot
+      // preserve nullable or ref-tracked peer elements.
+      if (nonNullablePeerListElementTypeId != Types.UNKNOWN
+          && localListElementTypeId != Types.UNKNOWN
+          && peerArrayTypeId != Types.UNKNOWN
+          && peerArrayTypeId == denseArrayTypeId(localListElementTypeId)
+          && canMaterializeListTarget(localDescriptor.getRawType(), peerArrayTypeId)) {
+        return new ReadAction(
+            READ_LIST_TO_LIST,
+            peerArrayTypeId,
+            peerListElementTypeId,
+            localDescriptor.getRawType());
+      }
+      return null;
+    }
+    int peerArrayTypeId = arrayTypeId(remoteFieldType);
+    if (peerArrayTypeId != Types.UNKNOWN) {
+      int localListElementTypeId = listElementTypeId(localType);
+      if (localListElementTypeId != Types.UNKNOWN
+          && peerArrayTypeId == denseArrayTypeId(localListElementTypeId)
+          && canMaterializeListTarget(localDescriptor.getRawType(), peerArrayTypeId)) {
+        return new ReadAction(
+            READ_ARRAY_TO_LIST,
+            peerArrayTypeId,
+            localListElementTypeId,
+            localDescriptor.getRawType());
+      }
+    }
+    return null;
+  }
+
+  static boolean incompatibleCollectionArrayMatch(
+      TypeResolver resolver, FieldInfo remoteFieldInfo, Descriptor localDescriptor) {
+    if (localDescriptor == null || !resolver.isCrossLanguage()) {
+      return false;
+    }
+    if (readAction(resolver, remoteFieldInfo, localDescriptor) != null) {
+      return false;
+    }
+    FieldTypes.FieldType remoteFieldType = remoteFieldInfo.getFieldType();
+    FieldTypes.FieldType localFieldType = FieldTypes.buildFieldType(resolver, localDescriptor);
+    return isListArrayRootPair(remoteFieldType, localFieldType);
+  }
+
+  static boolean nestedCollectionArrayMatch(
+      TypeResolver resolver, FieldInfo remoteFieldInfo, Descriptor localDescriptor) {
+    if (localDescriptor == null || !resolver.isCrossLanguage()) {
+      return false;
+    }
+    FieldTypes.FieldType remoteFieldType = remoteFieldInfo.getFieldType();
+    FieldTypes.FieldType localFieldType = FieldTypes.buildFieldType(resolver, localDescriptor);
+    return hasNestedCollectionArrayMatch(remoteFieldType, localFieldType);
+  }
+
+  private static boolean hasCollectionArrayMatch(
+      FieldTypes.FieldType remoteFieldType, FieldTypes.FieldType localFieldType) {
+    if (isListArrayRootPair(remoteFieldType, localFieldType)) {
+      return true;
+    }
+    if (remoteFieldType instanceof FieldTypes.CollectionFieldType
+        && localFieldType instanceof FieldTypes.CollectionFieldType) {
+      return hasCollectionArrayMatch(
+          ((FieldTypes.CollectionFieldType) remoteFieldType).getElementType(),
+          ((FieldTypes.CollectionFieldType) localFieldType).getElementType());
+    }
+    if (remoteFieldType instanceof FieldTypes.MapFieldType
+        && localFieldType instanceof FieldTypes.MapFieldType) {
+      FieldTypes.MapFieldType remoteMap = (FieldTypes.MapFieldType) remoteFieldType;
+      FieldTypes.MapFieldType localMap = (FieldTypes.MapFieldType) localFieldType;
+      return hasCollectionArrayMatch(remoteMap.getKeyType(), localMap.getKeyType())
+          || hasCollectionArrayMatch(remoteMap.getValueType(), localMap.getValueType());
+    }
+    if (remoteFieldType instanceof FieldTypes.ArrayFieldType
+        && localFieldType instanceof FieldTypes.ArrayFieldType) {
+      return hasCollectionArrayMatch(
+          ((FieldTypes.ArrayFieldType) remoteFieldType).getComponentType(),
+          ((FieldTypes.ArrayFieldType) localFieldType).getComponentType());
+    }
+    return false;
+  }
+
+  private static boolean hasNestedCollectionArrayMatch(
+      FieldTypes.FieldType remoteFieldType, FieldTypes.FieldType localFieldType) {
+    if (remoteFieldType.getTypeId() != localFieldType.getTypeId()) {
+      return false;
+    }
+    if (remoteFieldType instanceof FieldTypes.CollectionFieldType
+        && localFieldType instanceof FieldTypes.CollectionFieldType) {
+      return hasCollectionArrayMatch(
+          ((FieldTypes.CollectionFieldType) remoteFieldType).getElementType(),
+          ((FieldTypes.CollectionFieldType) localFieldType).getElementType());
+    }
+    if (remoteFieldType instanceof FieldTypes.MapFieldType
+        && localFieldType instanceof FieldTypes.MapFieldType) {
+      FieldTypes.MapFieldType remoteMap = (FieldTypes.MapFieldType) remoteFieldType;
+      FieldTypes.MapFieldType localMap = (FieldTypes.MapFieldType) localFieldType;
+      return hasCollectionArrayMatch(remoteMap.getKeyType(), localMap.getKeyType())
+          || hasCollectionArrayMatch(remoteMap.getValueType(), localMap.getValueType());
+    }
+    if (remoteFieldType instanceof FieldTypes.ArrayFieldType
+        && localFieldType instanceof FieldTypes.ArrayFieldType) {
+      return hasCollectionArrayMatch(
+          ((FieldTypes.ArrayFieldType) remoteFieldType).getComponentType(),
+          ((FieldTypes.ArrayFieldType) localFieldType).getComponentType());
+    }
+    return false;
+  }
+
+  private static boolean isListArrayRootPair(
+      FieldTypes.FieldType remoteFieldType, FieldTypes.FieldType localFieldType) {
+    return (isListField(remoteFieldType) && arrayTypeId(localFieldType) != Types.UNKNOWN)
+        || (arrayTypeId(remoteFieldType) != Types.UNKNOWN && isListField(localFieldType));
+  }
+
+  private static boolean isListField(FieldTypes.FieldType fieldType) {
+    return fieldType instanceof FieldTypes.CollectionFieldType
+        && fieldType.getTypeId() == Types.LIST;
   }
 
   static Object read(ReadContext readContext, RefMode refMode, ReadAction action) {
@@ -165,6 +329,13 @@ final class CompatibleCollectionArrayReader {
       }
       return materializeTarget(array, arrayTypeId, targetType);
     }
+    if (readMode == READ_LIST_TO_LIST) {
+      Object array = readListPayloadAsPrimitiveArray(readContext, arrayTypeId, elementTypeId);
+      if (array == null) {
+        return null;
+      }
+      return materializeTarget(array, arrayTypeId, targetType);
+    }
     if (readMode == READ_ARRAY_TO_LIST) {
       Object array = readDenseArrayPayload(readContext, arrayTypeId);
       return materializeTarget(array, arrayTypeId, targetType);
@@ -173,6 +344,10 @@ final class CompatibleCollectionArrayReader {
   }
 
   private static int listElementTypeId(FieldTypes.FieldType fieldType) {
+    return listElementTypeId(fieldType, false);
+  }
+
+  private static int listElementTypeId(FieldTypes.FieldType fieldType, boolean requireNonNullable) {
     if (!(fieldType instanceof FieldTypes.CollectionFieldType)
         || fieldType.getTypeId() != Types.LIST) {
       return Types.UNKNOWN;
@@ -180,18 +355,122 @@ final class CompatibleCollectionArrayReader {
     FieldTypes.FieldType elementType =
         ((FieldTypes.CollectionFieldType) fieldType).getElementType();
     if (elementType instanceof FieldTypes.RegisteredFieldType) {
+      if (requireNonNullable && (elementType.nullable() || elementType.trackingRef())) {
+        return Types.UNKNOWN;
+      }
       return ((FieldTypes.RegisteredFieldType) elementType).getTypeId();
     }
     return Types.UNKNOWN;
   }
 
-  private static int listElementTypeId(TypeRef<?> typeRef) {
-    TypeExtMeta extMeta = typeRef.getTypeExtMeta();
-    if (extMeta == null || extMeta.typeId() != Types.LIST) {
+  private static int listElementTypeId(Descriptor descriptor) {
+    return listElementTypeId(descriptor, false);
+  }
+
+  private static int listElementTypeId(Descriptor descriptor, boolean requireNonNullable) {
+    Class<?> rawType = descriptor.getRawType();
+    if (TypeUtils.isPrimitiveListClass(rawType) && TypeAnnotationUtils.isArrayType(descriptor)) {
       return Types.UNKNOWN;
     }
-    TypeExtMeta elementExtMeta = TypeUtils.getElementType(typeRef).getTypeExtMeta();
-    return elementExtMeta == null ? Types.UNKNOWN : elementExtMeta.typeId();
+    TypeRef<?> typeRef = descriptor.getTypeRef();
+    TypeExtMeta extMeta = typeRef.getTypeExtMeta();
+    if (TypeUtils.isPrimitiveListClass(rawType)) {
+      if (extMeta != null) {
+        int typeId = extMeta.typeId();
+        if (Types.isPrimitiveArray(typeId)) {
+          // A compatible descriptor can keep the local primitive-list carrier while the remote
+          // TypeDef says the peer wrote a dense array payload. Treat the TypeExtMeta as the remote
+          // wire shape here; otherwise array->list reads are misclassified as list->list reads.
+          return Types.UNKNOWN;
+        }
+        if (Types.isPrimitiveType(typeId)
+            && (!requireNonNullable || (!extMeta.nullable() && !extMeta.trackingRef()))) {
+          return typeId;
+        }
+      }
+      TypeRef<?> elementTypeRef = TypeAnnotationUtils.getPrimitiveListElementTypeRef(descriptor);
+      if (elementTypeRef != null) {
+        TypeExtMeta elementExtMeta = elementTypeRef.getTypeExtMeta();
+        if (isPrimitiveElement(elementExtMeta, requireNonNullable)) {
+          return elementExtMeta.typeId();
+        }
+      }
+      return Types.UNKNOWN;
+    }
+    if (extMeta != null && extMeta.typeId() == Types.LIST) {
+      TypeExtMeta elementExtMeta = TypeUtils.getElementType(typeRef).getTypeExtMeta();
+      return isPrimitiveElement(elementExtMeta, requireNonNullable)
+          ? elementExtMeta.typeId()
+          : Types.UNKNOWN;
+    }
+    return Types.UNKNOWN;
+  }
+
+  private static int listElementTypeId(TypeRef<?> typeRef) {
+    return listElementTypeId(typeRef, false);
+  }
+
+  private static int listElementTypeId(TypeRef<?> typeRef, boolean requireNonNullable) {
+    TypeExtMeta extMeta = typeRef.getTypeExtMeta();
+    if (extMeta != null && extMeta.typeId() == Types.LIST) {
+      TypeExtMeta elementExtMeta = TypeUtils.getElementType(typeRef).getTypeExtMeta();
+      return isPrimitiveElement(elementExtMeta, requireNonNullable)
+          ? elementExtMeta.typeId()
+          : Types.UNKNOWN;
+    }
+    if (TypeUtils.isPrimitiveListClass(typeRef.getRawType())) {
+      if (extMeta != null) {
+        int typeId = extMeta.typeId();
+        if (Types.isPrimitiveArray(typeId)) {
+          // A compatible descriptor can keep the local primitive-list raw carrier while the remote
+          // TypeDef says the peer wrote a dense array payload. Treat the TypeExtMeta as the remote
+          // wire shape here; otherwise array->list reads are misclassified as list->list reads.
+          return Types.UNKNOWN;
+        }
+        if (Types.isPrimitiveType(typeId)
+            && (!requireNonNullable || (!extMeta.nullable() && !extMeta.trackingRef()))) {
+          return typeId;
+        }
+      }
+      return TypeAnnotationUtils.getDefaultPrimitiveListElementTypeId(typeRef.getRawType());
+    }
+    if (TypeUtils.isCollection(typeRef.getRawType())) {
+      TypeExtMeta elementExtMeta = TypeUtils.getElementType(typeRef).getTypeExtMeta();
+      return isPrimitiveElement(elementExtMeta, requireNonNullable)
+          ? elementExtMeta.typeId()
+          : Types.UNKNOWN;
+    }
+    return Types.UNKNOWN;
+  }
+
+  private static int nonNullableListElementTypeId(FieldTypes.FieldType fieldType) {
+    return listElementTypeId(fieldType, true);
+  }
+
+  private static int nonNullableListElementTypeId(Descriptor descriptor) {
+    return listElementTypeId(descriptor, true);
+  }
+
+  private static int nonNullableListElementTypeId(TypeRef<?> typeRef) {
+    return listElementTypeId(typeRef, true);
+  }
+
+  private static boolean isPrimitiveElement(
+      TypeExtMeta elementExtMeta, boolean requireNonNullable) {
+    return elementExtMeta != null
+        && Types.isPrimitiveType(elementExtMeta.typeId())
+        && (!requireNonNullable || (!elementExtMeta.nullable() && !elementExtMeta.trackingRef()));
+  }
+
+  private static int arrayTypeId(Descriptor descriptor) {
+    Class<?> rawType = descriptor.getRawType();
+    if (TypeUtils.isPrimitiveListClass(rawType) && TypeAnnotationUtils.isArrayType(descriptor)) {
+      return TypeAnnotationUtils.getPrimitiveListArrayTypeId(rawType);
+    }
+    if (TypeAnnotationUtils.isBoxedListArrayType(descriptor)) {
+      return TypeAnnotationUtils.getBoxedListArrayTypeId(descriptor);
+    }
+    return arrayTypeId(descriptor.getTypeRef());
   }
 
   private static int arrayTypeId(FieldTypes.FieldType fieldType) {
@@ -208,6 +487,35 @@ final class CompatibleCollectionArrayReader {
     TypeExtMeta extMeta = typeRef.getTypeExtMeta();
     if (extMeta != null && Types.isPrimitiveArray(extMeta.typeId())) {
       return extMeta.typeId();
+    }
+    Class<?> rawType = typeRef.getRawType();
+    if (rawType.isArray() && rawType.getComponentType().isPrimitive()) {
+      return primitiveArrayTypeId(rawType.getComponentType());
+    }
+    return Types.UNKNOWN;
+  }
+
+  private static int primitiveArrayTypeId(Class<?> componentType) {
+    if (componentType == boolean.class) {
+      return Types.BOOL_ARRAY;
+    }
+    if (componentType == byte.class) {
+      return Types.INT8_ARRAY;
+    }
+    if (componentType == short.class) {
+      return Types.INT16_ARRAY;
+    }
+    if (componentType == int.class) {
+      return Types.INT32_ARRAY;
+    }
+    if (componentType == long.class) {
+      return Types.INT64_ARRAY;
+    }
+    if (componentType == float.class) {
+      return Types.FLOAT32_ARRAY;
+    }
+    if (componentType == double.class) {
+      return Types.FLOAT64_ARRAY;
     }
     return Types.UNKNOWN;
   }
@@ -268,9 +576,19 @@ final class CompatibleCollectionArrayReader {
         throw new DeserializationException(
             "Cannot read nullable or ref-tracked peer list<T> payload into local array<T> field");
       }
-      if (!sameType || !declared) {
+      if (!sameType) {
         throw new DeserializationException(
             "Cannot read peer list<T> payload into local array<T> field");
+      }
+      if (!declared) {
+        TypeInfo payloadElementTypeInfo = readContext.getTypeResolver().readTypeInfo(readContext);
+        if (payloadElementTypeInfo.getTypeId() != elementTypeId) {
+          throw new DeserializationException(
+              "Cannot read peer list<T> element type id "
+                  + payloadElementTypeInfo.getTypeId()
+                  + " as local element type id "
+                  + elementTypeId);
+        }
       }
     }
     return readListPrimitiveElements(buffer, numElements, arrayTypeId, elementTypeId);
@@ -504,7 +822,7 @@ final class CompatibleCollectionArrayReader {
     if (primitiveList != null) {
       return primitiveList;
     }
-    if (List.class.isAssignableFrom(targetType)) {
+    if (targetType.isAssignableFrom(ArrayList.class)) {
       return materializeBoxedList(array, arrayTypeId);
     }
     throw new DeserializationException("Unsupported compatible list/array target " + targetType);
@@ -539,6 +857,44 @@ final class CompatibleCollectionArrayReader {
         return targetType == Float32List.class ? new Float32List((float[]) array) : null;
       case Types.FLOAT64_ARRAY:
         return targetType == Float64List.class ? new Float64List((double[]) array) : null;
+      default:
+        throw new IllegalArgumentException("Unsupported dense array type id " + arrayTypeId);
+    }
+  }
+
+  private static boolean canMaterializeListTarget(Class<?> targetType, int arrayTypeId) {
+    return canMaterializePrimitiveListTarget(targetType, arrayTypeId)
+        || targetType.isAssignableFrom(ArrayList.class);
+  }
+
+  private static boolean canMaterializePrimitiveListTarget(Class<?> targetType, int arrayTypeId) {
+    switch (arrayTypeId) {
+      case Types.BOOL_ARRAY:
+        return targetType == BoolList.class;
+      case Types.INT8_ARRAY:
+        return targetType == Int8List.class;
+      case Types.UINT8_ARRAY:
+        return targetType == UInt8List.class;
+      case Types.INT16_ARRAY:
+        return targetType == Int16List.class;
+      case Types.UINT16_ARRAY:
+        return targetType == UInt16List.class;
+      case Types.INT32_ARRAY:
+        return targetType == Int32List.class;
+      case Types.UINT32_ARRAY:
+        return targetType == UInt32List.class;
+      case Types.INT64_ARRAY:
+        return targetType == Int64List.class;
+      case Types.UINT64_ARRAY:
+        return targetType == UInt64List.class;
+      case Types.FLOAT16_ARRAY:
+        return targetType == Float16List.class;
+      case Types.BFLOAT16_ARRAY:
+        return targetType == BFloat16List.class;
+      case Types.FLOAT32_ARRAY:
+        return targetType == Float32List.class;
+      case Types.FLOAT64_ARRAY:
+        return targetType == Float64List.class;
       default:
         throw new IllegalArgumentException("Unsupported dense array type id " + arrayTypeId);
     }

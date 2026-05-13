@@ -37,6 +37,10 @@ public class DescriptorBuilder {
   Method readMethod;
   Method writeMethod;
   ForyField foryField;
+  boolean hasForyField;
+  int foryFieldId = -1;
+  ForyField.Dynamic dynamic = ForyField.Dynamic.AUTO;
+  boolean arrayType;
   boolean nullable;
   boolean trackingRef;
   FieldConverter fieldConverter;
@@ -52,6 +56,10 @@ public class DescriptorBuilder {
     this.readMethod = descriptor.getReadMethod();
     this.writeMethod = descriptor.getWriteMethod();
     this.foryField = descriptor.getForyField();
+    this.hasForyField = descriptor.hasForyField();
+    this.foryFieldId = descriptor.getForyFieldId();
+    this.dynamic = descriptor.getMorphic();
+    this.arrayType = descriptor.isArrayType();
     this.nullable = descriptor.isNullable();
     this.trackingRef = descriptor.isTrackingRef();
     this.fieldConverter = descriptor.getFieldConverter();
@@ -114,6 +122,16 @@ public class DescriptorBuilder {
 
   public DescriptorBuilder foryField(ForyField foryField) {
     this.foryField = foryField;
+    this.hasForyField = foryField != null;
+    if (hasForyField) {
+      this.foryFieldId = foryField.id();
+      this.nullable = foryField.nullable();
+      this.trackingRef = foryField.ref();
+      this.dynamic = foryField.dynamic();
+    } else {
+      this.foryFieldId = -1;
+      this.dynamic = ForyField.Dynamic.AUTO;
+    }
     return this;
   }
 

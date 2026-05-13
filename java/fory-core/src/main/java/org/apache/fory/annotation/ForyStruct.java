@@ -30,12 +30,40 @@ import java.lang.annotation.Target;
 @Retention(RetentionPolicy.RUNTIME)
 @Target(ElementType.TYPE)
 public @interface ForyStruct {
+  enum Evolution {
+    /** Follow Fory global compatible/meta-share options. */
+    INHERIT,
+
+    /** Require schema evolution metadata for this struct. */
+    ENABLED,
+
+    /** Require fixed-schema struct encoding for this struct. */
+    DISABLED
+  }
+
   /**
-   * Whether the annotated type should use schema evolution in compatible mode.
+   * Legacy per-struct schema evolution switch.
    *
-   * <p>When {@code true} (default), compatible mode uses COMPATIBLE_STRUCT/NAMED_COMPATIBLE_STRUCT
-   * to include schema metadata for evolution. When {@code false}, STRUCT/NAMED_STRUCT is used to
-   * avoid that overhead.
+   * <p>Set this to {@code false} to force fixed-schema struct encoding. New code that needs to
+   * require schema evolution metadata should use {@link #evolution()}.
    */
   boolean evolving() default true;
+
+  /**
+   * Per-struct schema evolution policy.
+   *
+   * <p>{@link Evolution#INHERIT} follows {@link #evolving()} and then the Fory instance's
+   * compatible/meta-share configuration. {@link Evolution#ENABLED} requires that configuration to
+   * emit schema evolution metadata for this struct. {@link Evolution#DISABLED} uses fixed-schema
+   * struct encoding even when compatible metadata is otherwise enabled.
+   */
+  Evolution evolution() default Evolution.INHERIT;
+
+  /**
+   * Emit generated serializer field-level debug tracing.
+   *
+   * <p>The generated code still prints only when {@code ENABLE_FORY_DEBUG_OUTPUT=1}; this option
+   * controls whether field tracing code is emitted for this struct.
+   */
+  boolean debug() default false;
 }

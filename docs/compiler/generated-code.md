@@ -154,6 +154,8 @@ public class Person {
 }
 ```
 
+Messages with `evolving=false` are generated with Java fixed-schema struct encoding.
+
 Unions generate classes extending `org.apache.fory.type.union.Union`:
 
 ```java

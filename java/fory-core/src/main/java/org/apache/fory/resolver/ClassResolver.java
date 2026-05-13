@@ -35,7 +35,9 @@ import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.nio.ByteBuffer;
 import java.nio.charset.Charset;
+import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.ArrayList;
@@ -70,7 +72,6 @@ import java.util.function.Supplier;
 import javax.annotation.concurrent.NotThreadSafe;
 import org.apache.fory.ForyCopyable;
 import org.apache.fory.annotation.CodegenInvoke;
-import org.apache.fory.annotation.ForyField;
 import org.apache.fory.annotation.Internal;
 import org.apache.fory.builder.CodecUtils;
 import org.apache.fory.builder.JITContext;
@@ -104,6 +105,7 @@ import org.apache.fory.meta.EncodedMetaString;
 import org.apache.fory.meta.Encoders;
 import org.apache.fory.meta.NativeTypeDefEncoder;
 import org.apache.fory.meta.TypeDef;
+import org.apache.fory.meta.TypeExtMeta;
 import org.apache.fory.platform.AndroidSupport;
 import org.apache.fory.platform.GraalvmSupport;
 import org.apache.fory.reflect.ObjectCreators;
@@ -160,9 +162,11 @@ import org.apache.fory.serializer.shim.ShimDispatcher;
 import org.apache.fory.type.BFloat16;
 import org.apache.fory.type.BFloat16Array;
 import org.apache.fory.type.Descriptor;
+import org.apache.fory.type.DescriptorGrouper;
 import org.apache.fory.type.Float16;
 import org.apache.fory.type.Float16Array;
 import org.apache.fory.type.GenericType;
+import org.apache.fory.type.TypeAnnotationUtils;
 import org.apache.fory.type.TypeUtils;
 import org.apache.fory.type.Types;
 import org.apache.fory.type.union.Union;
@@ -688,7 +692,7 @@ public class ClassResolver extends TypeResolver {
     } else if (serializer != null && !isStructSerializer(serializer)) {
       return Types.EXT;
     } else {
-      return metaContextShareEnabled && isStructEvolving(cls)
+      return useStructEvolution(cls, metaContextShareEnabled)
           ? Types.COMPATIBLE_STRUCT
           : Types.STRUCT;
     }
@@ -977,9 +981,8 @@ public class ClassResolver extends TypeResolver {
 
   @Override
   public boolean isMonomorphic(Descriptor descriptor) {
-    ForyField foryField = descriptor.getForyField();
-    if (foryField != null) {
-      switch (foryField.dynamic()) {
+    if (descriptor.hasForyField()) {
+      switch (descriptor.getMorphic()) {
         case TRUE:
           return false;
         case FALSE:
@@ -1025,10 +1028,33 @@ public class ClassResolver extends TypeResolver {
   public boolean isBuildIn(Descriptor descriptor) {
     Class<?> rawType = descriptor.getRawType();
     if (TypeUtils.isPrimitiveListClass(rawType)) {
-      return !org.apache.fory.type.TypeAnnotationUtils.usesCollectionProtocolForPrimitiveList(
+      return !TypeAnnotationUtils.usesCollectionProtocolForPrimitiveList(
           descriptor.getTypeAnnotation(), rawType);
     }
-    return isMonomorphic(descriptor);
+    int typeId = getDescriptorSortTypeId(descriptor);
+    return typeId != Types.UNKNOWN
+        && !Types.isUserDefinedType(typeId)
+        && typeId != Types.LIST
+        && typeId != Types.SET
+        && typeId != Types.MAP;
+  }
+
+  @Override
+  public boolean usesPrimitiveFieldOrdering(Descriptor descriptor) {
+    if (super.usesPrimitiveFieldOrdering(descriptor)) {
+      return true;
+    }
+    int typeId = Types.getDescriptorTypeId(this, descriptor);
+    return typeId == Types.FLOAT16 || typeId == Types.BFLOAT16;
+  }
+
+  @Override
+  public boolean isCollectionDescriptor(Descriptor descriptor) {
+    Class<?> rawType = descriptor.getRawType();
+    if (TypeUtils.isPrimitiveListClass(rawType)) {
+      return !TypeAnnotationUtils.isArrayType(descriptor);
+    }
+    return super.isCollectionDescriptor(descriptor);
   }
 
   public boolean isInternalRegistered(int classId) {
@@ -1546,8 +1572,8 @@ public class ClassResolver extends TypeResolver {
       if (codegen) {
         LOG.info("Object of type {} can't be serialized by jit", cls);
       }
-      // Always use ObjectSerializer for both modes
-      return ObjectSerializer.class;
+      Class<? extends Serializer> serializerClass = getStaticGeneratedStructSerializerClass(cls);
+      return serializerClass == null ? ObjectSerializer.class : serializerClass;
     }
   }
 
@@ -1727,7 +1753,7 @@ public class ClassResolver extends TypeResolver {
     }
 
     Class<? extends Serializer> serializerClass = getSerializerClass(cls);
-    Serializer serializer = Serializers.newSerializer(this, cls, serializerClass);
+    Serializer serializer = newSerializer(cls, serializerClass);
     if (ForyCopyable.class.isAssignableFrom(cls)) {
       serializer = new ForyCopyableSerializer<>(config, cls, serializer);
     }
@@ -1764,14 +1790,14 @@ public class ClassResolver extends TypeResolver {
         || serializerClass == MapSerializers.DefaultJavaMapSerializer.class;
   }
 
-  private Class<? extends Serializer> getMetaSharedDeserializerClassForGraalvmBuild(
+  private Class<? extends Serializer> getCompatibleDeserializerClassForGraalvmBuild(
       Class<?> cls, TypeDef typeDef) {
     Class<? extends Serializer> serializerClass =
-        getMetaSharedDeserializerClassFromGraalvmRegistry(cls, typeDef);
+        getGraalvmClassRegistry().getDeserializerClass(typeDef.getId());
     if (serializerClass != null) {
       return serializerClass;
     }
-    return CodecUtils.loadOrGenMetaSharedCodecClass(this, cls, typeDef);
+    return CodecUtils.loadOrGenCompatibleCodecClass(this, cls, typeDef);
   }
 
   private void registerGraalvmSerializerClass(Class<?> cls) {
@@ -1793,7 +1819,10 @@ public class ClassResolver extends TypeResolver {
       }
       getGraalvmClassRegistry()
           .putDeserializerClass(
-              typeDef.getId(), getMetaSharedDeserializerClassForGraalvmBuild(cls, typeDef));
+              typeDef.getId(), getCompatibleDeserializerClassForGraalvmBuild(cls, typeDef));
+      getGraalvmClassRegistry()
+          .putCompatibleDeserializerClass(
+              cls, CodecUtils.loadOrGenStaticCompatibleCodecClass(this, cls, typeDef));
     }
     typeInfoCache = NIL_TYPE_INFO;
     if (RecordUtils.isRecord(cls)) {
@@ -2090,46 +2119,141 @@ public class ClassResolver extends TypeResolver {
     return classId >= PRIMITIVE_VOID_ID && classId <= PRIMITIVE_FLOAT64_ID;
   }
 
-  /**
-   * Normalize type name for consistent ordering between serialization and deserialization.
-   * Collection subtypes (List, Set, etc.) are normalized to "java.util.Collection". Map subtypes
-   * are normalized to "java.util.Map". This ensures fields have the same order regardless of
-   * whether the peer has the field locally.
-   */
-  private String getNormalizedTypeName(Descriptor d) {
+  private int getDescriptorSortTypeId(Descriptor d) {
+    int sortTypeId = getLogicalDescriptorSortTypeId(d);
+    if (sortTypeId != Types.UNKNOWN) {
+      return sortTypeId;
+    }
+    if (isCollectionDescriptor(d)) {
+      return Types.LIST;
+    }
     Class<?> rawType = d.getRawType();
-    if (rawType != null) {
-      if (isCollection(rawType)) {
-        return "java.util.Collection";
+    if (rawType != null && (rawType.isEnum() || rawType == UnknownClass.UnknownEnum.class)) {
+      return Types.ENUM;
+    }
+    if (rawType != null && isMap(rawType)) {
+      return Types.MAP;
+    }
+    try {
+      return Integer.parseInt(d.getTypeName());
+    } catch (NumberFormatException ignored) {
+      return Types.getDescriptorTypeId(this, d);
+    }
+  }
+
+  private int getLogicalDescriptorSortTypeId(Descriptor descriptor) {
+    Class<?> rawType = descriptor.getRawType();
+    if (rawType == null) {
+      return Types.UNKNOWN;
+    }
+    if (isCollectionDescriptor(descriptor)) {
+      return isSet(rawType) ? Types.SET : Types.LIST;
+    }
+    if (rawType.isArray() && !rawType.getComponentType().isPrimitive()) {
+      return Types.LIST;
+    }
+    if (isMap(rawType)) {
+      return Types.MAP;
+    }
+    if (rawType.isEnum() || rawType == UnknownClass.UnknownEnum.class) {
+      return Types.ENUM;
+    }
+    if (TypeUtils.isPrimitiveListClass(rawType)) {
+      if (TypeAnnotationUtils.isArrayType(descriptor)) {
+        return TypeAnnotationUtils.getPrimitiveListArrayTypeId(rawType);
       }
-      if (isMap(rawType)) {
-        return "java.util.Map";
+      return Types.LIST;
+    }
+    TypeExtMeta extMeta = descriptor.getTypeRef().getTypeExtMeta();
+    if (extMeta != null && extMeta.typeId() != Types.UNKNOWN) {
+      int typeId = extMeta.typeId();
+      if (typeId < Types.BOUND) {
+        return typeId;
       }
     }
-    return d.getTypeName();
+    if (TypeAnnotationUtils.isBoxedListArrayType(descriptor)) {
+      return TypeAnnotationUtils.getBoxedListArrayTypeId(descriptor);
+    }
+    if (rawType.isArray() && rawType.getComponentType().isPrimitive()) {
+      int annotatedTypeId = Types.getDescriptorTypeId(this, descriptor);
+      if (annotatedTypeId > Types.UNKNOWN && annotatedTypeId < Types.BOUND) {
+        return annotatedTypeId;
+      }
+      return getPrimitiveArraySortTypeId(rawType);
+    }
+    return getBuiltinSortTypeId(rawType);
+  }
+
+  private int getPrimitiveArraySortTypeId(Class<?> rawType) {
+    if (rawType == boolean[].class) {
+      return Types.BOOL_ARRAY;
+    }
+    if (rawType == byte[].class) {
+      return Types.BINARY;
+    }
+    if (rawType == short[].class) {
+      return Types.INT16_ARRAY;
+    }
+    if (rawType == int[].class) {
+      return Types.INT32_ARRAY;
+    }
+    if (rawType == long[].class) {
+      return Types.INT64_ARRAY;
+    }
+    if (rawType == float[].class) {
+      return Types.FLOAT32_ARRAY;
+    }
+    if (rawType == double[].class) {
+      return Types.FLOAT64_ARRAY;
+    }
+    return Types.UNKNOWN;
+  }
+
+  private int getBuiltinSortTypeId(Class<?> rawType) {
+    if (rawType == Float16Array.class) {
+      return Types.FLOAT16_ARRAY;
+    }
+    if (rawType == BFloat16Array.class) {
+      return Types.BFLOAT16_ARRAY;
+    }
+    if (rawType == byte[].class || ByteBuffer.class.isAssignableFrom(rawType)) {
+      return Types.BINARY;
+    }
+    if (rawType == Duration.class) {
+      return Types.DURATION;
+    }
+    if (rawType == Instant.class || rawType == LocalDateTime.class || rawType == Date.class) {
+      return Types.TIMESTAMP;
+    }
+    if (rawType == LocalDate.class) {
+      return Types.DATE;
+    }
+    if (rawType == BigDecimal.class || rawType == BigInteger.class) {
+      return Types.DECIMAL;
+    }
+    TypeInfo typeInfo = getTypeInfo(rawType, false);
+    int typeId = typeInfo == null ? Types.UNKNOWN : typeInfo.getTypeId();
+    return typeId > Types.UNKNOWN && typeId < Types.BOUND ? typeId : Types.UNKNOWN;
+  }
+
+  @Override
+  protected DescriptorGrouper configureDescriptorGrouper(DescriptorGrouper descriptorGrouper) {
+    return descriptorGrouper.setOtherDescriptorComparator(TypeResolver::compareFieldSortKey);
   }
 
   /**
-   * Creates a comparator for sorting descriptors by normalized type name and field name/id. This
-   * comparator normalizes Collection/Map types to ensure consistent field ordering between
-   * serialization and deserialization, even when peers have different Collection/Map subtypes.
+   * Creates a comparator for sorting descriptors by logical internal type id and field name/id.
+   * Native compatible mode intentionally follows the xlang/spec field order, so equal type-id
+   * groups must not reintroduce Java raw-type ordering.
    */
   public Comparator<Descriptor> createTypeAndNameComparator() {
     return (d1, d2) -> {
-      // sort by type so that we can hit class info cache more possibly.
-      // sort by field id/name to fix order if type is same.
-      // Use normalized type name so that Collection/Map subtypes have consistent order
-      // between processes even if the field doesn't exist in peer (e.g., List vs Collection).
-      int c = getNormalizedTypeName(d1).compareTo(getNormalizedTypeName(d2));
-      // noinspection Duplicates
+      int c = Integer.compare(getDescriptorSortTypeId(d1), getDescriptorSortTypeId(d2));
       if (c == 0) {
         c = compareFieldSortKey(d1, d2);
         if (c == 0) {
-          // Field name duplicate in super/child classes.
           c = d1.getDeclaringClass().compareTo(d2.getDeclaringClass());
           if (c == 0) {
-            // Final tie-breaker: use actual field name to distinguish fields with same tag ID.
-            // This ensures TreeSet never treats different fields as duplicates.
             c = d1.getName().compareTo(d2.getName());
           }
         }

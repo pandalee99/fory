@@ -20,10 +20,12 @@
 package org.apache.fory.xlang;
 
 import static org.testng.Assert.assertEquals;
+import static org.testng.Assert.assertNull;
 import static org.testng.Assert.assertThrows;
 import static org.testng.Assert.assertTrue;
 
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
@@ -40,10 +42,10 @@ import org.apache.fory.xlang.PyCrossLanguageTest.Bar;
 import org.apache.fory.xlang.PyCrossLanguageTest.Foo;
 import org.testng.annotations.Test;
 
-public class MetaSharedXlangTest extends ForyTestBase {
+public class MetaShareXlangTest extends ForyTestBase {
 
   @Test
-  public void testMetaSharedBasic() {
+  public void testMetaShareBasic() {
     Fory fory = Fory.builder().withXlang(true).withCompatible(true).withCodegen(false).build();
     fory.register(Foo.class, "example.foo");
     fory.register(Bar.class, "example.bar");
@@ -52,7 +54,7 @@ public class MetaSharedXlangTest extends ForyTestBase {
   }
 
   @Test
-  public void testMetaSharedComplex1() {
+  public void testMetaShareComplex1() {
     Fory fory = Fory.builder().withXlang(true).withCompatible(true).withCodegen(false).build();
     fory.register(BeanB.class, "example.b");
     serDeCheck(fory, BeanB.createBeanB(2));
@@ -91,6 +93,11 @@ public class MetaSharedXlangTest extends ForyTestBase {
   @Data
   static class DirectAnnotatedArrayField {
     @ArrayType List<Integer> values;
+  }
+
+  @Data
+  static class DirectCollectionField {
+    Collection<@Int32Type(encoding = Int32Encoding.FIXED) Integer> values;
   }
 
   @Data
@@ -156,6 +163,20 @@ public class MetaSharedXlangTest extends ForyTestBase {
   }
 
   @Test
+  public void testTopLevelArrayCompatibleReadToCollection() {
+    for (boolean codegen : new boolean[] {false, true}) {
+      Fory arrayFory = compatibleFory(DirectArrayField.class, codegen);
+      DirectArrayField peerArrayStruct = new DirectArrayField();
+      peerArrayStruct.values = new int[] {9, 10};
+
+      Fory collectionFory = compatibleFory(DirectCollectionField.class, codegen);
+      DirectCollectionField collectionStruct =
+          (DirectCollectionField) collectionFory.deserialize(arrayFory.serialize(peerArrayStruct));
+      assertEquals(collectionStruct.values, Arrays.asList(9, 10));
+    }
+  }
+
+  @Test
   public void testTopLevelListArrayCompatibleReadWithoutCodegen() {
     Fory listFory = compatibleFory(DirectListField.class, false);
     DirectListField listStruct = new DirectListField();
@@ -168,7 +189,7 @@ public class MetaSharedXlangTest extends ForyTestBase {
   }
 
   @Test
-  public void testNullableListPayloadRejectedForArrayCompatibleRead() {
+  public void testNullableListCompatibleReadToArrayRejectsNullElements() {
     for (boolean codegen : new boolean[] {false, true}) {
       Fory listFory = compatibleFory(DirectNullableListField.class, codegen);
       DirectNullableListField listStruct = new DirectNullableListField();
@@ -186,21 +207,23 @@ public class MetaSharedXlangTest extends ForyTestBase {
   }
 
   @Test
-  public void testNestedListArrayCompatibleReadUnsupported() {
+  public void testNestedListArrayCompatibleReadSkipped() {
     Fory nestedListFory = compatibleFory(NestedListField.class);
     NestedListField nestedListStruct = new NestedListField();
     nestedListStruct.values = Arrays.asList(Arrays.asList(1, 2));
     byte[] nestedListBytes = nestedListFory.serialize(nestedListStruct);
 
     Fory nestedArrayFory = compatibleFory(NestedArrayElementField.class);
-    assertThrows(
-        DeserializationException.class, () -> nestedArrayFory.deserialize(nestedListBytes));
+    NestedArrayElementField skippedNestedArrayStruct =
+        (NestedArrayElementField) nestedArrayFory.deserialize(nestedListBytes);
+    assertNull(skippedNestedArrayStruct.values);
 
     NestedArrayElementField nestedArrayStruct = new NestedArrayElementField();
     nestedArrayStruct.values = Arrays.asList(new int[] {1, 2});
     byte[] nestedArrayBytes = nestedArrayFory.serialize(nestedArrayStruct);
-    assertThrows(
-        DeserializationException.class, () -> nestedListFory.deserialize(nestedArrayBytes));
+    NestedListField skippedNestedListStruct =
+        (NestedListField) nestedListFory.deserialize(nestedArrayBytes);
+    assertNull(skippedNestedListStruct.values);
 
     Fory nestedSetListFory = compatibleFory(NestedSetListField.class, false);
     NestedSetListField nestedSetListStruct = new NestedSetListField();
@@ -208,14 +231,16 @@ public class MetaSharedXlangTest extends ForyTestBase {
     byte[] nestedSetListBytes = nestedSetListFory.serialize(nestedSetListStruct);
 
     Fory nestedSetArrayFory = compatibleFory(NestedSetArrayElementField.class, false);
-    assertThrows(
-        DeserializationException.class, () -> nestedSetArrayFory.deserialize(nestedSetListBytes));
+    NestedSetArrayElementField skippedNestedSetArrayStruct =
+        (NestedSetArrayElementField) nestedSetArrayFory.deserialize(nestedSetListBytes);
+    assertNull(skippedNestedSetArrayStruct.values);
 
     NestedSetArrayElementField nestedSetArrayStruct = new NestedSetArrayElementField();
     nestedSetArrayStruct.values = new LinkedHashSet<>(Arrays.asList(new int[] {1, 2}));
     byte[] nestedSetArrayBytes = nestedSetArrayFory.serialize(nestedSetArrayStruct);
-    assertThrows(
-        DeserializationException.class, () -> nestedSetListFory.deserialize(nestedSetArrayBytes));
+    NestedSetListField skippedNestedSetListStruct =
+        (NestedSetListField) nestedSetListFory.deserialize(nestedSetArrayBytes);
+    assertNull(skippedNestedSetListStruct.values);
   }
 
   private static Fory compatibleFory(Class<?> type) {

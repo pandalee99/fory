@@ -227,7 +227,7 @@ public class XtypeResolver extends TypeResolver {
       typeId = Types.ENUM;
     } else {
       int structTypeId =
-          shareMeta && isStructEvolving(type) ? Types.COMPATIBLE_STRUCT : Types.STRUCT;
+          useStructEvolution(type, shareMeta) ? Types.COMPATIBLE_STRUCT : Types.STRUCT;
       if (serializer != null) {
         if (isStructType(serializer)) {
           typeId = structTypeId;
@@ -274,7 +274,7 @@ public class XtypeResolver extends TypeResolver {
       if (isStructType(serializer)) {
         xtypeId =
             (short)
-                (shareMeta && isStructEvolving(type)
+                (useStructEvolution(type, shareMeta)
                     ? Types.NAMED_COMPATIBLE_STRUCT
                     : Types.NAMED_STRUCT);
       } else if (serializer instanceof EnumSerializer) {
@@ -288,7 +288,7 @@ public class XtypeResolver extends TypeResolver {
       } else {
         xtypeId =
             (short)
-                (shareMeta && isStructEvolving(type)
+                (useStructEvolution(type, shareMeta)
                     ? Types.NAMED_COMPATIBLE_STRUCT
                     : Types.NAMED_STRUCT);
       }
@@ -322,8 +322,8 @@ public class XtypeResolver extends TypeResolver {
                             type,
                             shareMeta,
                             config.isCodeGenEnabled(),
-                            sc -> ref.set(Serializers.newSerializer(this, type, sc)));
-                    ref.set(Serializers.newSerializer(this, type, c));
+                            sc -> ref.set(newSerializer(type, sc)));
+                    ref.set(newSerializer(type, c));
                     if (!config.isAsyncCompilationEnabled()) {
                       updated.set(true);
                     }
@@ -452,7 +452,7 @@ public class XtypeResolver extends TypeResolver {
 
   public <T> void registerSerializer(Class<T> type, Class<? extends Serializer> serializerClass) {
     checkRegisterAllowed();
-    registerSerializer(type, Serializers.newSerializer(this, type, serializerClass));
+    registerSerializer(type, newSerializer(type, serializerClass));
   }
 
   public void registerSerializer(Class<?> type, Serializer<?> serializer) {
@@ -611,8 +611,7 @@ public class XtypeResolver extends TypeResolver {
 
   @Override
   public boolean isMonomorphic(Descriptor descriptor) {
-    ForyField foryField = descriptor.getForyField();
-    ForyField.Dynamic dynamic = foryField != null ? foryField.dynamic() : ForyField.Dynamic.AUTO;
+    ForyField.Dynamic dynamic = descriptor.getMorphic();
     switch (dynamic) {
       case TRUE:
         return false;
@@ -1293,13 +1292,6 @@ public class XtypeResolver extends TypeResolver {
   }
 
   private byte getInternalTypeId(Descriptor descriptor) {
-    TypeExtMeta extMeta = descriptor.getTypeRef().getTypeExtMeta();
-    if (extMeta != null && extMeta.typeId() != Types.UNKNOWN) {
-      return (byte) extMeta.typeId();
-    }
-    if (TypeAnnotationUtils.isBoxedListArrayType(descriptor.getField())) {
-      return (byte) TypeAnnotationUtils.getBoxedListArrayTypeId(descriptor.getField());
-    }
     Class<?> cls = descriptor.getRawType();
     if (TypeUtils.isPrimitiveListClass(cls) && TypeAnnotationUtils.isArrayType(descriptor)) {
       return (byte) TypeAnnotationUtils.getPrimitiveListArrayTypeId(cls);
@@ -1309,6 +1301,13 @@ public class XtypeResolver extends TypeResolver {
         && TypeAnnotationUtils.usesCollectionProtocolForPrimitiveList(
             descriptor.getTypeAnnotation(), cls)) {
       return Types.LIST;
+    }
+    TypeExtMeta extMeta = descriptor.getTypeRef().getTypeExtMeta();
+    if (extMeta != null && extMeta.typeId() != Types.UNKNOWN) {
+      return (byte) extMeta.typeId();
+    }
+    if (TypeAnnotationUtils.isBoxedListArrayType(descriptor)) {
+      return (byte) TypeAnnotationUtils.getBoxedListArrayTypeId(descriptor);
     }
     if (cls.isArray() && cls.getComponentType().isPrimitive()) {
       return (byte) Types.getDescriptorTypeId(this, descriptor);

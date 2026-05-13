@@ -410,22 +410,33 @@ public class Types {
   }
 
   public static int getDescriptorTypeId(TypeResolver resolver, Descriptor d) {
-    if (TypeAnnotationUtils.isBoxedListArrayType(d.getField())) {
-      return TypeAnnotationUtils.getBoxedListArrayTypeId(d.getField());
+    if (TypeAnnotationUtils.isBoxedListArrayType(d)) {
+      return TypeAnnotationUtils.getBoxedListArrayTypeId(d);
     }
     TypeRef<?> typeRef = d.getTypeRef();
+    Class<?> rawType = typeRef.getRawType();
+    if (TypeUtils.isPrimitiveListClass(rawType)) {
+      if (TypeAnnotationUtils.isArrayType(d)) {
+        return TypeAnnotationUtils.getPrimitiveListArrayTypeId(rawType);
+      }
+      return TypeAnnotationUtils.getPrimitiveListTypeId(d.getTypeAnnotation(), rawType);
+    }
     TypeExtMeta extMeta = typeRef.getTypeExtMeta();
     if (extMeta != null) {
       return extMeta.typeId();
     } else {
-      Class<?> rawType = typeRef.getRawType();
-      Annotation typeAnnotation = d.getTypeAnnotation();
-      if (TypeUtils.isPrimitiveListClass(rawType)) {
-        if (TypeAnnotationUtils.isArrayType(d)) {
-          return TypeAnnotationUtils.getPrimitiveListArrayTypeId(rawType);
+      TypeRef<?> componentType = typeRef.getComponentType();
+      if (rawType.isArray() && componentType != null) {
+        TypeExtMeta componentMeta = componentType.getTypeExtMeta();
+        if (componentMeta != null && componentMeta.typeId() != Types.UNKNOWN) {
+          int arrayTypeId =
+              TypeAnnotationUtils.getArrayTypeIdFromElementTypeId(componentMeta.typeId());
+          if (arrayTypeId != Types.UNKNOWN) {
+            return arrayTypeId;
+          }
         }
-        return TypeAnnotationUtils.getPrimitiveListTypeId(typeAnnotation, rawType);
       }
+      Annotation typeAnnotation = d.getTypeAnnotation();
       if (typeAnnotation != null) {
         int primitiveListTypeId =
             TypeAnnotationUtils.getPrimitiveListTypeId(typeAnnotation, rawType);

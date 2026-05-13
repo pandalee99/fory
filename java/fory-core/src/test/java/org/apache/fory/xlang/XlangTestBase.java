@@ -40,6 +40,7 @@ import org.apache.fory.ForyTestBase;
 import org.apache.fory.annotation.ArrayType;
 import org.apache.fory.annotation.ForyField;
 import org.apache.fory.annotation.ForyStruct;
+import org.apache.fory.annotation.ForyStruct.Evolution;
 import org.apache.fory.annotation.Int32Type;
 import org.apache.fory.annotation.Int64Type;
 import org.apache.fory.annotation.Int8Type;
@@ -64,7 +65,9 @@ import org.apache.fory.meta.MetaCompressor;
 import org.apache.fory.meta.TypeDef;
 import org.apache.fory.resolver.TypeInfo;
 import org.apache.fory.resolver.TypeResolver;
+import org.apache.fory.serializer.DeferedLazySerializer;
 import org.apache.fory.serializer.Serializer;
+import org.apache.fory.serializer.StaticGeneratedStructSerializer;
 import org.apache.fory.test.TestUtils;
 import org.apache.fory.type.BFloat16;
 import org.apache.fory.type.Float16;
@@ -190,12 +193,13 @@ public abstract class XlangTestBase extends ForyTestBase {
   protected static final String FIXED_OVERRIDE_STRUCT_TYPE_NAME = "evolving_off";
 
   @Data
+  @ForyStruct(evolution = Evolution.ENABLED)
   protected static class EvolvingOverrideStruct {
     String f1;
   }
 
   @Data
-  @ForyStruct(evolving = false)
+  @ForyStruct(evolution = Evolution.DISABLED)
   protected static class FixedOverrideStruct {
     String f1;
   }
@@ -296,6 +300,19 @@ public abstract class XlangTestBase extends ForyTestBase {
     Assert.assertNotNull(fixedInfo);
     Assert.assertEquals(evolvingInfo.getTypeId(), Types.NAMED_COMPATIBLE_STRUCT);
     Assert.assertEquals(fixedInfo.getTypeId(), Types.NAMED_STRUCT);
+    if ("1".equals(System.getenv("FORY_STATIC_PROCESSOR_CI"))) {
+      Serializer<?> fixedSerializer =
+          fory.getTypeResolver().getSerializer(FixedOverrideStruct.class);
+      if (fixedSerializer instanceof DeferedLazySerializer) {
+        fixedSerializer = ((DeferedLazySerializer) fixedSerializer).resolveSerializer();
+      }
+      Assert.assertTrue(
+          fixedSerializer instanceof StaticGeneratedStructSerializer,
+          fixedSerializer.getClass().getName());
+      Assert.assertEquals(
+          fixedSerializer.getClass().getName(),
+          FixedOverrideStruct.class.getName() + "__ForySerializer__");
+    }
 
     EvolvingOverrideStruct evolving = newEvolvingOverrideStruct();
     FixedOverrideStruct fixed = newFixedOverrideStruct();
@@ -604,11 +621,13 @@ public abstract class XlangTestBase extends ForyTestBase {
   }
 
   @Data
+  @ForyStruct
   static class Item {
     String name;
   }
 
   @Data
+  @ForyStruct
   static class SimpleStruct {
     HashMap<Integer, Double> f1;
     int f2;
@@ -786,6 +805,7 @@ public abstract class XlangTestBase extends ForyTestBase {
     assertEqualsNullTolerant(fory.deserialize(buffer2), itemMap);
   }
 
+  @ForyStruct
   static class Item1 {
     int f1;
     int f2;
@@ -950,6 +970,7 @@ public abstract class XlangTestBase extends ForyTestBase {
   // AbstractObjectSerializer.readFinalObjectFieldValue and readOtherFieldValue
   // have special handling for Union types to skip reading type_id.
   @Data
+  @ForyStruct
   static class StructWithUnion2 {
     org.apache.fory.type.union.Union2<String, Long> union;
   }
@@ -987,6 +1008,7 @@ public abstract class XlangTestBase extends ForyTestBase {
   }
 
   @Data
+  @ForyStruct
   static class StructWithList {
     List<String> items;
   }
@@ -1020,11 +1042,13 @@ public abstract class XlangTestBase extends ForyTestBase {
   }
 
   @Data
+  @ForyStruct
   static class StructWithMap {
     Map<String, String> data;
   }
 
   @Data
+  @ForyStruct
   static class SignedNestedAnnotatedContainerSchemaConsistent {
     Map<
             @Int32Type(encoding = Int32Encoding.FIXED) Integer,
@@ -1059,6 +1083,7 @@ public abstract class XlangTestBase extends ForyTestBase {
   }
 
   @Data
+  @ForyStruct
   static class SignedNestedAnnotatedContainerCompatible {
     Map<
             @Int32Type(encoding = Int32Encoding.FIXED) Integer,
@@ -1097,6 +1122,7 @@ public abstract class XlangTestBase extends ForyTestBase {
   }
 
   @Data
+  @ForyStruct
   static class NestedAnnotatedContainerSchemaConsistent {
     Map<
             @UInt32Type(encoding = Int32Encoding.FIXED) Long,
@@ -1130,6 +1156,7 @@ public abstract class XlangTestBase extends ForyTestBase {
   }
 
   @Data
+  @ForyStruct
   static class NestedAnnotatedContainerCompatible {
     Map<
             @UInt32Type(encoding = Int32Encoding.FIXED) Long,
@@ -1138,6 +1165,7 @@ public abstract class XlangTestBase extends ForyTestBase {
   }
 
   @Data
+  @ForyStruct
   static class ManualSchemaKindStruct {
     public List<Integer> orderedValues;
 
@@ -1256,8 +1284,11 @@ public abstract class XlangTestBase extends ForyTestBase {
   }
 
   @Data
+  @ForyStruct
   static class MyStruct {
     int id;
+
+    public MyStruct() {}
 
     public MyStruct(int id) {
       this.id = id;
@@ -1300,6 +1331,7 @@ public abstract class XlangTestBase extends ForyTestBase {
   }
 
   @Data
+  @ForyStruct
   static class MyWrapper {
     Color color;
     MyExt myExt;
@@ -1307,6 +1339,7 @@ public abstract class XlangTestBase extends ForyTestBase {
   }
 
   @Data
+  @ForyStruct
   static class EmptyWrapper {}
 
   private void _testSkipCustom(Fory fory1, Fory fory2, String caseName) throws IOException {
@@ -1407,6 +1440,7 @@ public abstract class XlangTestBase extends ForyTestBase {
   }
 
   @Data
+  @ForyStruct
   static class VersionCheckStruct {
     int f1;
 
@@ -1456,6 +1490,7 @@ public abstract class XlangTestBase extends ForyTestBase {
   }
 
   @Data
+  @ForyStruct
   public static class Dog implements Animal {
     int age;
 
@@ -1474,6 +1509,7 @@ public abstract class XlangTestBase extends ForyTestBase {
   }
 
   @Data
+  @ForyStruct
   public static class Cat implements Animal {
     int age;
     int lives;
@@ -1490,11 +1526,13 @@ public abstract class XlangTestBase extends ForyTestBase {
   }
 
   @Data
+  @ForyStruct
   static class AnimalListHolder {
     List<Animal> animals;
   }
 
   @Data
+  @ForyStruct
   static class AnimalMapHolder {
     // Using snake_case field name to test fallback lookup in TypeDef.getDescriptors()
     Map<String, Animal> animal_map;
@@ -1664,21 +1702,25 @@ public abstract class XlangTestBase extends ForyTestBase {
   // ============================================================================
 
   @Data
+  @ForyStruct
   static class EmptyStruct {}
 
   @Data
+  @ForyStruct
   static class OneStringFieldStruct {
     @ForyField(nullable = true)
     String f1;
   }
 
   @Data
+  @ForyStruct
   static class TwoStringFieldStruct {
     String f1;
     String f2;
   }
 
   @Data
+  @ForyStruct
   static class ReducedPrecisionFloatStruct {
     Float16 float16Value;
     BFloat16 bfloat16Value;
@@ -1716,6 +1758,7 @@ public abstract class XlangTestBase extends ForyTestBase {
   }
 
   @Data
+  @ForyStruct
   static class XlangCompatibleInt32ListField {
     @ForyField(id = 1)
     @Int32Type(encoding = Int32Encoding.FIXED)
@@ -1723,12 +1766,14 @@ public abstract class XlangTestBase extends ForyTestBase {
   }
 
   @Data
+  @ForyStruct
   static class XlangCompatibleNullableInt32ListField {
     @ForyField(id = 1)
     List<Integer> values;
   }
 
   @Data
+  @ForyStruct
   static class XlangCompatibleInt32ArrayField {
     @ForyField(id = 1)
     int[] values;
@@ -1834,13 +1879,11 @@ public abstract class XlangTestBase extends ForyTestBase {
         newCompatibleNullableInt32ListField(1, 2, 3);
     buffer = MemoryBuffer.newHeapBuffer(256);
     nullableListFory.serialize(buffer, nullableListWithoutNulls);
-    ctx =
-        prepareExecution(
-            "test_list_array_compatible_list_to_array", buffer.getBytes(0, buffer.writerIndex()));
-    runPeer(ctx);
-    XlangCompatibleInt32ArrayField nullableListArrayResult =
-        (XlangCompatibleInt32ArrayField) arrayFory.deserialize(readBuffer(ctx.dataFile()));
-    assertIntArrayEquals(nullableListArrayResult.values, 1, 2, 3);
+    byte[] nullableListWithoutNullsPayload = buffer.getBytes(0, buffer.writerIndex());
+    XlangCompatibleInt32ArrayField nullableListWithoutNullsArray =
+        (XlangCompatibleInt32ArrayField)
+            arrayFory.deserialize(MemoryUtils.wrap(nullableListWithoutNullsPayload));
+    Assert.assertEquals(nullableListWithoutNullsArray.values, new int[] {1, 2, 3});
 
     XlangCompatibleNullableInt32ListField nullableListValue =
         newCompatibleNullableInt32ListField(1, null, 3);
@@ -1854,6 +1897,9 @@ public abstract class XlangTestBase extends ForyTestBase {
         prepareExecution(
             "test_list_array_compatible_nullable_list_to_array_error", nullablePayload);
     runPeer(ctx);
+    Path nullableDataFile = ctx.dataFile();
+    Assert.expectThrows(
+        DeserializationException.class, () -> arrayFory.deserialize(readBuffer(nullableDataFile)));
   }
 
   @Test(groups = "xlang", dataProvider = "enableCodegenParallel")
@@ -2043,11 +2089,13 @@ public abstract class XlangTestBase extends ForyTestBase {
   }
 
   @Data
+  @ForyStruct
   static class OneEnumFieldStruct {
     TestEnum f1;
   }
 
   @Data
+  @ForyStruct
   static class TwoEnumFieldStruct {
     TestEnum f1;
     TestEnum f2;
@@ -2199,6 +2247,7 @@ public abstract class XlangTestBase extends ForyTestBase {
    * </ul>
    */
   @Data
+  @ForyStruct
   static class NullableComprehensiveSchemaConsistent {
     // Base non-nullable primitive fields
     byte byteField;
@@ -2369,6 +2418,7 @@ public abstract class XlangTestBase extends ForyTestBase {
    * <p>In other languages, group 1 fields should be nullable, group 2 fields should be not-null.
    */
   @Data
+  @ForyStruct
   static class NullableComprehensiveCompatible {
     // Base non-nullable primitive fields
     byte byteField;
@@ -2663,6 +2713,7 @@ public abstract class XlangTestBase extends ForyTestBase {
    * simple struct with id and name fields.
    */
   @Data
+  @ForyStruct
   static class RefInnerSchemaConsistent {
     int id;
     String name;
@@ -2673,6 +2724,7 @@ public abstract class XlangTestBase extends ForyTestBase {
    * can point to the same RefInnerSchemaConsistent instance. Both fields have ref tracking enabled.
    */
   @Data
+  @ForyStruct
   static class RefOuterSchemaConsistent {
     @ForyField(ref = true, nullable = true, dynamic = ForyField.Dynamic.FALSE)
     RefInnerSchemaConsistent inner1;
@@ -2740,6 +2792,7 @@ public abstract class XlangTestBase extends ForyTestBase {
    * with id and name fields.
    */
   @Data
+  @ForyStruct
   static class RefInnerCompatible {
     int id;
     String name;
@@ -2750,6 +2803,7 @@ public abstract class XlangTestBase extends ForyTestBase {
    * point to the same RefInnerCompatible instance. Both fields have ref tracking enabled.
    */
   @Data
+  @ForyStruct
   static class RefOuterCompatible {
     @ForyField(ref = true, nullable = true)
     RefInnerCompatible inner1;
@@ -2818,12 +2872,14 @@ public abstract class XlangTestBase extends ForyTestBase {
   // ============================================================================
 
   @Data
+  @ForyStruct
   static class RefOverrideElement {
     int id;
     String name;
   }
 
   @Data
+  @ForyStruct
   static class RefOverrideContainer {
     List<@Ref(enable = false) RefOverrideElement> listField;
     Set<@Ref(enable = false) RefOverrideElement> setField;
@@ -2973,6 +3029,7 @@ public abstract class XlangTestBase extends ForyTestBase {
    * 'selfRef' instead of 'self' because 'self' is a reserved keyword in Rust.
    */
   @Data
+  @ForyStruct
   static class CircularRefStruct {
     String name;
 
@@ -3112,6 +3169,7 @@ public abstract class XlangTestBase extends ForyTestBase {
    * with different encoding options.
    */
   @Data
+  @ForyStruct
   static class UnsignedSchemaConsistent {
     // Primitive unsigned fields (use Field suffix to avoid reserved keywords in Rust/Go)
     @UInt8Type int u8Field;
@@ -3163,6 +3221,7 @@ public abstract class XlangTestBase extends ForyTestBase {
   }
 
   @Data
+  @ForyStruct
   static class UnsignedSchemaConsistentSimple {
     @UInt64Type(encoding = Int64Encoding.TAGGED)
     long u64Tagged;
@@ -3256,6 +3315,7 @@ public abstract class XlangTestBase extends ForyTestBase {
    * nullability: Group 1 is Optional, Group 2 is non-Optional.
    */
   @Data
+  @ForyStruct
   static class UnsignedSchemaCompatible {
     // Group 1: Primitive unsigned fields (non-nullable in Java, Optional in other languages)
     @UInt8Type int u8Field1;

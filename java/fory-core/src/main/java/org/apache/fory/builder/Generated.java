@@ -21,15 +21,20 @@ package org.apache.fory.builder;
 
 import java.lang.reflect.Field;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import org.apache.fory.context.CopyContext;
+import org.apache.fory.context.ReadContext;
 import org.apache.fory.context.WriteContext;
 import org.apache.fory.meta.TypeDef;
 import org.apache.fory.reflect.ReflectionUtils;
 import org.apache.fory.resolver.TypeResolver;
 import org.apache.fory.serializer.AbstractObjectSerializer;
-import org.apache.fory.serializer.MetaSharedLayerSerializerBase;
+import org.apache.fory.serializer.CompatibleLayerSerializerBase;
 import org.apache.fory.serializer.Serializer;
+import org.apache.fory.serializer.StaticGeneratedStructSerializer;
+import org.apache.fory.type.Descriptor;
 import org.apache.fory.util.Preconditions;
 
 /**
@@ -101,13 +106,13 @@ public interface Generated {
   }
 
   /** Base class for all serializers with meta shared by {@link TypeDef}. */
-  abstract class GeneratedMetaSharedSerializer extends GeneratedSerializer implements Generated {
+  abstract class GeneratedCompatibleSerializer extends GeneratedSerializer implements Generated {
     public static final String SERIALIZER_FIELD_NAME = "serializer";
 
-    /** Will be set in generated constructor by {@link MetaSharedCodecBuilder}. */
+    /** Will be set in generated constructor by {@link CompatibleCodecBuilder}. */
     public Serializer serializer;
 
-    public GeneratedMetaSharedSerializer(TypeResolver typeResolver, Class<?> cls) {
+    public GeneratedCompatibleSerializer(TypeResolver typeResolver, Class<?> cls) {
       super(typeResolver, cls);
     }
 
@@ -117,14 +122,40 @@ public interface Generated {
     }
   }
 
+  /** Base class for GraalVM build-time compatible read serializers. */
+  abstract class GeneratedStaticCompatibleSerializer extends StaticGeneratedStructSerializer<Object>
+      implements Generated {
+    public GeneratedStaticCompatibleSerializer(
+        TypeResolver typeResolver, Class<?> cls, TypeDef typeDef, List<Descriptor> descriptors) {
+      super(typeResolver, cls, typeDef, descriptors);
+    }
+
+    @Override
+    public final Object read(ReadContext readContext) {
+      return readCompatible(readContext);
+    }
+
+    @Override
+    public void write(WriteContext writeContext, Object value) {
+      throw new UnsupportedOperationException(
+          "GraalVM static compatible serializers are read-only");
+    }
+
+    @Override
+    public Object copy(CopyContext copyContext, Object value) {
+      throw new UnsupportedOperationException(
+          "GraalVM static compatible serializers do not implement copy");
+    }
+  }
+
   /**
    * Base class for layer serializers with meta shared by {@link TypeDef}. Unlike {@link
-   * GeneratedMetaSharedSerializer}, this serializer only handles fields from a single class layer
+   * GeneratedCompatibleSerializer}, this serializer only handles fields from a single class layer
    * and does not include parent class fields.
    */
-  abstract class GeneratedMetaSharedLayerSerializer extends MetaSharedLayerSerializerBase
+  abstract class GeneratedCompatibleLayerSerializer extends CompatibleLayerSerializerBase
       implements Generated {
-    public GeneratedMetaSharedLayerSerializer(TypeResolver typeResolver, Class<?> cls) {
+    public GeneratedCompatibleLayerSerializer(TypeResolver typeResolver, Class<?> cls) {
       super(typeResolver, cls);
     }
   }

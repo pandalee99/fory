@@ -53,6 +53,13 @@ public class FieldSkipper {
     int dispatchId = fieldInfo.dispatchId;
     RefMode refMode = fieldInfo.refMode;
 
+    if (typeResolver.isCollectionDescriptor(fieldInfo.descriptor)
+        || typeResolver.isMap(fieldInfo.type)) {
+      AbstractObjectSerializer.readContainerFieldValue(
+          readContext, typeResolver, refReader, readContext.getGenerics(), fieldInfo, buffer);
+      return;
+    }
+
     // For non-basic types, fall back to binding.readField
     if (!DispatchId.isBasicType(dispatchId)) {
       AbstractObjectSerializer.readField(readContext, typeResolver, refReader, fieldInfo, buffer);
@@ -60,6 +67,14 @@ public class FieldSkipper {
     }
 
     // For nullable basic types, check null flag first
+    if (refMode == RefMode.TRACKING) {
+      // Tracking refs can be null, a new value, or a back-reference with no payload bytes. Delegate
+      // to the normal ref-aware field read path so skipping an unknown back-reference does not
+      // consume the next field's payload.
+      AbstractObjectSerializer.readBuildInFieldValue(
+          readContext, typeResolver, refReader, fieldInfo, buffer);
+      return;
+    }
     if (refMode != RefMode.NONE) {
       if (buffer.readByte() == Fory.NULL_FLAG) {
         return; // Field is null, nothing more to skip

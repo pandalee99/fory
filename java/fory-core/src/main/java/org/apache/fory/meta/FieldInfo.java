@@ -23,6 +23,7 @@ import java.io.Serializable;
 import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
 import java.util.Objects;
+import org.apache.fory.annotation.ForyField;
 import org.apache.fory.reflect.TypeRef;
 import org.apache.fory.resolver.TypeResolver;
 import org.apache.fory.serializer.converter.FieldConverter;
@@ -90,7 +91,7 @@ public final class FieldInfo implements Serializable {
    * reflection should be used to get the descriptor.
    */
   Descriptor toDescriptor(TypeResolver resolver, Descriptor descriptor) {
-    TypeRef<?> declared = descriptor != null ? descriptor.getTypeRef() : null;
+    TypeRef<?> declared = descriptor != null ? descriptor.getTypeRef() : primitiveListCarrierType();
     TypeRef<?> typeRef = fieldType.toTypeToken(resolver, declared);
     String typeName = fieldType.getTypeName(resolver, typeRef);
     if (fieldType instanceof FieldTypes.RegisteredFieldType) {
@@ -128,6 +129,18 @@ public final class FieldInfo implements Serializable {
               ? null
               : FieldTypes.buildFieldType(resolver, descriptor.getField());
       int peerArrayTypeId = arrayTypeId(fieldType);
+      // Static @ArrayType List<T> descriptors are fieldless, but the generated accessor still
+      // reads and writes a List. Preserve the local descriptor so field metadata installs the
+      // boxed-list dense-array serializer instead of treating the accessor value as a primitive
+      // array.
+      if (peerArrayTypeId != Types.UNKNOWN
+          && TypeAnnotationUtils.isBoxedListArrayType(descriptor)
+          && peerArrayTypeId == TypeAnnotationUtils.getBoxedListArrayTypeId(descriptor)) {
+        return new DescriptorBuilder(descriptor)
+            .trackingRef(remoteTrackingRef)
+            .nullable(remoteNullable)
+            .build();
+      }
       if (peerArrayTypeId != Types.UNKNOWN
           && peerArrayTypeId == arrayTypeId(localFieldType)
           && TypeAnnotationUtils.isArrayType(descriptor)) {
@@ -136,15 +149,28 @@ public final class FieldInfo implements Serializable {
             .nullable(remoteNullable)
             .build();
       }
-      if (localFieldType != null && hasListArrayShapeMismatch(fieldType, localFieldType)) {
+      if (localFieldType != null && isListArrayRootPair(fieldType, localFieldType)) {
         throw new IllegalArgumentException(
             StringUtils.format(
-                "Unsupported nested list/array compatible field mismatch for field "
-                    + "{}.{}: peer={}, local={}",
+                "Unsupported list/array compatible field mismatch for field {}.{}: peer={}, local={}",
                 definedClass,
                 fieldName,
                 fieldType,
                 localFieldType));
+      }
+      if (localFieldType != null && hasNestedListArrayShapeMismatch(fieldType, localFieldType)) {
+        // List/array bridging is only defined for the matched field itself. If the shape differs
+        // deeper in a container, keep the remote descriptor for skipping but do not assign it to
+        // the local field.
+        TypeRef<?> remoteTypeRef = fieldType.toTypeToken(resolver, null);
+        return new DescriptorBuilder(descriptor)
+            .typeName(fieldType.getTypeName(resolver, remoteTypeRef))
+            .trackingRef(remoteTrackingRef)
+            .nullable(remoteNullable)
+            .typeRef(remoteTypeRef)
+            .type(remoteTypeRef.getRawType())
+            .field(null)
+            .build();
       }
       if (remoteNullable == descriptor.isNullable()
           && remoteTrackingRef == descriptor.isTrackingRef()
@@ -176,14 +202,19 @@ public final class FieldInfo implements Serializable {
             builder.field(null);
           }
         }
-        FieldConverter<?> converter = FieldConverters.getConverter(rawType, descriptor.getField());
-        if (converter != null) {
-          builder.fieldConverter(converter);
+        if (descriptor.getField() != null) {
+          FieldConverter<?> converter =
+              FieldConverters.getConverter(rawType, descriptor.getField());
+          if (converter != null) {
+            builder.fieldConverter(converter);
+          }
         }
       }
       return builder.build();
     }
-    // This field doesn't exist in peer class, so any legal modifier will be OK.
+    // This field doesn't exist in peer class, so any legal modifier will be OK. Preserve the
+    // remote tag id in the synthetic descriptor because descriptor grouping uses it as the sort key
+    // for compatible payload order.
     // Use constant instead of reflection to avoid GraalVM native image issues.
     int stubModifiers = Modifier.PRIVATE | Modifier.FINAL;
     return new Descriptor(
@@ -192,8 +223,11 @@ public final class FieldInfo implements Serializable {
         fieldName,
         stubModifiers,
         definedClass,
+        hasFieldId(),
+        fieldId,
+        remoteNullable,
         remoteTrackingRef,
-        remoteNullable);
+        ForyField.Dynamic.AUTO);
   }
 
   private boolean isTopLevelListArrayCompatibleReadPair(
@@ -220,11 +254,7 @@ public final class FieldInfo implements Serializable {
 
   private static boolean hasListArrayShapeMismatch(
       FieldTypes.FieldType peerFieldType, FieldTypes.FieldType localFieldType) {
-    boolean peerList = isListField(peerFieldType);
-    boolean localList = isListField(localFieldType);
-    boolean peerArray = arrayTypeId(peerFieldType) != Types.UNKNOWN;
-    boolean localArray = arrayTypeId(localFieldType) != Types.UNKNOWN;
-    if ((peerList && localArray) || (peerArray && localList)) {
+    if (isListArrayRootPair(peerFieldType, localFieldType)) {
       return true;
     }
     if (peerFieldType.getTypeId() != localFieldType.getTypeId()) {
@@ -252,9 +282,67 @@ public final class FieldInfo implements Serializable {
     return false;
   }
 
+  private static boolean hasNestedListArrayShapeMismatch(
+      FieldTypes.FieldType peerFieldType, FieldTypes.FieldType localFieldType) {
+    if (peerFieldType.getTypeId() != localFieldType.getTypeId()) {
+      return false;
+    }
+    if (peerFieldType instanceof FieldTypes.CollectionFieldType
+        && localFieldType instanceof FieldTypes.CollectionFieldType) {
+      return hasListArrayShapeMismatch(
+          ((FieldTypes.CollectionFieldType) peerFieldType).getElementType(),
+          ((FieldTypes.CollectionFieldType) localFieldType).getElementType());
+    }
+    if (peerFieldType instanceof FieldTypes.MapFieldType
+        && localFieldType instanceof FieldTypes.MapFieldType) {
+      FieldTypes.MapFieldType peerMap = (FieldTypes.MapFieldType) peerFieldType;
+      FieldTypes.MapFieldType localMap = (FieldTypes.MapFieldType) localFieldType;
+      return hasListArrayShapeMismatch(peerMap.getKeyType(), localMap.getKeyType())
+          || hasListArrayShapeMismatch(peerMap.getValueType(), localMap.getValueType());
+    }
+    if (peerFieldType instanceof FieldTypes.ArrayFieldType
+        && localFieldType instanceof FieldTypes.ArrayFieldType) {
+      return hasListArrayShapeMismatch(
+          ((FieldTypes.ArrayFieldType) peerFieldType).getComponentType(),
+          ((FieldTypes.ArrayFieldType) localFieldType).getComponentType());
+    }
+    return false;
+  }
+
+  private static boolean isListArrayRootPair(
+      FieldTypes.FieldType peerFieldType, FieldTypes.FieldType localFieldType) {
+    boolean peerList = isListField(peerFieldType);
+    boolean localList = isListField(localFieldType);
+    boolean peerArray = arrayTypeId(peerFieldType) != Types.UNKNOWN;
+    boolean localArray = arrayTypeId(localFieldType) != Types.UNKNOWN;
+    return (peerList && localArray) || (peerArray && localList);
+  }
+
   private static boolean isListField(FieldTypes.FieldType fieldType) {
     return fieldType instanceof FieldTypes.CollectionFieldType
         && fieldType.getTypeId() == Types.LIST;
+  }
+
+  private TypeRef<?> primitiveListCarrierType() {
+    if (!(fieldType instanceof FieldTypes.CollectionFieldType)) {
+      return null;
+    }
+    FieldTypes.CollectionFieldType collectionFieldType = (FieldTypes.CollectionFieldType) fieldType;
+    FieldTypes.FieldType elementType = collectionFieldType.getElementType();
+    if (!(elementType instanceof FieldTypes.RegisteredFieldType)
+        || elementType.nullable()
+        || elementType.trackingRef()) {
+      return null;
+    }
+    int elementTypeId = ((FieldTypes.RegisteredFieldType) elementType).getTypeId();
+    Class<?> carrierClass = FieldTypes.getPrimitiveListClassForElementType(elementTypeId);
+    if (carrierClass == null) {
+      return null;
+    }
+    // Native registered TypeDefs may not carry the writer class name for a removed field. A
+    // LIST field with a non-null primitive element is the schema marker emitted by primitive-list
+    // carriers, whose payload omits the native collection class header.
+    return TypeRef.of(carrierClass);
   }
 
   private static int listElementTypeId(FieldTypes.FieldType fieldType) {

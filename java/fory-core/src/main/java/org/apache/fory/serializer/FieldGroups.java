@@ -87,16 +87,7 @@ public class FieldGroups {
       Collection<Descriptor> descriptors,
       boolean descriptorsGroupedOrdered,
       Function<Descriptor, Descriptor> descriptorUpdator) {
-    return DescriptorGrouper.createDescriptorGrouper(
-            typeResolver::usesPrimitiveFieldOrdering,
-            typeResolver::isBuildIn,
-            typeResolver::isCollectionDescriptor,
-            descriptors,
-            descriptorsGroupedOrdered,
-            descriptorUpdator,
-            typeResolver.getPrimitiveComparator(),
-            typeResolver.getDescriptorComparator())
-        .sort();
+    return typeResolver.groupDescriptors(descriptors, descriptorsGroupedOrdered, descriptorUpdator);
   }
 
   public static FieldGroups buildFieldInfos(TypeResolver typeResolver, DescriptorGrouper grouper) {
@@ -217,10 +208,15 @@ public class FieldGroups {
       // This determines how to write the value to the object (UnsafeOps.putInt vs putObject).
       isPrimitiveField = typeRef.getRawType().isPrimitive();
       fieldConverter = d.getFieldConverter();
-      // For xlang compatibility, check TypeExtMeta first (from remote peer's type meta)
-      // This ensures we read data correctly when remote's nullable differs from local
+      // TypeExtMeta is xlang field-wrapper metadata. Native local descriptors keep native
+      // nullable-by-default field semantics on the descriptor, while remote TypeDef descriptors
+      // already carry their schema nullability there. Primitive-list carrier TypeExtMeta is also
+      // element wire metadata, not field-wrapper metadata.
       TypeExtMeta extMeta = typeRef.getTypeExtMeta();
-      if (extMeta != null) {
+      if (resolver.isCrossLanguage()
+          && extMeta != null
+          && !primitiveListArray
+          && !primitiveListCollection) {
         nullable = extMeta.nullable();
         trackingRef = extMeta.trackingRef();
       } else {
@@ -231,9 +227,7 @@ public class FieldGroups {
 
       GenericType t;
       if (primitiveListCollection) {
-        TypeRef<?> elementTypeRef =
-            TypeAnnotationUtils.getPrimitiveListElementTypeRef(
-                d.getTypeAnnotation(), typeRef.getRawType());
+        TypeRef<?> elementTypeRef = TypeAnnotationUtils.getPrimitiveListElementTypeRef(d);
         t = new GenericType(typeRef, true, resolver.buildGenericType(elementTypeRef));
       } else {
         t = resolver.buildGenericType(typeRef);
@@ -263,12 +257,12 @@ public class FieldGroups {
                 resolver, type);
       } else if (primitiveListCollection) {
         containerSerializerOverride = new CollectionSerializer(resolver, (Class) type);
-      } else if (TypeAnnotationUtils.isBoxedListArrayType(descriptor.getField())) {
+      } else if (TypeAnnotationUtils.isBoxedListArrayType(descriptor)) {
         containerSerializerOverride =
             new org.apache.fory.serializer.collection.PrimitiveListSerializers
                 .BoxedArrayAsListSerializer(
                 resolver,
-                TypeAnnotationUtils.getBoxedListArrayTypeId(descriptor.getField()),
+                TypeAnnotationUtils.getBoxedListArrayTypeId(descriptor),
                 qualifiedFieldName);
       } else {
         containerSerializerOverride = null;

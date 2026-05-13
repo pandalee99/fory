@@ -210,4 +210,5 @@ ThreadSafeFory threadLocalFory = Fory.builder()
 - [Type Registration](type-registration.md) - Class registration and security
 - [Custom Serializers](custom-serializers.md) - Implement custom serializers
 - [Cross-Language Serialization](cross-language.md) - Serialize data for other languages
+- [Static Generated Serializers](static-generated-serializers.md) - Annotation-processor static generated serializers for `@ForyStruct`
 - [GraalVM Support](graalvm-support.md) - Build-time serializer compilation for native images
