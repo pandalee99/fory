@@ -232,6 +232,26 @@ public class ForyStructProcessorTest {
   }
 
   @Test
+  public void testNegativeForyFieldIdFailsCompilation() throws Exception {
+    CompilationResult result =
+        compile(
+            "test.NegativeIdStruct",
+            "package test;\n"
+                + "import org.apache.fory.annotation.ForyField;\n"
+                + "import org.apache.fory.annotation.ForyStruct;\n"
+                + "@ForyStruct public class NegativeIdStruct {\n"
+                + "  @ForyField(id = -2) public int value;\n"
+                + "  public NegativeIdStruct() {}\n"
+                + "}\n");
+    Assert.assertFalse(result.success);
+    Assert.assertTrue(
+        result
+            .diagnostics()
+            .contains("@ForyField id must be -1 (no tag ID) or a non-negative tag ID"),
+        result.diagnostics());
+  }
+
+  @Test
   public void testInvalidScalarAnnotationCarrierFailsCompilation() throws Exception {
     CompilationResult result =
         compile(

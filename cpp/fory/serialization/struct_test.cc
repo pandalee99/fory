@@ -117,6 +117,22 @@ struct TaggedGroupedOrderStruct {
               (int_value, fory::F(10).varint()));
 };
 
+struct MixedFieldIdentityStruct {
+  std::string beta_value;
+  std::string tagged_value;
+  std::string alpha_value;
+  int32_t count;
+
+  bool operator==(const MixedFieldIdentityStruct &other) const {
+    return beta_value == other.beta_value &&
+           tagged_value == other.tagged_value &&
+           alpha_value == other.alpha_value && count == other.count;
+  }
+
+  FORY_STRUCT(MixedFieldIdentityStruct, beta_value, (tagged_value, fory::F(3)),
+              alpha_value, (count, fory::F(2).varint()));
+};
+
 class PrivateFieldsStruct {
 public:
   PrivateFieldsStruct() = default;
@@ -522,6 +538,7 @@ inline void register_all_test_types(Fory &fory) {
   fory.register_struct<PartialMapAnnotatedStruct>(type_id++);
   fory.register_struct<OptionalNestedAnnotatedStruct>(type_id++);
   fory.register_struct<ListArrayAnnotatedStruct>(type_id++);
+  fory.register_struct<MixedFieldIdentityStruct>(type_id++);
   fory.register_struct<OptionalFieldsStruct>(type_id++);
   fory.register_struct<EnumStruct>(type_id++);
   fory.register_struct<UserProfile>(type_id++);
@@ -914,6 +931,44 @@ TEST(StructComprehensiveTest, TaggedFieldsKeepGroupedPayloadOrder) {
   EXPECT_EQ(fields[1].field_id, 1);
 }
 
+TEST(StructComprehensiveTest, MixedFieldIdentifiersUseProtocolOrder) {
+  MixedFieldIdentityStruct obj{"beta", "tagged", "alpha", 7};
+  test_roundtrip(obj);
+
+  auto fory =
+      Fory::builder().xlang(true).compatible(true).track_ref(false).build();
+  ASSERT_TRUE(fory.register_struct<MixedFieldIdentityStruct>(607).ok());
+  ASSERT_TRUE(fory.serialize(obj).ok());
+  TypeMeta meta =
+      fory.type_resolver().clone_struct_meta<MixedFieldIdentityStruct>();
+  const auto &fields = meta.get_field_infos();
+  ASSERT_EQ(fields.size(), 4);
+  EXPECT_EQ(fields[0].field_id, 2);
+  EXPECT_EQ(fields[1].field_id, 3);
+  EXPECT_EQ(fields[2].field_name, "alpha_value");
+  EXPECT_EQ(fields[2].field_id, -1);
+  EXPECT_EQ(fields[3].field_name, "beta_value");
+  EXPECT_EQ(fields[3].field_id, -1);
+}
+
+TEST(StructComprehensiveTest, NonPrimitiveFieldsSortByFieldIdentifier) {
+  auto fields = TypeMeta::sort_field_infos({
+      make_test_field_info("string_value", 20,
+                           make_test_field_type(TypeId::STRING)),
+      make_test_field_info("map_value", 10, make_test_field_type(TypeId::MAP)),
+      make_test_field_info("custom_value", -1,
+                           make_test_field_type(TypeId::NAMED_STRUCT)),
+      make_test_field_info("binary_value", -1,
+                           make_test_field_type(TypeId::BINARY)),
+  });
+
+  ASSERT_EQ(fields.size(), 4);
+  EXPECT_EQ(fields[0].field_name, "map_value");
+  EXPECT_EQ(fields[1].field_name, "string_value");
+  EXPECT_EQ(fields[2].field_name, "binary_value");
+  EXPECT_EQ(fields[3].field_name, "custom_value");
+}
+
 TEST(StructComprehensiveTest,
      FieldTypeCompatibleFingerprintNormalizesEncoding) {
   FieldType fixed_i32 = make_test_field_type(TypeId::INT32);
@@ -977,6 +1032,25 @@ TEST(StructComprehensiveTest,
                            {make_test_field_type(TypeId::UINT32)}))};
   TypeMeta::assign_field_ids(&local_type, name_remote);
   EXPECT_EQ(name_remote[0].field_id, -1);
+
+  TypeMeta mixed_local;
+  mixed_local.field_infos = {
+      make_test_field_info("tagged", 3, make_test_field_type(TypeId::STRING)),
+      make_test_field_info("alpha", -1, make_test_field_type(TypeId::BINARY)),
+      make_test_field_info("beta", -1, make_test_field_type(TypeId::VARINT32))};
+  std::vector<FieldInfo> mixed_remote = {
+      make_test_field_info("alpha", -1, make_test_field_type(TypeId::BINARY)),
+      make_test_field_info("tagged", 3, make_test_field_type(TypeId::STRING)),
+      make_test_field_info("beta", -1, make_test_field_type(TypeId::VARINT32))};
+  TypeMeta::assign_field_ids(&mixed_local, mixed_remote);
+  EXPECT_EQ(mixed_remote[0].field_id, 1);
+  EXPECT_EQ(mixed_remote[1].field_id, 0);
+  EXPECT_EQ(mixed_remote[2].field_id, 2);
+
+  std::vector<FieldInfo> untagged_remote_for_tagged_local = {
+      make_test_field_info("tagged", -1, make_test_field_type(TypeId::STRING))};
+  TypeMeta::assign_field_ids(&mixed_local, untagged_remote_for_tagged_local);
+  EXPECT_EQ(untagged_remote_for_tagged_local[0].field_id, -1);
 }
 
 TEST(StructComprehensiveTest, OptionalFieldsAllEmpty) {

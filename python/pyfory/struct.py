@@ -54,8 +54,6 @@ from pyfory.policy import DEFAULT_POLICY
 from pyfory.types import (
     TypeId,
     is_primitive_array_type,
-    is_list_type,
-    is_map_type,
     get_primitive_type_size,
     is_polymorphic_type,
     is_primitive_type,
@@ -133,7 +131,7 @@ class FieldInfo:
     type_hint: type  # Type annotation
 
     # Fory metadata (from pyfory.field()) - used for hash computation
-    tag_id: int  # -1 = use field name, >=0 = use tag ID
+    tag_id: int  # -1 is the internal no-ID sentinel, >=0 = use tag ID
     nullable: bool  # Effective nullable flag (considers Optional[T])
     ref: bool  # Field-level ref setting (for hash computation)
     dynamic: bool  # Whether type info is written for this field
@@ -922,6 +920,27 @@ class StructFieldSerializerVisitor(TypeVisitor):
 _UNKNOWN_TYPE_ID = -1
 
 
+def _to_snake_case(name: str) -> str:
+    result = []
+    previous = ""
+    for index, char in enumerate(name):
+        if char == "_":
+            result.append(char)
+            previous = char
+            continue
+        if char.isupper():
+            next_is_lower = index + 1 < len(name) and name[index + 1].islower()
+            previous_lower_or_digit = previous.islower() or previous.isdigit()
+            previous_upper = previous.isupper()
+            if result and result[-1] != "_" and (previous_lower_or_digit or (previous_upper and next_is_lower)):
+                result.append("_")
+            result.append(char.lower())
+        else:
+            result.append(char)
+        previous = char
+    return "".join(result).rstrip("_")
+
+
 def _sort_fields(type_resolver, field_names, serializers, nullable_map=None, field_infos_list=None):
     (boxed_types, nullable_boxed_types, internal_types, collection_types, set_types, map_types, other_types) = group_fields(
         type_resolver, field_names, serializers, nullable_map, field_infos_list
@@ -937,10 +956,10 @@ def group_fields(type_resolver, field_names, serializers, nullable_map=None, fie
         field_info_map = {fi.name: fi for fi in field_infos_list}
     boxed_types = []
     nullable_boxed_types = []
+    non_primitive_types = []
     collection_types = []
     set_types = []
     map_types = []
-    internal_types = []
     other_types = []
     type_ids = []
     for field_name, serializer in zip(field_names, serializers):
@@ -949,9 +968,9 @@ def group_fields(type_resolver, field_names, serializers, nullable_map=None, fie
         if tag_id >= 0:
             sort_key = (0, tag_id, "")
         else:
-            sort_key = (1, field_name, "")
+            sort_key = (1, _to_snake_case(field_name), field_name)
         if serializer is None:
-            other_types.append((_UNKNOWN_TYPE_ID, serializer, field_name, sort_key))
+            non_primitive_types.append((_UNKNOWN_TYPE_ID, serializer, field_name, sort_key))
         else:
             type_ids.append(
                 (
@@ -967,24 +986,9 @@ def group_fields(type_resolver, field_names, serializers, nullable_map=None, fie
         is_nullable = nullable_map.get(field_name, False)
         if is_primitive_type(type_id):
             container = nullable_boxed_types if is_nullable else boxed_types
-        elif type_id == TypeId.SET:
-            container = set_types
-        elif type_id == TypeId.LIST or is_list_type(serializer.type_):
-            container = collection_types
-        elif is_map_type(serializer.type_):
-            container = map_types
-        elif is_polymorphic_type(type_id) or type_id in {TypeId.ENUM, TypeId.NAMED_ENUM} or is_union_type(type_id):
-            container = other_types
-        elif type_id >= TypeId.BOUND:
-            # Native mode user-registered types have type_id >= BOUND
-            container = other_types
         else:
-            assert TypeId.UNKNOWN < type_id < TypeId.BOUND, (type_id,)
-            container = internal_types
+            container = non_primitive_types
         container.append((type_id, serializer, field_name, sort_key))
-
-    def sorter(item):
-        return item[0], item[3]
 
     def numeric_sorter(item):
         id_ = item[0]
@@ -1003,12 +1007,9 @@ def group_fields(type_resolver, field_names, serializers, nullable_map=None, fie
 
     boxed_types = sorted(boxed_types, key=numeric_sorter)
     nullable_boxed_types = sorted(nullable_boxed_types, key=numeric_sorter)
-    collection_types = sorted(collection_types, key=lambda item: item[3])
-    set_types = sorted(set_types, key=lambda item: item[3])
-    internal_types = sorted(internal_types, key=sorter)
-    map_types = sorted(map_types, key=lambda item: item[3])
+    non_primitive_types = sorted(non_primitive_types, key=lambda item: item[3])
     other_types = sorted(other_types, key=lambda item: item[3])
-    return (boxed_types, nullable_boxed_types, internal_types, collection_types, set_types, map_types, other_types)
+    return (boxed_types, nullable_boxed_types, non_primitive_types, collection_types, set_types, map_types, other_types)
 
 
 def compute_struct_fingerprint(type_resolver, field_names, serializers, nullable_map=None, field_infos_list=None):
@@ -1017,10 +1018,10 @@ def compute_struct_fingerprint(type_resolver, field_names, serializers, nullable
 
     Fingerprint Format:
         Each field contributes: <field_id_or_name>,<type_id>,<ref>,<nullable>[<child...>];
-        Fields are sorted by tag ID (if >=0) or field name (if id=-1).
+        Fields are sorted by tag ID (if >=0) or snake_case field name when no ID is configured.
 
     Field Components:
-        - field_id_or_name: Tag ID as string if id >= 0, otherwise field name
+        - field_id_or_name: Tag ID as string if id >= 0, otherwise snake_case field name
         - type_id: Fory TypeId as decimal string (e.g., "4" for INT32)
         - ref: "1" if field has ref=True in pyfory.field(), "0" otherwise
               (based on field annotation, NOT runtime config)
@@ -1065,9 +1066,9 @@ def compute_struct_fingerprint(type_resolver, field_names, serializers, nullable
             field_id_or_name = str(tag_id)
             sort_key = (0, tag_id, "")  # 0 = tag ID fields come first
         else:
-            field_id_or_name = field_name
-            # Sort by field name (lexicographic) for name-based fields
-            sort_key = (1, field_name, "")  # 1 = name fields come after
+            field_id_or_name = _to_snake_case(field_name)
+            # Sort by snake_case field name for name-based fields.
+            sort_key = (1, field_id_or_name, field_name)  # 1 = name fields come after
 
         fp_fields.append((sort_key, field_id_or_name, type_fingerprint))
 

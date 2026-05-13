@@ -939,6 +939,12 @@ int compare_field_sort_key(const FieldInfo &a, const FieldInfo &b) {
   if (a.field_id >= 0 && b.field_id >= 0 && a.field_id != b.field_id) {
     return a.field_id < b.field_id ? -1 : 1;
   }
+  if (a.field_id >= 0 && b.field_id < 0) {
+    return -1;
+  }
+  if (a.field_id < 0 && b.field_id >= 0) {
+    return 1;
+  }
   std::string a_key = field_sort_key_text(a);
   std::string b_key = field_sort_key_text(b);
   if (a_key != b_key) {
@@ -974,51 +980,21 @@ bool numeric_sorter(const FieldInfo &a, const FieldInfo &b) {
   return compare_field_sort_key(a, b) < 0;
 }
 
-// Type then identity sorter (for internal type fields like STRING).
-// Sorts by: type_id (ascending), then numeric field ID or field name.
-bool type_then_name_sorter(const FieldInfo &a, const FieldInfo &b) {
-  if (a.field_type.type_id != b.field_type.type_id) {
-    return a.field_type.type_id < b.field_type.type_id;
-  }
-  return compare_field_sort_key(a, b) < 0;
-}
-
-// Identity sorter (for list/set/map/other fields).
+// Identity sorter (for non-primitive fields).
 // Sorts by numeric field ID when present, otherwise field name.
 bool name_sorter(const FieldInfo &a, const FieldInfo &b) {
   return compare_field_sort_key(a, b) < 0;
-}
-
-// Check if a type ID is a "final" type for field group 2 in field ordering.
-// Final types are STRING, DURATION, TIMESTAMP, DATE, DECIMAL, BINARY,
-// ARRAY, and primitive arrays.
-// These are types with fixed serializers that don't need type info written.
-// Excludes: ENUM (13-14), STRUCT (15-18), EXT (19-20), LIST (21), SET (22), MAP
-// (23) Note: LIST/SET/MAP are checked separately before this function is
-// called.
-bool is_final_type_for_grouping(uint32_t type_id) {
-  return type_id == static_cast<uint32_t>(TypeId::STRING) ||
-         (type_id >= static_cast<uint32_t>(TypeId::DURATION) &&
-          type_id <= static_cast<uint32_t>(TypeId::BINARY)) ||
-         type_id == static_cast<uint32_t>(TypeId::ARRAY) ||
-         (type_id >= static_cast<uint32_t>(TypeId::BOOL_ARRAY) &&
-          type_id <= static_cast<uint32_t>(TypeId::FLOAT64_ARRAY));
 }
 
 } // anonymous namespace
 
 std::vector<FieldInfo>
 TypeMeta::sort_field_infos(std::vector<FieldInfo> fields) {
-  // Group fields according to xlang spec. Field IDs are identity metadata for
-  // fingerprints and compatible matching; they do not replace the physical
-  // grouped payload order.
+  // Group fields according to xlang spec. Non-primitives intentionally share
+  // one identifier-sorted tail group regardless of type ID.
   std::vector<FieldInfo> primitive_fields;
   std::vector<FieldInfo> nullable_primitive_fields;
-  std::vector<FieldInfo> internal_type_fields;
-  std::vector<FieldInfo> list_fields;
-  std::vector<FieldInfo> set_fields;
-  std::vector<FieldInfo> map_fields;
-  std::vector<FieldInfo> other_fields;
+  std::vector<FieldInfo> non_primitive_fields;
 
   for (auto &field : fields) {
     uint32_t type_id = field.field_type.type_id;
@@ -1030,16 +1006,8 @@ TypeMeta::sort_field_infos(std::vector<FieldInfo> fields) {
       } else {
         primitive_fields.push_back(std::move(field));
       }
-    } else if (type_id == static_cast<uint32_t>(TypeId::LIST)) {
-      list_fields.push_back(std::move(field));
-    } else if (type_id == static_cast<uint32_t>(TypeId::SET)) {
-      set_fields.push_back(std::move(field));
-    } else if (type_id == static_cast<uint32_t>(TypeId::MAP)) {
-      map_fields.push_back(std::move(field));
-    } else if (is_final_type_for_grouping(type_id)) {
-      internal_type_fields.push_back(std::move(field));
     } else {
-      other_fields.push_back(std::move(field));
+      non_primitive_fields.push_back(std::move(field));
     }
   }
 
@@ -1047,12 +1015,8 @@ TypeMeta::sort_field_infos(std::vector<FieldInfo> fields) {
   std::sort(primitive_fields.begin(), primitive_fields.end(), numeric_sorter);
   std::sort(nullable_primitive_fields.begin(), nullable_primitive_fields.end(),
             numeric_sorter);
-  std::sort(internal_type_fields.begin(), internal_type_fields.end(),
-            type_then_name_sorter);
-  std::sort(list_fields.begin(), list_fields.end(), name_sorter);
-  std::sort(set_fields.begin(), set_fields.end(), name_sorter);
-  std::sort(map_fields.begin(), map_fields.end(), name_sorter);
-  std::sort(other_fields.begin(), other_fields.end(), name_sorter);
+  std::sort(non_primitive_fields.begin(), non_primitive_fields.end(),
+            name_sorter);
 
   // Combine sorted groups
   std::vector<FieldInfo> sorted;
@@ -1063,16 +1027,8 @@ TypeMeta::sort_field_infos(std::vector<FieldInfo> fields) {
                 std::make_move_iterator(nullable_primitive_fields.begin()),
                 std::make_move_iterator(nullable_primitive_fields.end()));
   sorted.insert(sorted.end(),
-                std::make_move_iterator(internal_type_fields.begin()),
-                std::make_move_iterator(internal_type_fields.end()));
-  sorted.insert(sorted.end(), std::make_move_iterator(list_fields.begin()),
-                std::make_move_iterator(list_fields.end()));
-  sorted.insert(sorted.end(), std::make_move_iterator(set_fields.begin()),
-                std::make_move_iterator(set_fields.end()));
-  sorted.insert(sorted.end(), std::make_move_iterator(map_fields.begin()),
-                std::make_move_iterator(map_fields.end()));
-  sorted.insert(sorted.end(), std::make_move_iterator(other_fields.begin()),
-                std::make_move_iterator(other_fields.end()));
+                std::make_move_iterator(non_primitive_fields.begin()),
+                std::make_move_iterator(non_primitive_fields.end()));
 
   return sorted;
 }
@@ -1099,34 +1055,6 @@ void TypeMeta::assign_field_ids(const TypeMeta *local_type,
       local_field_id_map.emplace(local_fields[i].field_id, i);
     }
   }
-  const bool local_uses_field_ids = !local_field_id_map.empty();
-  bool remote_uses_field_ids = false;
-  for (const auto &remote_field : remote_fields) {
-    if (remote_field.field_id >= 0) {
-      remote_uses_field_ids = true;
-      break;
-    }
-  }
-
-  if (local_uses_field_ids || remote_uses_field_ids) {
-    for (auto &remote_field : remote_fields) {
-      size_t local_index = static_cast<size_t>(-1);
-      if (local_uses_field_ids && remote_field.field_id >= 0) {
-        auto id_it = local_field_id_map.find(remote_field.field_id);
-        if (id_it != local_field_id_map.end() &&
-            field_types_compatible_top_level(
-                local_fields[id_it->second].field_type,
-                remote_field.field_type)) {
-          local_index = id_it->second;
-        }
-      }
-      remote_field.field_id = local_index == static_cast<size_t>(-1)
-                                  ? -1
-                                  : static_cast<int16_t>(local_index);
-    }
-    return;
-  }
-
   // Track which local fields have already been matched so that each
   // local field is bound to at most one remote field when we fall
   // back to type-based matching.
@@ -1136,31 +1064,45 @@ void TypeMeta::assign_field_ids(const TypeMeta *local_type,
   for (auto &remote_field : remote_fields) {
     size_t local_index = static_cast<size_t>(-1);
 
-    // 1) Try exact name + type match first (fast path for same-language
-    //    schemas and most C++-only cases).
-    if (local_index == static_cast<size_t>(-1)) {
+    if (remote_field.field_id >= 0) {
+      auto id_it = local_field_id_map.find(remote_field.field_id);
+      if (id_it != local_field_id_map.end() && !used[id_it->second] &&
+          field_types_compatible_top_level(
+              local_fields[id_it->second].field_type,
+              remote_field.field_type)) {
+        local_index = id_it->second;
+      }
+    } else {
+      // 1) Try exact name + type match first (fast path for same-language
+      //    schemas and most C++-only cases). A local tag-ID field's identifier
+      //    is the tag ID, not the field name, so it must not match an untagged
+      //    remote field by name in a mixed schema.
       auto it = local_field_index_map.find(remote_field.field_name);
       if (it != local_field_index_map.end()) {
         size_t idx = it->second;
         const FieldInfo &local_field = local_fields[idx];
-        if (field_types_compatible_top_level(local_field.field_type,
+        if (local_field.field_id < 0 &&
+            field_types_compatible_top_level(local_field.field_type,
                                              remote_field.field_type)) {
           local_index = idx;
         }
       }
-    }
 
-    // 2) Fallback: match by type signature and position when field names
-    //    are not available or differ across languages.
-    if (local_index == static_cast<size_t>(-1)) {
-      for (size_t i = 0; i < local_fields.size(); ++i) {
-        if (used[i]) {
-          continue;
-        }
-        if (field_types_compatible_top_level(local_fields[i].field_type,
-                                             remote_field.field_type)) {
-          local_index = i;
-          break;
+      // 2) Fallback: match by type signature and position when field names
+      //    are not available or differ across languages. Keep this fallback
+      //    within name-based fields so a mixed schema does not switch into a
+      //    global tag-ID mode or bind an untagged field to a tagged local
+      //    field.
+      if (local_index == static_cast<size_t>(-1)) {
+        for (size_t i = 0; i < local_fields.size(); ++i) {
+          if (used[i] || local_fields[i].field_id >= 0) {
+            continue;
+          }
+          if (field_types_compatible_top_level(local_fields[i].field_type,
+                                               remote_field.field_type)) {
+            local_index = i;
+            break;
+          }
         }
       }
     }

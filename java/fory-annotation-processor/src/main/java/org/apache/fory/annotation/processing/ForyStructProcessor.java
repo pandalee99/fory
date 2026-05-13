@@ -1085,6 +1085,10 @@ public final class ForyStructProcessor extends AbstractProcessor {
         dynamic = String.valueOf(value);
       }
     }
+    if (id < -1) {
+      throw new InvalidStructException(
+          "@ForyField id must be -1 (no tag ID) or a non-negative tag ID", field);
+    }
     return new ForyFieldMeta(true, id, nullable, ref, dynamic);
   }
 

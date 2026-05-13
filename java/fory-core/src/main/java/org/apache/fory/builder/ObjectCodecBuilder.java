@@ -37,7 +37,6 @@ import static org.apache.fory.type.TypeUtils.getRawType;
 
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -178,16 +177,7 @@ public class ObjectCodecBuilder extends BaseObjectCodecBuilder {
     addGroupExpressions(
         objectCodecOptimizer.boxedWriteGroups, numGroups, expressions, bean, buffer);
     addGroupExpressions(
-        objectCodecOptimizer.buildInWriteGroups, numGroups, expressions, bean, buffer);
-    for (Descriptor descriptor :
-        objectCodecOptimizer.descriptorGrouper.getCollectionDescriptors()) {
-      expressions.add(serializeGroup(Collections.singletonList(descriptor), bean, buffer, false));
-    }
-    for (Descriptor d : objectCodecOptimizer.descriptorGrouper.getMapDescriptors()) {
-      expressions.add(serializeGroup(Collections.singletonList(d), bean, buffer, false));
-    }
-    addGroupExpressions(
-        objectCodecOptimizer.otherWriteGroups, numGroups, expressions, bean, buffer);
+        objectCodecOptimizer.nonPrimitiveWriteGroups, numGroups, expressions, bean, buffer);
     return expressions;
   }
 
@@ -201,17 +191,18 @@ public class ObjectCodecBuilder extends BaseObjectCodecBuilder {
       if (group.isEmpty()) {
         continue;
       }
-      boolean inline = group.size() == 1 && numGroups < 10;
+      boolean inline = hasFewFields() || (group.size() == 1 && numGroups < 10);
       expressions.add(serializeGroup(group, bean, buffer, inline));
     }
   }
 
+  protected boolean hasFewFields() {
+    return objectCodecOptimizer.descriptorGrouper.getNumDescriptors() < 6;
+  }
+
   protected int getNumGroups(ObjectCodecOptimizer objectCodecOptimizer) {
     return objectCodecOptimizer.boxedWriteGroups.size()
-        + objectCodecOptimizer.buildInWriteGroups.size()
-        + objectCodecOptimizer.otherWriteGroups.size()
-        + objectCodecOptimizer.descriptorGrouper.getCollectionDescriptors().size()
-        + objectCodecOptimizer.descriptorGrouper.getMapDescriptors().size();
+        + objectCodecOptimizer.nonPrimitiveWriteGroups.size();
   }
 
   private Expression serializeGroup(
@@ -333,7 +324,7 @@ public class ObjectCodecBuilder extends BaseObjectCodecBuilder {
           throw new IllegalStateException("Unsupported dispatchId: " + dispatchId);
         }
       }
-      if (numPrimitiveFields < 4) {
+      if (hasFewFields() || numPrimitiveFields < 4) {
         expressions.add(groupExpressions);
       } else {
         expressions.add(
@@ -489,7 +480,7 @@ public class ObjectCodecBuilder extends BaseObjectCodecBuilder {
         // int/long are sorted in the last.
         addIncWriterIndexExpr(groupExpressions, buffer, acc);
       }
-      if (numPrimitiveFields < 4) {
+      if (hasFewFields() || numPrimitiveFields < 4) {
         expressions.add(groupExpressions);
       } else {
         expressions.add(
@@ -575,15 +566,7 @@ public class ObjectCodecBuilder extends BaseObjectCodecBuilder {
     deserializeReadGroup(
         objectCodecOptimizer.boxedReadGroups, numGroups, expressions, bean, buffer);
     deserializeReadGroup(
-        objectCodecOptimizer.buildInReadGroups, numGroups, expressions, bean, buffer);
-    for (Descriptor d : objectCodecOptimizer.descriptorGrouper.getCollectionDescriptors()) {
-      expressions.add(deserializeGroup(Collections.singletonList(d), bean, buffer, false));
-    }
-    for (Descriptor d : objectCodecOptimizer.descriptorGrouper.getMapDescriptors()) {
-      expressions.add(deserializeGroup(Collections.singletonList(d), bean, buffer, false));
-    }
-    deserializeReadGroup(
-        objectCodecOptimizer.otherReadGroups, numGroups, expressions, bean, buffer);
+        objectCodecOptimizer.nonPrimitiveReadGroups, numGroups, expressions, bean, buffer);
     if (isRecord) {
       if (recordCtrAccessible) {
         assert bean instanceof FieldsCollector;
@@ -609,7 +592,7 @@ public class ObjectCodecBuilder extends BaseObjectCodecBuilder {
       if (group.isEmpty()) {
         continue;
       }
-      boolean inline = group.size() == 1 && numGroups < 10;
+      boolean inline = hasFewFields() || (group.size() == 1 && numGroups < 10);
       expressions.add(deserializeGroup(group, bean, buffer, inline));
     }
   }
@@ -686,6 +669,11 @@ public class ObjectCodecBuilder extends BaseObjectCodecBuilder {
                     expr ->
                         setFieldValue(exprHolder.get("bean"), d, tryInlineCast(expr, castTypeRef)));
             walkPath.removeLast();
+            if (needsGeneratedReadFieldMethod(d)) {
+              action =
+                  objectCodecOptimizer.invokeGenerated(
+                      readCutPoints(bean, buffer), action, "readField");
+            }
             groupExpressions.add(action);
           }
           return groupExpressions;
@@ -696,6 +684,13 @@ public class ObjectCodecBuilder extends BaseObjectCodecBuilder {
       return objectCodecOptimizer.invokeGenerated(
           readCutPoints(bean, buffer), exprSupplier.get(), "readFields");
     }
+  }
+
+  private boolean needsGeneratedReadFieldMethod(Descriptor descriptor) {
+    return !hasFewFields()
+        && !isMonomorphic(descriptor)
+        && !useCollectionSerialization(descriptor)
+        && !useMapSerialization(descriptor.getTypeRef());
   }
 
   protected Expression deserializeGroupForRecord(
@@ -834,7 +829,7 @@ public class ObjectCodecBuilder extends BaseObjectCodecBuilder {
         // `bean` will be replaced by `Reference` to cut-off expr dependency.
         groupExpressions.add(setFieldValue(bean, descriptor, fieldValue));
       }
-      if (numPrimitiveFields < 4 || isRecord) {
+      if (hasFewFields() || numPrimitiveFields < 4 || isRecord) {
         expressions.add(groupExpressions);
       } else {
         expressions.add(
@@ -987,7 +982,7 @@ public class ObjectCodecBuilder extends BaseObjectCodecBuilder {
       if (!compressStarted) {
         addIncReaderIndexExpr(groupExpressions, buffer, acc);
       }
-      if (numPrimitiveFields < 4 || isRecord) {
+      if (hasFewFields() || numPrimitiveFields < 4 || isRecord) {
         expressions.add(groupExpressions);
       } else {
         expressions.add(

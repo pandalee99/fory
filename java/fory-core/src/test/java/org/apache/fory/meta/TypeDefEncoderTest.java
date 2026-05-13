@@ -23,6 +23,8 @@ import java.lang.reflect.Field;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 import lombok.Data;
 import org.apache.fory.Fory;
 import org.apache.fory.annotation.ForyField;
@@ -80,7 +82,6 @@ public class TypeDefEncoderTest {
 
     private String noAnnotation;
 
-    @ForyField(id = -1) // -1 means use field name
     private String optOutField;
 
     @ForyField(id = 60)
@@ -95,11 +96,17 @@ public class TypeDefEncoderTest {
 
     private String noAnnotation;
 
-    @ForyField(id = -1) // -1 means use field name
     private String optOutField;
 
     @ForyField(id = 50) // Duplicate with annotatedField1
     private int annotatedField2;
+  }
+
+  // Test data: Class with invalid negative tag ID
+  @Data
+  public static class ClassWithNegativeTagId {
+    @ForyField(id = -2)
+    private String field;
   }
 
   // Test data: Class with single field
@@ -118,6 +125,58 @@ public class TypeDefEncoderTest {
   }
 
   public static class EmptyStruct {}
+
+  public static class ParentNameOrderedNonPrimitives {
+    private String zString;
+  }
+
+  public static class ChildNameOrderedNonPrimitives extends ParentNameOrderedNonPrimitives {
+    private Map<String, Integer> aMap;
+    private int count;
+  }
+
+  public static class ParentShadowedField {
+    private String duplicateName;
+  }
+
+  public static class ChildShadowedField extends ParentShadowedField {
+    private String duplicateName;
+    private int count;
+  }
+
+  public static class ClassWithSnakeCaseCollision {
+    private String fooBar;
+    private String foo_bar;
+  }
+
+  public static class ClassWithTaggedSnakeCaseCollision {
+    @ForyField(id = 7)
+    private String fooBar;
+
+    private String foo_bar;
+  }
+
+  @Data
+  public static class ClassWithNameOrderedNonPrimitives {
+    private String zString;
+    private Map<String, Integer> aMap;
+    private List<String> mList;
+    private int count;
+  }
+
+  @Data
+  public static class ClassWithTaggedNonPrimitives {
+    @ForyField(id = 3)
+    private String stringField;
+
+    @ForyField(id = 1)
+    private Map<String, Integer> mapField;
+
+    @ForyField(id = 2)
+    private List<String> listField;
+
+    private int count;
+  }
 
   public static class ManyFields {
     int f00;
@@ -154,16 +213,13 @@ public class TypeDefEncoderTest {
     int f31;
   }
 
-  // Test data: Class with all fields using field names (tagId = -1)
+  // Test data: Class with all fields using field names
   @Data
   public static class ClassWithAllFieldNames {
-    @ForyField(id = -1)
     private String field1;
 
-    @ForyField(id = -1)
     private int field2;
 
-    @ForyField(id = -1)
     private double field3;
   }
 
@@ -268,7 +324,7 @@ public class TypeDefEncoderTest {
     Assert.assertFalse(fieldInfos.get(1).hasFieldId());
     Assert.assertEquals(fieldInfos.get(1).getFieldName(), "noAnnotation");
 
-    // optOutField with id=-1 should not have a tag (uses field name)
+    // optOutField should not have a tag (uses field name)
     Assert.assertFalse(fieldInfos.get(2).hasFieldId());
     Assert.assertEquals(fieldInfos.get(2).getFieldName(), "optOutField");
 
@@ -295,6 +351,16 @@ public class TypeDefEncoderTest {
         IllegalArgumentException.class,
         () ->
             TypeDefEncoder.buildFieldsInfo(resolver, ClassWithMixedDuplicateTagIds.class, fields));
+  }
+
+  @Test
+  public void testBuildFieldsInfoRejectsNegativeTagId() {
+    Fory fory = Fory.builder().withXlang(true).withCompatible(false).withMetaShare(true).build();
+    TypeResolver resolver = fory.getTypeResolver();
+    List<Field> fields = Collections.singletonList(getField(ClassWithNegativeTagId.class, "field"));
+    Assert.assertThrows(
+        IllegalArgumentException.class,
+        () -> TypeDefEncoder.buildFieldsInfo(resolver, ClassWithNegativeTagId.class, fields));
   }
 
   @Test
@@ -354,7 +420,7 @@ public class TypeDefEncoderTest {
 
     Assert.assertEquals(fieldInfos.size(), 3);
 
-    // All fields with id=-1 should not have tags (use field names)
+    // All fields without configured IDs should not have tags (use field names)
     for (FieldInfo fieldInfo : fieldInfos) {
       Assert.assertFalse(fieldInfo.hasFieldId());
     }
@@ -404,6 +470,71 @@ public class TypeDefEncoderTest {
 
     TypeDef typeDef = TypeDef.buildTypeDef(fory.getTypeResolver(), ClassWithNoAnnotations.class);
     Assert.assertEquals(typeDef.getId() & TypeDef.COMPRESS_META_FLAG, 0);
+  }
+
+  @Test
+  public void testTypeDefOrdersNonPrimitivesByNameIdentifier() {
+    Fory fory = Fory.builder().withXlang(true).withCompatible(false).withMetaShare(true).build();
+    fory.register(ClassWithNameOrderedNonPrimitives.class);
+
+    TypeDef typeDef =
+        TypeDef.buildTypeDef(fory.getTypeResolver(), ClassWithNameOrderedNonPrimitives.class);
+
+    Assert.assertEquals(fieldNames(typeDef), Arrays.asList("count", "aMap", "mList", "zString"));
+  }
+
+  @Test
+  public void testTypeDefOrdersInheritedNonPrimitivesByProtocolOrder() {
+    Fory fory = Fory.builder().withXlang(true).withCompatible(false).withMetaShare(true).build();
+    fory.register(ChildNameOrderedNonPrimitives.class);
+
+    TypeDef typeDef =
+        TypeDef.buildTypeDef(fory.getTypeResolver(), ChildNameOrderedNonPrimitives.class);
+
+    Assert.assertEquals(fieldNames(typeDef), Arrays.asList("count", "aMap", "zString"));
+  }
+
+  @Test
+  public void testTypeDefDropsOnlyInheritedShadowedXlangName() {
+    Fory fory = Fory.builder().withXlang(true).withCompatible(false).withMetaShare(true).build();
+    fory.register(ChildShadowedField.class);
+
+    TypeDef typeDef = TypeDef.buildTypeDef(fory.getTypeResolver(), ChildShadowedField.class);
+
+    Assert.assertEquals(fieldNames(typeDef), Arrays.asList("count", "duplicateName"));
+  }
+
+  @Test
+  public void testTypeDefRejectsUntaggedSnakeCaseCollision() {
+    Fory fory = Fory.builder().withXlang(true).withCompatible(false).withMetaShare(true).build();
+    fory.register(ClassWithSnakeCaseCollision.class);
+
+    Assert.assertThrows(
+        IllegalArgumentException.class,
+        () -> TypeDef.buildTypeDef(fory.getTypeResolver(), ClassWithSnakeCaseCollision.class));
+  }
+
+  @Test
+  public void testTypeDefAllowsTaggedSnakeCaseCollision() {
+    Fory fory = Fory.builder().withXlang(true).withCompatible(false).withMetaShare(true).build();
+    fory.register(ClassWithTaggedSnakeCaseCollision.class);
+
+    TypeDef typeDef =
+        TypeDef.buildTypeDef(fory.getTypeResolver(), ClassWithTaggedSnakeCaseCollision.class);
+
+    Assert.assertEquals(fieldNames(typeDef), Arrays.asList("fooBar", "foo_bar"));
+  }
+
+  @Test
+  public void testTypeDefOrdersNonPrimitivesByNumericTagIdentifier() {
+    Fory fory = Fory.builder().withXlang(true).withCompatible(false).withMetaShare(true).build();
+    fory.register(ClassWithTaggedNonPrimitives.class);
+
+    TypeDef typeDef =
+        TypeDef.buildTypeDef(fory.getTypeResolver(), ClassWithTaggedNonPrimitives.class);
+
+    Assert.assertEquals(
+        fieldNames(typeDef), Arrays.asList("count", "mapField", "listField", "stringField"));
   }
 
   @Test
@@ -548,6 +679,12 @@ public class TypeDefEncoderTest {
     Assert.assertTrue(index >= Long.BYTES);
     malformed[index + needleBytes.length - 1] ^= 1;
     return malformed;
+  }
+
+  private static List<String> fieldNames(TypeDef typeDef) {
+    return typeDef.getFieldsInfo().stream()
+        .map(FieldInfo::getFieldName)
+        .collect(Collectors.toList());
   }
 
   private static byte[] rewriteHeaderWithBodyOnlyHash(TypeDef typeDef) {

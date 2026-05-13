@@ -84,7 +84,7 @@ public class User {
 
 | Parameter  | Type      | Default | Description                            |
 | ---------- | --------- | ------- | -------------------------------------- |
-| `id`       | `int`     | `-1`    | Field tag ID (-1 = use field name)     |
+| `id`       | `int`     | `-1`    | Non-negative field tag ID, or no ID    |
 | `nullable` | `boolean` | `false` | Whether the field can be null          |
 | `ref`      | `boolean` | `false` | Enable reference tracking              |
 | `dynamic`  | `Dynamic` | `AUTO`  | Control polymorphism for struct fields |
@@ -117,8 +117,9 @@ public class User {
 **Notes**:
 
 - IDs must be unique within a class
-- IDs must be >= 0 (use -1 to use field name encoding, which is the default)
-- If not specified, field name is used in metadata (larger overhead)
+- IDs must be >= 0 when configured
+- If not specified, the annotation default `-1` is ignored and field name is used in metadata
+  (larger overhead)
 
 **Without field IDs** (field names used in metadata):
 

@@ -165,7 +165,7 @@ export class FieldInfo {
   }
 
   hasFieldId() {
-    return typeof this.fieldId === "number";
+    return typeof this.fieldId === "number" && this.fieldId >= 0;
   }
 
   getFieldId() {
@@ -378,6 +378,7 @@ export class TypeMeta {
     let fieldInfo: FieldInfo[] = [];
     if (TypeId.structType(typeInfo.typeId)) {
       const structTypeInfo = typeInfo;
+      const usedFieldIds = new Set<number>();
       fieldInfo = Object.entries(structTypeInfo.options!.props!).map(
         ([fieldName, typeInfo]) => {
           let fieldTypeId = typeResolver
@@ -392,6 +393,16 @@ export class TypeMeta {
             fieldTypeId = TypeId.UNION;
           }
           const { trackingRef, nullable, id, userTypeId, options } = typeInfo;
+          if (typeof id === "number" && id < 0) {
+            throw new Error(`Field id for ${fieldName} must be non-negative`);
+          }
+          const fieldId = typeof id === "number" ? id : undefined;
+          if (fieldId !== undefined) {
+            if (usedFieldIds.has(fieldId)) {
+              throw new Error(`Duplicate field id ${fieldId}`);
+            }
+            usedFieldIds.add(fieldId);
+          }
           return new FieldInfo(
             fieldName,
             fieldTypeId,
@@ -399,7 +410,7 @@ export class TypeMeta {
             trackingRef,
             nullable,
             options!,
-            id,
+            fieldId,
           );
         },
       );
@@ -543,7 +554,10 @@ export class TypeMeta {
     );
   }
 
-  private static readMetaSizeFromLow(reader: BinaryReader, headerLow: number): number {
+  private static readMetaSizeFromLow(
+    reader: BinaryReader,
+    headerLow: number,
+  ): number {
     let metaSize = headerLow & META_SIZE_MASKS;
     if (metaSize === META_SIZE_MASKS) {
       metaSize += reader.readVarUInt32();
@@ -714,6 +728,9 @@ export class TypeMeta {
     const localNameByNormalized = new Map<string, string>();
     for (const [fieldName, typeInfo] of Object.entries(localProps)) {
       if (typeof typeInfo.id === "number") {
+        if (typeInfo.id < 0) {
+          throw new Error(`Field id for ${fieldName} must be non-negative`);
+        }
         localNameById.set(typeInfo.id, fieldName);
       }
       const normalized = TypeMeta.toSnakeCase(fieldName);
@@ -961,8 +978,8 @@ export class TypeMeta {
     if (isCompressed) {
       headerLowBits |= COMPRESS_META_FLAG;
     }
-    const header = TypeMeta.headerHashBits(buffer, headerLowBits)
-      | headerLowBits;
+    const header
+      = TypeMeta.headerHashBits(buffer, headerLowBits) | headerLowBits;
     return {
       header: BigInt.asUintN(64, header),
       headerHash: Number(header >> HASH_SHIFT_BITS),
@@ -1036,10 +1053,17 @@ export class TypeMeta {
   }
 
   static getFieldSortKey(i: { fieldName: string; fieldId?: number }) {
-    if (i.fieldId !== undefined && i.fieldId !== null) {
+    if (i.fieldId !== undefined && i.fieldId !== null && i.fieldId >= 0) {
       return `${i.fieldId}`;
     }
     return TypeMeta.toSnakeCase(i.fieldName);
+  }
+
+  static compareOrdinal(a: string, b: string) {
+    if (a === b) {
+      return 0;
+    }
+    return a < b ? -1 : 1;
   }
 
   static compareFieldSortKey(
@@ -1049,12 +1073,21 @@ export class TypeMeta {
     if (
       a.fieldId !== undefined
       && a.fieldId !== null
+      && a.fieldId >= 0
       && b.fieldId !== undefined
       && b.fieldId !== null
+      && b.fieldId >= 0
     ) {
       return a.fieldId - b.fieldId;
     }
-    return TypeMeta.getFieldSortKey(a).localeCompare(
+    if (a.fieldId !== undefined && a.fieldId !== null && a.fieldId >= 0) {
+      return -1;
+    }
+    if (b.fieldId !== undefined && b.fieldId !== null && b.fieldId >= 0) {
+      return 1;
+    }
+    return TypeMeta.compareOrdinal(
+      TypeMeta.getFieldSortKey(a),
       TypeMeta.getFieldSortKey(b),
     );
   }
@@ -1069,11 +1102,7 @@ export class TypeMeta {
   >(typeInfos: Array<T>): Array<T> {
     const primitiveFields: Array<T> = [];
     const nullablePrimitiveFields: Array<T> = [];
-    const internalTypeFields: Array<T> = [];
-    const listFields: Array<T> = [];
-    const setFields: Array<T> = [];
-    const mapFields: Array<T> = [];
-    const otherFields: Array<T> = [];
+    const nonPrimitiveFields: Array<T> = [];
 
     for (const typeInfo of typeInfos) {
       const typeId = typeInfo.typeId;
@@ -1089,18 +1118,7 @@ export class TypeMeta {
         continue;
       }
 
-      // Categorize based on type_id
-      if (typeId === TypeId.LIST) {
-        listFields.push(typeInfo);
-      } else if (typeId === TypeId.SET) {
-        setFields.push(typeInfo);
-      } else if (typeId === TypeId.MAP) {
-        mapFields.push(typeInfo);
-      } else if (TypeId.isBuiltin(typeId)) {
-        internalTypeFields.push(typeInfo);
-      } else {
-        otherFields.push(typeInfo);
-      }
+      nonPrimitiveFields.push(typeInfo);
     }
 
     // Sort functions
@@ -1132,33 +1150,16 @@ export class TypeMeta {
       return -1;
     };
 
-    const typeIdThenNameSorter = (a: T, b: T) => {
-      if (a.typeId !== b.typeId) {
-        return a.typeId - b.typeId;
-      }
-      return nameSorter(a, b);
-    };
-
     const nameSorter = (a: T, b: T) => TypeMeta.compareFieldSortKey(a, b);
 
-    // Field IDs identify fields for fingerprints and compatible matching. They are only tie
-    // breakers inside the language-neutral direct payload groups, even when every field is tagged.
     primitiveFields.sort(primitiveComparator);
     nullablePrimitiveFields.sort(primitiveComparator);
-    internalTypeFields.sort(typeIdThenNameSorter);
-    listFields.sort(typeIdThenNameSorter);
-    setFields.sort(typeIdThenNameSorter);
-    mapFields.sort(typeIdThenNameSorter);
-    otherFields.sort(nameSorter);
+    nonPrimitiveFields.sort(nameSorter);
 
     return [
       primitiveFields,
       nullablePrimitiveFields,
-      internalTypeFields,
-      listFields,
-      setFields,
-      mapFields,
-      otherFields,
+      nonPrimitiveFields,
     ].flat();
   }
 }

@@ -18,7 +18,7 @@
 //! Field-level metadata parsing for `#[fory(...)]` attributes.
 //!
 //! This module provides support for field-level optimization attributes:
-//! - `id = N`: Field tag ID for compact encoding (>=0) or field name encoding (-1)
+//! - `id = N`: Non-negative field tag ID for compact encoding
 //! - `nullable`: Whether the field can be null (default: false, except Option/RcWeak/ArcWeak)
 //! - `ref`: Whether to enable reference tracking (default: false, except Rc/Arc/RcWeak/ArcWeak)
 //! - `skip`: Skip this field during serialization
@@ -36,7 +36,7 @@ use syn::{Field, GenericArgument, PathArguments, Type};
 /// Represents parsed `#[fory(...)]` field attributes
 #[derive(Debug, Clone, Default)]
 pub struct ForyFieldMeta {
-    /// Field tag ID: None = use field name, Some(-1) = explicit opt-out, Some(>=0) = use tag ID
+    /// Field tag ID: None = use field name, Some(>=0) = use tag ID
     pub id: Option<i32>,
     /// Whether the field can be null (None = use type-based default)
     pub nullable: Option<bool>,
@@ -188,8 +188,8 @@ fn parse_meta_item(
         }
         let lit: syn::LitInt = nested.value()?.parse()?;
         let id: i32 = lit.base10_parse()?;
-        if id < -1 {
-            return Err(syn::Error::new(lit.span(), "id must be >= -1"));
+        if id < 0 {
+            return Err(syn::Error::new(lit.span(), "id must be non-negative"));
         }
         if meta.id.is_some() {
             return Err(syn::Error::new(nested.path.span(), "duplicate id config"));
@@ -544,6 +544,16 @@ mod tests {
         assert_eq!(meta.nullable, None);
         assert_eq!(meta.r#ref, None);
         assert!(!meta.skip);
+    }
+
+    #[test]
+    fn test_parse_rejects_negative_id() {
+        let field: Field = parse_quote! {
+            #[fory(id = -1)]
+            name: String
+        };
+        let err = parse_field_meta(&field).unwrap_err();
+        assert!(err.to_string().contains("id must be non-negative"));
     }
 
     #[test]

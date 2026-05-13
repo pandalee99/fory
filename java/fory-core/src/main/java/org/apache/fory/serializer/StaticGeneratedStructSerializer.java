@@ -176,6 +176,23 @@ public abstract class StaticGeneratedStructSerializer<T> extends AbstractObjectS
         fieldValue);
   }
 
+  protected final void writeFieldValue(
+      WriteContext writeContext, SerializationFieldInfo fieldInfo, Object fieldValue) {
+    switch (fieldInfo.codecCategory) {
+      case BUILD_IN:
+        writeBuildInFieldValue(writeContext, fieldInfo, fieldValue);
+        return;
+      case CONTAINER:
+        writeContainerFieldValue(writeContext, fieldInfo, fieldValue);
+        return;
+      case OTHER:
+        writeOtherFieldValue(writeContext, fieldInfo, fieldValue);
+        return;
+      default:
+        throw new IllegalStateException("Unknown field codec category " + fieldInfo.codecCategory);
+    }
+  }
+
   protected final Object readBuildInFieldValue(
       ReadContext readContext, SerializationFieldInfo fieldInfo) {
     // See writeBuildInFieldValue: built-in schema groups can still need container conversion.
@@ -201,6 +218,19 @@ public abstract class StaticGeneratedStructSerializer<T> extends AbstractObjectS
       ReadContext readContext, SerializationFieldInfo fieldInfo) {
     return AbstractObjectSerializer.readField(
         readContext, typeResolver, readContext.getRefReader(), fieldInfo, readContext.getBuffer());
+  }
+
+  protected final Object readFieldValue(ReadContext readContext, SerializationFieldInfo fieldInfo) {
+    switch (fieldInfo.codecCategory) {
+      case BUILD_IN:
+        return readBuildInFieldValue(readContext, fieldInfo);
+      case CONTAINER:
+        return readContainerFieldValue(readContext, fieldInfo);
+      case OTHER:
+        return readOtherFieldValue(readContext, fieldInfo);
+      default:
+        throw new IllegalStateException("Unknown field codec category " + fieldInfo.codecCategory);
+    }
   }
 
   protected final Object readRemoteField(ReadContext readContext, RemoteFieldInfo remoteField) {
@@ -357,15 +387,7 @@ public abstract class StaticGeneratedStructSerializer<T> extends AbstractObjectS
   }
 
   private Object readField(ReadContext readContext, SerializationFieldInfo fieldInfo) {
-    if (typeResolver.isCollectionDescriptor(fieldInfo.descriptor)
-        || typeResolver.isMap(fieldInfo.type)) {
-      return readContainerFieldValue(readContext, fieldInfo);
-    }
-    if (typeResolver.isBuildIn(fieldInfo.descriptor)
-        || typeResolver.usesPrimitiveFieldOrdering(fieldInfo.descriptor)) {
-      return readBuildInFieldValue(readContext, fieldInfo);
-    }
-    return readOtherFieldValue(readContext, fieldInfo);
+    return readFieldValue(readContext, fieldInfo);
   }
 
   private List<RemoteFieldInfo> buildRemoteFields(
@@ -390,16 +412,18 @@ public abstract class StaticGeneratedStructSerializer<T> extends AbstractObjectS
       fields.put(fieldKey(descriptor), i);
     }
     // Keep compatible-read descriptor ordering owned by TypeResolver, matching the sorted
-    // DescriptorGrouper order used by ObjectCodecBuilder and CompatibleCodecBuilder. FieldGroups
-    // may regroup descriptors for helper ownership, so it must not drive remote payload order.
-    List<Descriptor> remoteDescriptorsInWireOrder =
-        typeResolver
-            .createDescriptorGrouper(remoteTypeDef, remoteDescriptorClass)
-            .getSortedDescriptors();
+    // DescriptorGrouper order used by ObjectCodecBuilder and CompatibleCodecBuilder.
+    DescriptorGrouper remoteGrouper =
+        typeResolver.createDescriptorGrouper(remoteTypeDef, remoteDescriptorClass);
+    // Remote compatible reads must dispatch through the remote field's codec category. FieldGroups
+    // uses the grouper's sorted allFields order while retaining specialized
+    // build-in/container/other read paths.
+    SerializationFieldInfo[] remoteFieldInfosInWireOrder =
+        FieldGroups.buildFieldInfos(typeResolver, remoteGrouper).allFields;
     List<RemoteFieldInfo> remoteFields = new ArrayList<>(remoteFieldInfos.size());
     appendRemoteFields(
         remoteFields,
-        remoteDescriptorsInWireOrder,
+        remoteFieldInfosInWireOrder,
         remoteFieldInfosByKey,
         fieldIds,
         fields,
@@ -426,18 +450,17 @@ public abstract class StaticGeneratedStructSerializer<T> extends AbstractObjectS
 
   private void appendRemoteFields(
       List<RemoteFieldInfo> remoteFields,
-      List<Descriptor> remoteDescriptorsInWireOrder,
+      SerializationFieldInfo[] remoteFieldInfosInWireOrder,
       Map<String, FieldInfo> remoteFieldInfosByKey,
       Map<Short, Integer> fieldIds,
       Map<String, Integer> fields,
       List<Descriptor> localDescriptors) {
-    for (Descriptor descriptor : remoteDescriptorsInWireOrder) {
+    for (SerializationFieldInfo serializationFieldInfo : remoteFieldInfosInWireOrder) {
+      Descriptor descriptor = serializationFieldInfo.descriptor;
       FieldInfo fieldInfo = remoteFieldInfosByKey.get(remoteFieldKey(descriptor));
       if (fieldInfo == null) {
         throw new IllegalStateException("Missing remote field metadata for " + descriptor);
       }
-      SerializationFieldInfo serializationFieldInfo =
-          new SerializationFieldInfo(typeResolver, descriptor);
       int matchedId = matchField(fieldInfo, fieldIds, fields);
       Descriptor localDescriptor =
           matchedId == UNKNOWN_FIELD ? null : localDescriptors.get(matchedId);

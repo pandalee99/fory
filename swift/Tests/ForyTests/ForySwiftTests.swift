@@ -55,6 +55,19 @@ struct TaggedFieldOrder: Equatable {
 }
 
 @ForyStruct
+struct NonPrimitiveFieldOrder: Equatable {
+  @ForyField(id: 20)
+  var stringValue: String
+
+  @ForyField(id: 10)
+  var mapValue: [String: Int32]
+
+  var binaryValue: Data
+  var addressValue: Address
+  var intValue: Int32
+}
+
+@ForyStruct
 struct EncodedNumberFields: Equatable {
   @ForyField(encoding: .fixed)
   var u32Fixed: UInt32
@@ -913,6 +926,14 @@ func macroTaggedFieldsKeepGroupedPayloadOrder() throws {
 }
 
 @Test
+func macroNonPrimitiveFieldsSortByFieldIdentifier() throws {
+  let fields = NonPrimitiveFieldOrder.foryFieldsInfo(trackRef: false)
+
+  #expect(fields.map(\.fieldName) == ["intValue", "mapValue", "stringValue", "addressValue", "binaryValue"])
+  #expect(fields.map(\.fieldID) == [nil, 10, 20, nil, nil])
+}
+
+@Test
 func macroFieldEncodingOverridesForUnsignedTypes() throws {
   let fory = Fory(compatible: false)
   fory.register(EncodedNumberFields.self, id: 301)
@@ -968,13 +989,13 @@ func macroReducedPrecisionFieldsUseXlangTypeIDs() {
   let fields = ReducedPrecisionMacroFields.foryFieldsInfo(trackRef: false)
   #expect(fields.count == 4)
   #expect(
-    fields.map(\.fieldName) == ["float16Value", "bfloat16Value", "float16Array", "bfloat16Array"])
+    fields.map(\.fieldName) == ["float16Value", "bfloat16Value", "bfloat16Array", "float16Array"])
   #expect(
     fields.map(\.fieldType.typeID) == [
       TypeId.float16.rawValue,
       TypeId.bfloat16.rawValue,
-      TypeId.float16Array.rawValue,
-      TypeId.bfloat16Array.rawValue
+      TypeId.bfloat16Array.rawValue,
+      TypeId.float16Array.rawValue
     ])
 }
 

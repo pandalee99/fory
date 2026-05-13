@@ -20,7 +20,10 @@ package codegen
 import (
 	"fmt"
 	"go/types"
+	"reflect"
 	"sort"
+	"strconv"
+	"strings"
 	"unicode"
 
 	"github.com/apache/fory/go/fory"
@@ -37,6 +40,8 @@ type FieldInfo struct {
 	IsOptional    bool       // Whether it's a fory optional.Optional[T]
 	Nullable      bool       // Whether the field can be null (pointer types)
 	TypeID        string     // Fory TypeID for sorting
+	TagID         int        // Explicit non-negative fory tag ID when HasTagID is true
+	HasTagID      bool       // Whether TagID is an explicit wire field identifier
 	PrimitiveSize int        // Size for primitive type sorting
 	OptionalElem  types.Type // Element type for optional.Optional[T]
 }
@@ -372,7 +377,7 @@ func sortFields(fields []*FieldInfo) {
 
 		// Within same group, apply group-specific sorting
 		switch group1 {
-		case groupPrimitive:
+		case groupPrimitive, groupNullablePrimitive:
 			// Primitive fields: larger size first, smaller later, variable size last
 			// When same size, sort by type id
 			// When same size and type id, sort by snake case field name
@@ -401,68 +406,54 @@ func sortFields(fields []*FieldInfo) {
 				return getTypeIDValue(f1.TypeID) < getTypeIDValue(f2.TypeID)
 			}
 
-			// Finally by name
-			return f1.SnakeName < f2.SnakeName
+			// Finally by field identifier
+			return lessFieldInfoIdentifier(f1, f2)
 
-		case groupInternalBuiltin, groupListSet, groupMap:
-			// Built-in or collection types: sort by type id then name only.
-			// Java does NOT sort by nullable flag for these types.
-			if f1.TypeID != f2.TypeID {
-				return getTypeIDValue(f1.TypeID) < getTypeIDValue(f2.TypeID)
-			}
-			return f1.SnakeName < f2.SnakeName
-
-		case groupOther:
-			// Other fields: sort by snake case field name only
-			return f1.SnakeName < f2.SnakeName
+		case groupNonPrimitive:
+			return lessFieldInfoIdentifier(f1, f2)
 
 		default:
-			// Fallback: sort by name
-			return f1.SnakeName < f2.SnakeName
+			return lessFieldInfoIdentifier(f1, f2)
 		}
 	})
 }
 
 // Field group constants for sorting.
 // This matches reflection's field ordering in field_info.go:
-// primitives → built-in non-container → list/set → map → other
+// non-nullable primitives → nullable primitives → non-primitives
 const (
-	groupPrimitive       = 0 // primitive and nullable primitive fields
-	groupInternalBuiltin = 1 // built-in non-container types sorted by typeId then name
-	groupListSet         = 2 // LIST/SET sorted by typeId then name
-	groupMap             = 3 // MAP sorted by typeId then name
-	groupOther           = 4 // structs, enums, and unknown types - sorted by name
+	groupPrimitive         = 0 // non-nullable primitive fields
+	groupNullablePrimitive = 1 // nullable primitive fields
+	groupNonPrimitive      = 2 // every non-primitive field sorted by identifier
 )
 
 // getFieldGroup categorizes a field into its sorting group
 func getFieldGroup(field *FieldInfo) int {
-	// Primitive fields, including nullable primitives.
 	if field.IsPrimitive {
+		if field.Nullable {
+			return groupNullablePrimitive
+		}
 		return groupPrimitive
 	}
-	typeID := field.TypeID
-	if typeID == "LIST" || typeID == "SET" {
-		return groupListSet
+	return groupNonPrimitive
+}
+
+func lessFieldInfoIdentifier(f1, f2 *FieldInfo) bool {
+	f1HasTag := f1.HasTagID
+	f2HasTag := f2.HasTagID
+	if f1HasTag && f2HasTag {
+		if f1.TagID != f2.TagID {
+			return f1.TagID < f2.TagID
+		}
+	} else if f1HasTag {
+		return true
+	} else if f2HasTag {
+		return false
 	}
-	if typeID == "MAP" {
-		return groupMap
+	if f1.SnakeName != f2.SnakeName {
+		return f1.SnakeName < f2.SnakeName
 	}
-	// Unknown or user-defined types go to "other"
-	switch typeID {
-	case "UNKNOWN",
-		"NAMED_STRUCT",
-		"NAMED_COMPATIBLE_STRUCT",
-		"STRUCT",
-		"COMPATIBLE_STRUCT",
-		"EXT",
-		"NAMED_EXT",
-		"ENUM",
-		"NAMED_ENUM",
-		"INTERFACE":
-		return groupOther
-	}
-	// Everything else is a built-in type (STRING/BINARY/arrays/TIMESTAMP/etc.)
-	return groupInternalBuiltin
+	return f1.GoName < f2.GoName
 }
 
 // getStructNames extracts struct names from StructInfo slice
@@ -475,7 +466,7 @@ func getStructNames(structs []*StructInfo) []string {
 }
 
 // analyzeField analyzes a struct field and creates FieldInfo
-func analyzeField(field *types.Var, index int) (*FieldInfo, error) {
+func analyzeField(field *types.Var, structTag string, index int) (*FieldInfo, error) {
 	fieldType := field.Type()
 	goName := field.Name()
 	snakeName := toSnakeCase(goName)
@@ -505,6 +496,10 @@ func analyzeField(field *types.Var, index int) (*FieldInfo, error) {
 	isPointer := false
 	typeID := getTypeID(fieldType)
 	primitiveSize := getPrimitiveSize(fieldType)
+	tagID, hasTagID, err := parseGeneratedFieldTagID(structTag)
+	if err != nil {
+		return nil, err
+	}
 
 	// Handle pointer types
 	if ptr, ok := fieldType.(*types.Pointer); ok {
@@ -525,7 +520,44 @@ func analyzeField(field *types.Var, index int) (*FieldInfo, error) {
 		IsOptional:    isOptional,
 		Nullable:      isPointer || isOptional, // Pointer and optional types are nullable in xlang mode
 		TypeID:        typeID,
+		TagID:         tagID,
+		HasTagID:      hasTagID,
 		PrimitiveSize: primitiveSize,
 		OptionalElem:  optionalElem,
 	}, nil
+}
+
+func parseGeneratedFieldTagID(structTag string) (int, bool, error) {
+	if structTag == "" {
+		return 0, false, nil
+	}
+	foryTag, ok := reflect.StructTag(structTag).Lookup("fory")
+	if !ok || foryTag == "-" {
+		return 0, false, nil
+	}
+	tagID := 0
+	seenID := false
+	for _, part := range strings.Split(foryTag, ",") {
+		part = strings.TrimSpace(part)
+		if part == "id" {
+			return 0, false, fmt.Errorf("field id requires a value")
+		}
+		idText, ok := strings.CutPrefix(part, "id=")
+		if !ok {
+			continue
+		}
+		if seenID {
+			return 0, false, fmt.Errorf("duplicate field id tag")
+		}
+		seenID = true
+		parsedTagID, err := strconv.Atoi(idText)
+		if err != nil {
+			return 0, false, fmt.Errorf("invalid field id %q", idText)
+		}
+		if parsedTagID < 0 {
+			return 0, false, fmt.Errorf("field id must be non-negative")
+		}
+		tagID = parsedTagID
+	}
+	return tagID, seenID, nil
 }

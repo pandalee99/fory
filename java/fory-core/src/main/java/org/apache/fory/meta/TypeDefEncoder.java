@@ -26,8 +26,8 @@ import static org.apache.fory.meta.NativeTypeDefEncoder.writeTypeName;
 
 import java.lang.reflect.Field;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -36,7 +36,6 @@ import org.apache.fory.logging.Logger;
 import org.apache.fory.logging.LoggerFactory;
 import org.apache.fory.memory.MemoryBuffer;
 import org.apache.fory.meta.FieldTypes.FieldType;
-import org.apache.fory.reflect.ReflectionUtils;
 import org.apache.fory.resolver.TypeInfo;
 import org.apache.fory.resolver.TypeResolver;
 import org.apache.fory.resolver.XtypeResolver;
@@ -60,8 +59,10 @@ class TypeDefEncoder {
 
   /** Build class definition from fields of class. */
   static TypeDef buildTypeDef(XtypeResolver resolver, Class<?> type) {
+    List<Descriptor> fieldDescriptors =
+        dropShadowedXlangNameFields(type, resolver.getFieldDescriptors(type, true));
     DescriptorGrouper descriptorGrouper =
-        resolver.getFieldDescriptorGrouper(type, true, false, IDENTITY_DESCRIPTOR);
+        resolver.groupDescriptors(fieldDescriptors, false, IDENTITY_DESCRIPTOR);
     TypeInfo typeInfo = resolver.getTypeInfo(type);
     List<Descriptor> descriptors;
     int typeId = typeInfo.getTypeId();
@@ -72,6 +73,58 @@ class TypeDefEncoder {
     }
     return buildTypeDefWithFieldInfos(
         resolver, type, buildFieldsInfoFromDescriptors(resolver, type, descriptors));
+  }
+
+  private static List<Descriptor> dropShadowedXlangNameFields(
+      Class<?> type, List<Descriptor> descriptors) {
+    List<Descriptor> result = new ArrayList<>(descriptors.size());
+    Map<String, Integer> nameFieldIndex = new HashMap<>();
+    for (Descriptor descriptor : descriptors) {
+      if (descriptor.hasForyFieldId()) {
+        result.add(descriptor);
+        continue;
+      }
+      String fieldIdentifier = descriptor.getSnakeCaseName();
+      Integer previousIndex = nameFieldIndex.get(fieldIdentifier);
+      if (previousIndex == null) {
+        nameFieldIndex.put(fieldIdentifier, result.size());
+        result.add(descriptor);
+        continue;
+      }
+      Descriptor previous = result.get(previousIndex);
+      int distance = inheritanceDistance(type, descriptor);
+      int previousDistance = inheritanceDistance(type, previous);
+      if (!descriptor.getName().equals(previous.getName()) || distance == previousDistance) {
+        throw new IllegalArgumentException(
+            "Duplicate xlang field identifier "
+                + fieldIdentifier
+                + " for fields "
+                + previous.getName()
+                + " and "
+                + descriptor.getName()
+                + " in class "
+                + type.getName()
+                + ". Configure explicit non-negative field IDs to disambiguate them.");
+      }
+      // Untagged xlang fields are addressed by snake_case identifier. Only a true Java field hide
+      // across the inheritance chain can be represented by dropping the farther inherited field.
+      if (distance < previousDistance) {
+        result.set(previousIndex, descriptor);
+      }
+    }
+    return result;
+  }
+
+  private static int inheritanceDistance(Class<?> type, Descriptor descriptor) {
+    String declaringClass = descriptor.getDeclaringClass();
+    int distance = 0;
+    for (Class<?> current = type; current != null; current = current.getSuperclass()) {
+      if (current.getName().equals(declaringClass)) {
+        return distance;
+      }
+      distance++;
+    }
+    return Integer.MAX_VALUE;
   }
 
   static List<FieldInfo> buildFieldsInfo(TypeResolver resolver, Class<?> type, List<Field> fields) {
@@ -104,7 +157,8 @@ class TypeDefEncoder {
                   return new FieldInfo(
                       type.getName(), descriptor.getName(), fieldType, (short) tagId);
                 }
-                // tagId == -1 means use field name, fall through to create regular FieldInfo
+                // Negative is the annotation default sentinel for no configured tag ID; fall
+                // through to create regular FieldInfo. User-facing tag IDs must be non-negative.
               }
               return new FieldInfo(type.getName(), descriptor.getName(), fieldType);
             })
@@ -113,7 +167,7 @@ class TypeDefEncoder {
 
   static TypeDef buildTypeDefWithFieldInfos(
       XtypeResolver resolver, Class<?> type, List<FieldInfo> fieldInfos) {
-    fieldInfos = new ArrayList<>(getClassFields(type, fieldInfos).values());
+    fieldInfos = new ArrayList<>(fieldInfos);
     TypeInfo typeInfo = resolver.getTypeInfo(type);
     MemoryBuffer encodeTypeDef = encodeTypeDef(resolver, type, fieldInfos);
     byte[] typeDefBytes = encodeTypeDef.getBytes(0, encodeTypeDef.writerIndex());
@@ -206,20 +260,6 @@ class TypeDefEncoder {
       default:
         throw new IllegalArgumentException("Unsupported TypeDef kind " + typeId);
     }
-  }
-
-  static Map<String, FieldInfo> getClassFields(Class<?> type, List<FieldInfo> fieldsInfo) {
-    Map<String, FieldInfo> sortedClassFields = new LinkedHashMap<>();
-    Map<String, List<FieldInfo>> classFields = NativeTypeDefEncoder.groupClassFields(fieldsInfo);
-    for (Class<?> clz : ReflectionUtils.getAllClasses(type, true)) {
-      List<FieldInfo> fieldInfos = classFields.get(clz.getName());
-      if (fieldInfos != null) {
-        for (FieldInfo fieldInfo : fieldInfos) {
-          sortedClassFields.put(fieldInfo.getFieldName(), fieldInfo);
-        }
-      }
-    }
-    return sortedClassFields;
   }
 
   /** Write field type and name info. Every field info format: `header + type info + field name` */
