@@ -22,8 +22,6 @@ package org.apache.fory.type;
 import static org.apache.fory.util.Preconditions.checkArgument;
 
 import java.lang.annotation.Annotation;
-import java.lang.reflect.AnnotatedArrayType;
-import java.lang.reflect.AnnotatedType;
 import java.lang.reflect.Field;
 import java.lang.reflect.Member;
 import java.lang.reflect.Method;
@@ -114,6 +112,20 @@ public class Descriptor {
   private FieldConverter<?> fieldConverter;
 
   public Descriptor(Field field, TypeRef<?> typeRef, Method readMethod, Method writeMethod) {
+    this(field, typeRef, readMethod, writeMethod, null);
+  }
+
+  public Descriptor(
+      Field field, TypeRef<?> typeRef, Method readMethod, Method writeMethod, boolean nullable) {
+    this(field, typeRef, readMethod, writeMethod, Boolean.valueOf(nullable));
+  }
+
+  private Descriptor(
+      Field field,
+      TypeRef<?> typeRef,
+      Method readMethod,
+      Method writeMethod,
+      Boolean nullableOverride) {
     this.field = field;
     // Use typeRef.getType().getTypeName() to include generic type info (e.g., Collection<Object>)
     // This ensures consistent typeName between serialization and deserialization.
@@ -131,9 +143,10 @@ public class Descriptor {
     this.dynamic = hasForyField ? foryField.dynamic() : ForyField.Dynamic.AUTO;
     typeAnnotation = getAnnotation(field);
     arrayType = field.isAnnotationPresent(ArrayType.class);
-    if (!typeRef.isPrimitive()) {
-      this.nullable = !hasForyField || foryField.nullable();
-    }
+    this.nullable =
+        nullableOverride == null
+            ? resolveNullable(typeRef, !hasForyField, field, null, readMethod)
+            : nullableOverride;
     this.trackingRef = hasForyField && foryField.ref();
   }
 
@@ -229,9 +242,14 @@ public class Descriptor {
   }
 
   private Descriptor(Field field, Method readMethod) {
+    this(field, readMethod, TypeUtils.getFieldTypeRef(field), null);
+  }
+
+  private Descriptor(
+      Field field, Method readMethod, TypeRef<?> typeRef, RecordComponent recordComponent) {
     this.field = field;
-    // Compute typeRef from field's generic type to include generic info
-    this.typeRef = TypeUtils.getFieldTypeRef(field);
+    // Compute typeRef from field's generic type to include generic info.
+    this.typeRef = typeRef;
     // Use typeRef.getType().getTypeName() to include generic type info (e.g., Collection<Object>)
     // This ensures consistent typeName between serialization and deserialization.
     this.typeName = typeRef.getType().getTypeName();
@@ -246,16 +264,14 @@ public class Descriptor {
     this.dynamic = hasForyField ? foryField.dynamic() : ForyField.Dynamic.AUTO;
     typeAnnotation = getAnnotation(field);
     arrayType = field.isAnnotationPresent(ArrayType.class);
-    if (!field.getType().isPrimitive()) {
-      this.nullable = !hasForyField || foryField.nullable();
-    }
+    this.nullable = resolveNullable(typeRef, !hasForyField, field, recordComponent, readMethod);
     this.trackingRef = hasForyField && foryField.ref();
   }
 
   private Descriptor(Method readMethod) {
     this.field = null;
     // Compute typeRef first to include generic info
-    this.typeRef = TypeRef.of(readMethod.getAnnotatedReturnType());
+    this.typeRef = TypeUtils.getMethodReturnTypeRef(readMethod);
     // Use typeRef.getType().getTypeName() for consistent type name with generics
     this.typeName = typeRef.getType().getTypeName();
     this.name = readMethod.getName();
@@ -267,12 +283,9 @@ public class Descriptor {
     this.hasForyField = foryField != null;
     this.foryFieldId = resolveForyFieldId(foryField, name);
     this.dynamic = hasForyField ? foryField.dynamic() : ForyField.Dynamic.AUTO;
-    typeAnnotation =
-        getTypeUseAnnotation(readMethod.getAnnotatedReturnType(), readMethod.getName());
+    typeAnnotation = TypeUtils.getMethodReturnTypeUseAnnotation(readMethod, readMethod.getName());
     arrayType = readMethod.isAnnotationPresent(ArrayType.class);
-    if (!readMethod.getReturnType().isPrimitive()) {
-      this.nullable = !hasForyField || foryField.nullable();
-    }
+    this.nullable = resolveNullable(typeRef, !hasForyField, null, null, readMethod);
     this.trackingRef = hasForyField && foryField.ref();
   }
 
@@ -330,6 +343,19 @@ public class Descriptor {
           "@ForyField id must be -1 (no tag ID) or a non-negative tag ID for field " + fieldName);
     }
     return id;
+  }
+
+  private static boolean resolveNullable(TypeRef<?> typeRef, boolean defaultNullable) {
+    return TypeUtils.isNullable(typeRef, defaultNullable);
+  }
+
+  private static boolean resolveNullable(
+      TypeRef<?> typeRef,
+      boolean defaultNullable,
+      Field field,
+      RecordComponent recordComponent,
+      Method readMethod) {
+    return TypeUtils.isNullable(typeRef, defaultNullable, field, recordComponent, readMethod);
   }
 
   public Descriptor copy(Method readMethod, Method writeMethod) {
@@ -619,7 +645,13 @@ public class Descriptor {
       try {
         for (RecordComponent component : components) {
           Field field = clz.getDeclaredField(component.getName());
-          descriptorMap.put(field, new Descriptor(field, component.getAccessor()));
+          descriptorMap.put(
+              field,
+              new Descriptor(
+                  field,
+                  component.getAccessor(),
+                  TypeUtils.getRecordComponentTypeRef(component),
+                  component));
         }
       } catch (NoSuchFieldException e) {
         // impossible
@@ -828,11 +860,11 @@ public class Descriptor {
   }
 
   public static Annotation getAnnotation(Field field) {
-    AnnotatedType annotatedType = TypeUtils.getFieldAnnotatedType(field);
-    if (annotatedType == null) {
+    Annotation typeAnnotation = TypeUtils.getFieldTypeUseAnnotation(field, field.getName());
+    if (typeAnnotation == null) {
       return getAnnotation(field.getDeclaredAnnotations(), field.getName());
     }
-    return getTypeUseAnnotation(annotatedType, field.getName());
+    return typeAnnotation;
   }
 
   public static Annotation getAnnotation(Annotation[] declaredAnnotations, String name) {
@@ -849,20 +881,6 @@ public class Descriptor {
       }
     }
     return typeAnnotation;
-  }
-
-  public static Annotation getTypeUseAnnotation(AnnotatedType annotatedType, String name) {
-    Annotation typeAnnotation = getAnnotation(annotatedType.getAnnotations(), name);
-    if (typeAnnotation != null || !(annotatedType instanceof AnnotatedArrayType)) {
-      return typeAnnotation;
-    }
-    AnnotatedType annotatedComponent =
-        ((AnnotatedArrayType) annotatedType).getAnnotatedGenericComponentType();
-    Class<?> componentRawType = TypeUtils.getRawType(annotatedComponent.getType());
-    if (!componentRawType.isPrimitive()) {
-      return null;
-    }
-    return getAnnotation(annotatedComponent.getAnnotations(), name);
   }
 
   public static Class<?> getDeclareClass(List<Descriptor> descriptors) {

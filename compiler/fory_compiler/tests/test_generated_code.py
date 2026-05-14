@@ -595,6 +595,7 @@ def test_java_unsigned_carriers_and_integer_encoding_annotations():
         )
     )
     java_output = render_files(generate_files(schema, JavaGenerator))
+    assert "import org.apache.fory.annotation.Nullable;" in java_output
     assert "import org.apache.fory.config.Int32Encoding;" in java_output
     assert "private @UInt8Type int u8;" in java_output
     assert "private @UInt16Type int u16;" in java_output
@@ -603,11 +604,35 @@ def test_java_unsigned_carriers_and_integer_encoding_annotations():
         in java_output
     )
     assert "private @UInt32Type long varU32;" in java_output
-    assert "private @UInt32Type Long maybeU32;" in java_output
+    assert "private @Nullable @UInt32Type Long maybeU32;" in java_output
     assert (
         "private @Int32Type(encoding = Int32Encoding.FIXED) int fixedI32;"
         in java_output
     )
+
+
+def test_java_nullable_type_use_annotation_targets_top_level_type():
+    schema = parse_fdl(
+        dedent(
+            """
+            package gen;
+
+            message Money {
+                string currency = 1;
+            }
+
+            message NullableTargets {
+                optional Money money = 1;
+                optional bytes payload = 2;
+                optional decimal amount = 3;
+            }
+            """
+        )
+    )
+    java_output = render_files(generate_files(schema, JavaGenerator))
+    assert "private @Nullable Money money;" in java_output
+    assert "private byte @Nullable [] payload;" in java_output
+    assert "private java.math.@Nullable BigDecimal amount;" in java_output
 
 
 def test_java_evolving_false_generation_uses_struct_evolution_enum():

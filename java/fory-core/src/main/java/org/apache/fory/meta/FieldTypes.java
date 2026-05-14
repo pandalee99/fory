@@ -222,13 +222,12 @@ public class FieldTypes {
       nullable = !genericType.getCls().isPrimitive();
     }
 
-    // Native unannotated value fields are nullable by default, but explicit @ForyField options are
-    // still field-wrapper metadata in both native and xlang TypeDef. Compatible serializers are
-    // built from TypeDef descriptors, so dropping this bit makes the writer emit a different field
-    // payload shape from the schema it advertised.
+    // @ForyField owns wrapper ref tracking and makes Java fields required unless @Nullable or
+    // type-use metadata marks them nullable. This keeps native TypeDef metadata aligned with the
+    // normalized Descriptor used by object serializers.
     if (descriptor != null && descriptor.hasForyField()) {
-      nullable = descriptor.isNullable();
       trackingRef = descriptor.isTrackingRef();
+      nullable = descriptor.isNullable();
     }
 
     boolean isUnionType = Types.isUnionType(typeId);

@@ -346,7 +346,9 @@ public final class Fory implements BaseFory {
       String msg =
           "Object may contain circular references, please enable ref tracking "
               + "by `ForyBuilder#withRefCopy(true)`";
-      e = ExceptionUtils.trySetStackOverflowErrorMessage((StackOverflowError) e, msg);
+      if (e instanceof StackOverflowError) {
+        e = ExceptionUtils.trySetStackOverflowErrorMessage((StackOverflowError) e, msg);
+      }
     }
     if (!(e instanceof ForyException)) {
       throw new CopyException(e);

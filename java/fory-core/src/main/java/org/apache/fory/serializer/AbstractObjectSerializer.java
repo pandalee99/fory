@@ -70,6 +70,14 @@ public abstract class AbstractObjectSerializer<T> extends Serializer<T> {
   private SerializationFieldInfo[] fieldInfos;
   private RecordInfo copyRecordInfo;
 
+  protected AbstractObjectSerializer() {
+    super();
+    this.config = null;
+    this.typeResolver = null;
+    this.isRecord = false;
+    this.objectCreator = null;
+  }
+
   public AbstractObjectSerializer(TypeResolver typeResolver, Class<T> type) {
     this(typeResolver, type, ObjectCreators.getObjectCreator(type));
   }
@@ -393,7 +401,7 @@ public abstract class AbstractObjectSerializer<T> extends Serializer<T> {
     if (fieldValue == null) {
       throw new IllegalArgumentException(
           "Non-nullable field has null value. In xlang mode, fields are non-nullable by default. "
-              + "Use @ForyField(nullable=true) to allow null values.");
+              + "Use @Nullable on the field type to allow null values.");
     }
     // add time types serialization here.
     switch (fieldInfo.dispatchId) {
@@ -1282,8 +1290,14 @@ public abstract class AbstractObjectSerializer<T> extends Serializer<T> {
       try {
         for (RecordComponent component : components) {
           Field field = type.getDeclaredField(component.getName());
-          TypeRef<?> typeRef = TypeUtils.getFieldTypeRef(field);
-          descriptors.add(new Descriptor(field, typeRef, component.getAccessor(), null));
+          TypeRef<?> typeRef = TypeUtils.getRecordComponentTypeRef(component);
+          descriptors.add(
+              new Descriptor(
+                  field,
+                  typeRef,
+                  component.getAccessor(),
+                  null,
+                  TypeUtils.isNullable(typeRef, false)));
         }
       } catch (NoSuchFieldException e) {
         // impossible
