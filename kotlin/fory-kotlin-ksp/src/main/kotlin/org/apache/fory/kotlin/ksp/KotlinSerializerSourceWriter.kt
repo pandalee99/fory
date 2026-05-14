@@ -79,7 +79,8 @@ internal class KotlinSerializerSourceWriter(private val struct: KotlinSourceStru
       "@Suppress(\"UNCHECKED_CAST\", \"PLATFORM_CLASS_MAPPED_TO_KOTLIN\", \"UNNECESSARY_NOT_NULL_ASSERTION\")\n"
     )
     builder
-      .append("public class ")
+      .append(struct.serializerVisibility.keyword)
+      .append(" class ")
       .append(struct.serializerName)
       .append(" : StaticGeneratedStructSerializer<")
       .append(struct.typeName)
@@ -125,7 +126,7 @@ internal class KotlinSerializerSourceWriter(private val struct: KotlinSourceStru
   }
 
   private fun writeConstructors() {
-    builder.append("  internal constructor() : super() {\n")
+    builder.append("  public constructor() : super() {\n")
     builder.append("    this.allFields = emptyArray()\n")
     builder.append("    this.allFieldIds = IntArray(0)\n")
     builder.append("    this.fieldsById = arrayOfNulls(0)\n")

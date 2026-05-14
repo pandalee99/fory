@@ -50,12 +50,10 @@ class ForyKotlinSymbolProcessorValidationTest {
   }
 
   @Test
-  fun rejectsNonPublicSerializerTargets() {
+  fun rejectsPrivateSerializerTargets() {
     assertNull(unsupportedStructVisibilityDiagnostic(emptySet()))
+    assertNull(unsupportedStructVisibilityDiagnostic(setOf(Modifier.INTERNAL)))
     assertTrue(unsupportedStructVisibilityDiagnostic(setOf(Modifier.PRIVATE))!!.contains("private"))
-    assertTrue(
-      unsupportedStructVisibilityDiagnostic(setOf(Modifier.INTERNAL))!!.contains("internal")
-    )
   }
 
   @Test
@@ -99,21 +97,24 @@ class ForyKotlinSymbolProcessorValidationTest {
   }
 
   @Test
-  fun staticProviderNameIsDeterministicAndModuleSpecific() {
-    val first =
-      listOf(
-        ProviderEntry("example", "example.User", "example.User__ForySerializer__"),
-        ProviderEntry("example", "example.Team", "example.Team__ForySerializer__"),
-      )
-    val firstReordered = listOf(first[1], first[0])
-    val second = listOf(ProviderEntry("other", "other.User", "other.User__ForySerializer__"))
-
-    assertEquals(staticProviderName(first), staticProviderName(firstReordered))
-    assertTrue(
-      staticProviderName(first).startsWith("__ForyKotlinStaticGeneratedSerializerProvider_")
+  fun generatedSerializerNameEscapingMatchesGoldenVectors() {
+    assertEquals(escapeBinarySimpleName("User") + "_ForySerializer", "User_ForySerializer")
+    assertEquals(
+      escapeBinarySimpleName("Outer\$Inner") + "_ForySerializer",
+      "Outer_Inner_ForySerializer",
     )
-    assertTrue(staticProviderName(first).endsWith("__"))
-    assertTrue(staticProviderName(first) != staticProviderName(second))
+    assertEquals(
+      escapeBinarySimpleName("Outer_Inner") + "_ForySerializer",
+      "Outer_u_Inner_ForySerializer",
+    )
+    assertEquals(
+      escapeBinarySimpleName("Outer__Inner") + "_ForySerializer",
+      "Outer_u__u_Inner_ForySerializer",
+    )
+    assertEquals(
+      escapeBinarySimpleName("Outer-Inner") + "_ForySerializer",
+      "Outer_x2d_Inner_ForySerializer",
+    )
   }
 
   @Test
@@ -149,7 +150,8 @@ class ForyKotlinSymbolProcessorValidationTest {
             packageName = "example",
             typeName = "NullableUIntArrayHolder",
             qualifiedTypeName = "example.NullableUIntArrayHolder",
-            serializerName = "NullableUIntArrayHolder__ForySerializer__",
+            serializerName = "NullableUIntArrayHolder_ForySerializer",
+            serializerVisibility = KotlinSerializerVisibility.PUBLIC,
             fields =
               listOf(
                 KotlinSourceField(
@@ -198,7 +200,8 @@ class ForyKotlinSymbolProcessorValidationTest {
             packageName = "example",
             typeName = "NullableUIntHolder",
             qualifiedTypeName = "example.NullableUIntHolder",
-            serializerName = "NullableUIntHolder__ForySerializer__",
+            serializerName = "NullableUIntHolder_ForySerializer",
+            serializerVisibility = KotlinSerializerVisibility.PUBLIC,
             fields =
               listOf(
                 KotlinSourceField(
@@ -223,5 +226,24 @@ class ForyKotlinSymbolProcessorValidationTest {
     assertTrue(source.contains("val nullableValue0 = value.value"))
     assertTrue(source.contains("buffer.writeInt32(nullableValue0.toInt())"))
     assertTrue(!source.contains("value.value.toInt()"))
+  }
+
+  @Test
+  fun internalStructGeneratesInternalSerializerSource() {
+    val source =
+      KotlinSerializerSourceWriter(
+          KotlinSourceStruct(
+            packageName = "example",
+            typeName = "InternalHolder",
+            qualifiedTypeName = "example.InternalHolder",
+            serializerName = "InternalHolder_ForySerializer",
+            serializerVisibility = KotlinSerializerVisibility.INTERNAL,
+            fields = emptyList(),
+            originatingFiles = emptyList(),
+          )
+        )
+        .write()
+
+    assertTrue(source.contains("internal class InternalHolder_ForySerializer"))
   }
 }

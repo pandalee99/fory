@@ -24,6 +24,7 @@ internal data class KotlinSourceStruct(
   val typeName: String,
   val qualifiedTypeName: String,
   val serializerName: String,
+  val serializerVisibility: KotlinSerializerVisibility,
   val fields: List<KotlinSourceField>,
   val originatingFiles: List<com.google.devtools.ksp.symbol.KSFile>,
 ) {
@@ -31,6 +32,11 @@ internal data class KotlinSourceStruct(
     if (packageName.isEmpty()) serializerName else "$packageName.$serializerName"
 
   val hasNestedCompatibleStructFields: Boolean = fields.any { it.type.hasNestedCompatibleStruct() }
+}
+
+internal enum class KotlinSerializerVisibility(val keyword: String) {
+  PUBLIC("public"),
+  INTERNAL("internal"),
 }
 
 internal data class KotlinSourceField(
@@ -116,12 +122,6 @@ internal enum class CollectionFactory {
   CONCURRENT_HASH_MAP,
   CONCURRENT_SKIP_LIST_MAP,
 }
-
-internal data class ProviderEntry(
-  val packageName: String,
-  val targetClass: String,
-  val serializerClass: String,
-)
 
 internal data class ForyFieldMeta(
   val hasAnnotation: Boolean,

@@ -312,7 +312,7 @@ public abstract class XlangTestBase extends ForyTestBase {
           fixedSerializer.getClass().getName());
       Assert.assertEquals(
           fixedSerializer.getClass().getName(),
-          FixedOverrideStruct.class.getName() + "__ForySerializer__");
+          XlangTestBase.class.getName() + "_FixedOverrideStruct_ForySerializer");
     }
 
     EvolvingOverrideStruct evolving = newEvolvingOverrideStruct();

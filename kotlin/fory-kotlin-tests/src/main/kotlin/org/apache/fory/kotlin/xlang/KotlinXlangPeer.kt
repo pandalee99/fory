@@ -45,6 +45,12 @@ public data class KotlinUser(
 )
 
 @ForyStruct
+internal data class KotlinInternalUser(
+  @ForyField(id = 1) val id: UInt,
+  @ForyField(id = 2) val name: String = "internal",
+)
+
+@ForyStruct
 public data class KotlinConcreteCollections(
   @ForyField(id = 1) val names: ArrayList<String>,
   @ForyField(id = 2) val values: java.util.LinkedList<Int>,
@@ -112,7 +118,6 @@ public fun main(args: Array<String>) {
   }
   when (args[0]) {
     "static_serializer_round_trip" -> staticSerializerRoundTrip(args[1])
-    "service_loader_static_serializer_round_trip" -> serviceLoaderStaticSerializerRoundTrip(args[1])
     "dense_array_round_trip" -> denseArrayRoundTrip(args[1])
     "unsigned_collection_round_trip" -> unsignedCollectionRoundTrip(args[1])
     else -> throw IllegalArgumentException("Unsupported Kotlin xlang case ${args[0]}")
@@ -122,6 +127,7 @@ public fun main(args: Array<String>) {
 private fun staticSerializerRoundTrip(dataFile: String) {
   val fory = newFory()
   fory.register(KotlinUser::class.java, "kotlin", "KotlinUser")
+  fory.register(KotlinInternalUser::class.java, "kotlin", "KotlinInternalUser")
   fory.register(KotlinConcreteCollections::class.java, "kotlin", "KotlinConcreteCollections")
   fory.register(KotlinUnsignedCollections::class.java, "kotlin", "KotlinUnsignedCollections")
   fory.register(KotlinSchemaSurface::class.java, "kotlin", "KotlinSchemaSurface")
@@ -146,6 +152,14 @@ private fun staticSerializerRoundTrip(dataFile: String) {
   check(descriptors[0].foryFieldId == 1)
   check(descriptors[0].typeRef.typeExtMeta.typeId() == Types.UINT32)
   check(descriptors[2].typeRef.typeExtMeta.typeId() == Types.VARINT64)
+
+  val internalUser = KotlinInternalUser(id = UInt.MAX_VALUE, name = "internal-static")
+  check(
+    fory.deserialize(fory.serialize(internalUser), KotlinInternalUser::class.java) == internalUser
+  )
+  check(fory.getSerializer(KotlinInternalUser::class.java) is StaticGeneratedStructSerializer<*>) {
+    "KotlinInternalUser did not load a static generated serializer"
+  }
 
   val schemaSurface =
     KotlinSchemaSurface(
@@ -174,7 +188,7 @@ private fun staticSerializerRoundTrip(dataFile: String) {
     checkNotNull(
         fory.getSerializer(KotlinSchemaSurface::class.java) as? StaticGeneratedStructSerializer<*>
       ) {
-        "KotlinSchemaSurface did not load a static generated serializer SPI mapping"
+        "KotlinSchemaSurface did not load a static generated serializer"
       }
       .generatedDescriptors
   check(schemaDescriptors[3].isArrayType)
@@ -252,7 +266,7 @@ private fun staticSerializerRoundTrip(dataFile: String) {
     checkNotNull(
         fory.getSerializer(KotlinDenseArrays::class.java) as? StaticGeneratedStructSerializer<*>
       ) {
-        "KotlinDenseArrays did not load a static generated serializer SPI mapping"
+        "KotlinDenseArrays did not load a static generated serializer"
       }
       .generatedDescriptors
   check(arrayDescriptors[2].typeRef.componentType.typeExtMeta.typeId() == Types.UINT32)
@@ -280,24 +294,6 @@ private fun staticSerializerRoundTrip(dataFile: String) {
   check(compatibleDecoded.maybeLong == null)
   check(compatibleDecoded.maybeUInt == null)
   check(compatibleDecoded.maybeULong == null)
-}
-
-private fun serviceLoaderStaticSerializerRoundTrip(dataFile: String) {
-  val fory = newFory()
-  fory.register(KotlinUser::class.java, "kotlin", "KotlinUser")
-  val javaRequest =
-    fory.deserialize(MemoryUtils.wrap(java.io.File(dataFile).readBytes()), KotlinUser::class.java)
-  check(
-    javaRequest == KotlinUser(id = UInt.MAX_VALUE, name = "java-to-kotlin", score = -123456789L)
-  )
-  val response =
-    KotlinUser(id = UInt.MAX_VALUE - 2u, name = "kotlin-service-loader", score = 123456789L)
-  val bytes = fory.serialize(response)
-  val userSerializer = fory.getSerializer(KotlinUser::class.java)
-  check(userSerializer is StaticGeneratedStructSerializer<*>) {
-    "KotlinUser did not load a static generated serializer from SPI: ${userSerializer::class.java.name}"
-  }
-  java.io.File(dataFile).writeBytes(bytes)
 }
 
 private fun denseArrayRoundTrip(dataFile: String) {
