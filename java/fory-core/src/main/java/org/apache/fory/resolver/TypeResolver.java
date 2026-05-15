@@ -270,6 +270,46 @@ public abstract class TypeResolver {
   }
 
   /**
+   * Registers {@code runtimeType} to use the already-registered metadata and serializer of {@code
+   * canonicalType}.
+   *
+   * <p>This is only for language runtimes where one source type has multiple JVM runtime classes,
+   * such as enum or ADT case classes. The resolver owns the runtime class lookup; the caller owns
+   * deciding which runtime classes are aliases.
+   */
+  @Internal
+  public final void registerRuntimeTypeAlias(Class<?> runtimeType, Class<?> canonicalType) {
+    Preconditions.checkNotNull(runtimeType, "runtimeType");
+    Preconditions.checkNotNull(canonicalType, "canonicalType");
+    if (runtimeType == canonicalType) {
+      return;
+    }
+    checkRegisterAllowed();
+    TypeInfo canonicalInfo = classInfoMap.get(canonicalType);
+    Preconditions.checkArgument(
+        canonicalInfo != null,
+        "Canonical type must be registered before registering a runtime type alias: "
+            + canonicalType.getName());
+    TypeInfo existingInfo = classInfoMap.get(runtimeType);
+    Preconditions.checkArgument(
+        existingInfo == null || existingInfo == canonicalInfo,
+        "Runtime type is already registered with different type metadata: "
+            + runtimeType.getName());
+    String runtimeTypeName = runtimeType.getName();
+    Class<?> registeredType = extRegistry.registeredClasses.get(runtimeTypeName);
+    Preconditions.checkArgument(
+        registeredType == null || registeredType == runtimeType,
+        "Runtime type alias name is already registered with different class: " + runtimeTypeName);
+    String registeredName = extRegistry.registeredClasses.inverse().get(runtimeType);
+    Preconditions.checkArgument(
+        registeredName == null || registeredName.equals(runtimeTypeName),
+        "Runtime type alias is already registered with different name: " + registeredName);
+    classInfoMap.put(runtimeType, canonicalInfo);
+    extRegistry.registeredClasses.put(runtimeTypeName, runtimeType);
+    registerGraalvmClass(runtimeType);
+  }
+
+  /**
    * Registers a union type with a user-specified ID and serializer.
    *
    * @param type the union class to register
@@ -287,6 +327,15 @@ public abstract class TypeResolver {
    * @param serializer serializer for the union
    */
   public abstract void registerUnion(
+      Class<?> type, String namespace, String typeName, Serializer<?> serializer);
+
+  /** Registers a non-Java enum type with a user-specified ID and serializer. */
+  @Internal
+  public abstract void registerEnum(Class<?> type, long id, Serializer<?> serializer);
+
+  /** Registers a non-Java enum type with a namespace, type name, and serializer. */
+  @Internal
+  public abstract void registerEnum(
       Class<?> type, String namespace, String typeName, Serializer<?> serializer);
 
   /**
@@ -426,6 +475,10 @@ public abstract class TypeResolver {
 
   public boolean isCollectionDescriptor(Descriptor descriptor) {
     return isCollection(descriptor.getRawType());
+  }
+
+  public boolean isMapDescriptor(Descriptor descriptor) {
+    return isMap(descriptor.getRawType());
   }
 
   public abstract boolean isMonomorphic(Descriptor descriptor);
@@ -1032,6 +1085,12 @@ public abstract class TypeResolver {
       // type metadata or a concrete target-class transformation.
       return typeInfo;
     }
+    StaticGeneratedStructSerializer<?> copiedStaticSerializer =
+        copyRegisteredStaticGeneratedStructSerializer(cls, typeDef);
+    if (copiedStaticSerializer != null) {
+      typeInfo.setSerializer(this, copiedStaticSerializer);
+      return typeInfo;
+    }
     Class<? extends Serializer> sc =
         getCompatibleDeserializerClassFromGraalvmRegistry(cls, typeDef);
     if (sc == null) {
@@ -1539,6 +1598,7 @@ public abstract class TypeResolver {
                 this::usesPrimitiveFieldOrdering,
                 this::isBuildIn,
                 this::isCollectionDescriptor,
+                this::isMapDescriptor,
                 descriptors,
                 descriptorsGroupedOrdered,
                 descriptorUpdator,
@@ -1556,6 +1616,11 @@ public abstract class TypeResolver {
   }
 
   private List<Descriptor> buildFieldDescriptors(Class<?> clz, boolean searchParent) {
+    List<Descriptor> registeredStaticDescriptors =
+        getRegisteredStaticGeneratedStructDescriptors(clz);
+    if (registeredStaticDescriptors != null) {
+      return normalizeFieldDescriptors(clz, searchParent, registeredStaticDescriptors);
+    }
     if (shouldPreferStaticGeneratedSerializer(clz)) {
       List<Descriptor> staticDescriptors = getStaticGeneratedStructDescriptors(clz);
       if (staticDescriptors != null) {
@@ -1586,23 +1651,18 @@ public abstract class TypeResolver {
       if (!searchParent && !descriptor.getDeclaringClass().equals(clz.getName())) {
         continue;
       }
-      boolean hasForyField = descriptor.hasForyField();
       // Compute the final isTrackingRef value:
-      // For xlang mode: "Reference tracking is disabled by default" (xlang spec)
-      //   - Only enable ref tracking if explicitly set via @ForyField(ref=true)
-      // For Java mode:
-      //   - If global ref tracking is enabled and no @ForyField, use global setting
-      //   - If @ForyField(ref=true) is set, use that (but can be overridden if global is off)
+      // For xlang mode: reference tracking is disabled by default and only @Ref enables it.
+      // For Java mode: @Ref explicitly overrides the type-based default in both directions.
       boolean ref = globalRefTracking;
       if (globalRefTracking) {
         if (isXlang) {
-          // In xlang mode, only track refs if explicitly annotated with @ForyField(ref=true)
-          ref = hasForyField && descriptor.isTrackingRef();
+          ref = descriptor.isTrackingRef();
         } else {
-          if (hasForyField) {
+          if (descriptor.hasTrackingRefMetadata()) {
             ref = descriptor.isTrackingRef();
           } else {
-            ref = needToWriteRef(descriptor.getTypeRef());
+            ref = needToWriteRef(TypeRef.of(descriptor.getRawType()));
           }
         }
       }
@@ -1612,7 +1672,7 @@ public abstract class TypeResolver {
 
       if (needsUpdate) {
         Descriptor newDescriptor =
-            new DescriptorBuilder(descriptor).trackingRef(ref).nullable(nullable).build();
+            new DescriptorBuilder(descriptor).inferredTrackingRef(ref).nullable(nullable).build();
         result.add(newDescriptor);
       } else {
         result.add(descriptor);
@@ -1696,6 +1756,27 @@ public abstract class TypeResolver {
     }
     return sharedRegistry.staticGeneratedSerializerRegistry.getGeneratedDescriptors(
         cls, isCrossLanguage());
+  }
+
+  private List<Descriptor> getRegisteredStaticGeneratedStructDescriptors(Class<?> cls) {
+    TypeInfo typeInfo = getTypeInfo(cls, false);
+    if (typeInfo == null
+        || !(typeInfo.getSerializer() instanceof StaticGeneratedStructSerializer)) {
+      return null;
+    }
+    return ((StaticGeneratedStructSerializer<?>) typeInfo.getSerializer())
+        .getGeneratedDescriptors();
+  }
+
+  private StaticGeneratedStructSerializer<?> copyRegisteredStaticGeneratedStructSerializer(
+      Class<?> cls, TypeDef typeDef) {
+    TypeInfo typeInfo = getTypeInfo(cls, false);
+    if (typeInfo == null
+        || !(typeInfo.getSerializer() instanceof StaticGeneratedStructSerializer)) {
+      return null;
+    }
+    return ((StaticGeneratedStructSerializer<?>) typeInfo.getSerializer())
+        .copySerializer(this, cls, typeDef);
   }
 
   protected final boolean shouldPreferStaticGeneratedSerializer(Class<?> cls) {
@@ -1861,9 +1942,11 @@ public abstract class TypeResolver {
    *   <li>Otherwise: return true only for Optional types, false for all other non-primitives
    * </ul>
    *
-   * <p>For native mode: reflected value fields are nullable by default. Descriptors without a
-   * backing field already carry schema-owned nullability, for example TypeDef descriptors and
-   * annotation-processor generated native descriptors.
+   * <p>Descriptors without a backing Java {@link Field} already carry schema-owned nullability, for
+   * example TypeDef descriptors and static descriptors emitted by annotation processors or Scala
+   * macro derivation.
+   *
+   * <p>For native reflected descriptors: value fields are nullable by default.
    *
    * <p>Important: this must match the TypeDef metadata for the same descriptor source. Xlang local
    * descriptors use xlang defaults, native reflected descriptors use native nullable-by-default
@@ -1878,14 +1961,14 @@ public abstract class TypeResolver {
     if (typeExtMeta != null) {
       return typeExtMeta.nullable();
     }
+    if (descriptor.getField() == null) {
+      return descriptor.isNullable();
+    }
     if (isCrossLanguage()) {
       // For xlang mode: apply xlang defaults
       // This must match what TypeDefEncoder.buildFieldType uses for TypeDef metadata
       // Default for xlang: false for all non-primitives, except Optional types
       return TypeUtils.isOptionalType(rawType);
-    }
-    if (descriptor.getField() == null) {
-      return descriptor.isNullable();
     }
     return descriptor.hasForyField() ? descriptor.isNullable() : true;
   }

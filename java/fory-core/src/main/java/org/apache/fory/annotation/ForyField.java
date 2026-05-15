@@ -25,7 +25,7 @@ import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 
 @Retention(RetentionPolicy.RUNTIME)
-@Target({ElementType.FIELD, ElementType.METHOD})
+@Target({ElementType.FIELD, ElementType.METHOD, ElementType.PARAMETER})
 public @interface ForyField {
 
   /** Controls polymorphism behavior for struct fields in cross-language serialization. */
@@ -61,14 +61,6 @@ public @interface ForyField {
    * across versions. Values below {@code -1} are invalid.
    */
   int id() default -1;
-
-  /**
-   * Whether to track references for this field. When set to false (default): - Avoids adding the
-   * object to IdentityMap (saves hash map overhead) - Skips writing ref tracking flag (saves 1 byte
-   * for non-nullable fields) When set to true, enables reference tracking for shared/circular
-   * references. Default: false (no reference tracking, aligned with xlang protocol defaults)
-   */
-  boolean ref() default false;
 
   /**
    * Controls polymorphism behavior for this field in cross-language serialization.

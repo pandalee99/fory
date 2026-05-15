@@ -595,6 +595,50 @@ public class ClassResolver extends TypeResolver {
     registerGraalvmClass(cls);
   }
 
+  @Override
+  public void registerEnum(Class<?> cls, long userId, Serializer<?> serializer) {
+    checkRegisterAllowed();
+    int checkedUserId = toUserTypeId(userId);
+    Preconditions.checkNotNull(serializer);
+    checkRegistration(cls, checkedUserId, cls.getName(), false);
+    extRegistry.registeredClassIdMap.put(cls, checkedUserId);
+    TypeInfo typeInfo = classInfoMap.get(cls);
+    if (typeInfo == null) {
+      typeInfo = new TypeInfo(this, cls, serializer, Types.ENUM, checkedUserId);
+    } else {
+      typeInfo = typeInfo.copy(Types.ENUM, checkedUserId);
+      typeInfo.setSerializer(this, serializer);
+    }
+    updateTypeInfo(cls, typeInfo);
+    extRegistry.registeredClasses.put(cls.getName(), cls);
+    registerGraalvmClass(cls);
+  }
+
+  @Override
+  public void registerEnum(Class<?> cls, String namespace, String name, Serializer<?> serializer) {
+    checkRegisterAllowed();
+    Preconditions.checkNotNull(serializer);
+    Preconditions.checkArgument(!Functions.isLambda(cls));
+    Preconditions.checkArgument(!ReflectionUtils.isJdkProxy(cls));
+    Preconditions.checkArgument(!cls.isArray());
+    String fullname = name;
+    if (namespace == null) {
+      namespace = "";
+    }
+    if (!StringUtils.isBlank(namespace)) {
+      fullname = namespace + "." + name;
+    }
+    checkRegistration(cls, -1, fullname, false);
+    EncodedMetaString nsBytes = sharedRegistry.getPackageEncodedMetaString(namespace);
+    EncodedMetaString nameBytes = sharedRegistry.getTypeNameEncodedMetaString(name);
+    TypeInfo typeInfo = new TypeInfo(cls, nsBytes, nameBytes, serializer, Types.NAMED_ENUM, -1);
+    typeInfo.setSerializer(this, serializer);
+    classInfoMap.put(cls, typeInfo);
+    compositeNameBytes2TypeInfo.put(new TypeNameBytes(nsBytes, nameBytes), typeInfo);
+    extRegistry.registeredClasses.put(fullname, cls);
+    registerGraalvmClass(cls);
+  }
+
   /**
    * Registers multiple classes for internal use with auto-assigned internal IDs.
    *

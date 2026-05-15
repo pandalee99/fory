@@ -19,19 +19,26 @@
 
 package org.apache.fory.serializer;
 
+import java.lang.reflect.Constructor;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import org.apache.fory.annotation.Internal;
 import org.apache.fory.context.CopyContext;
 import org.apache.fory.context.ReadContext;
 import org.apache.fory.context.WriteContext;
 import org.apache.fory.exception.DeserializationException;
+import org.apache.fory.exception.ForyException;
 import org.apache.fory.memory.MemoryBuffer;
 import org.apache.fory.meta.FieldInfo;
 import org.apache.fory.meta.TypeDef;
+import org.apache.fory.meta.TypeExtMeta;
+import org.apache.fory.reflect.TypeRef;
+import org.apache.fory.resolver.TypeInfo;
 import org.apache.fory.resolver.TypeResolver;
 import org.apache.fory.serializer.FieldGroups.SerializationFieldInfo;
 import org.apache.fory.serializer.converter.FieldConverters;
@@ -65,7 +72,7 @@ public abstract class StaticGeneratedStructSerializer<T> extends AbstractObjectS
   }
 
   @SuppressWarnings("unchecked")
-  protected StaticGeneratedStructSerializer(
+  public StaticGeneratedStructSerializer(
       TypeResolver typeResolver, Class<?> type, TypeDef typeDef, List<Descriptor> descriptors) {
     super(typeResolver, (Class<T>) type);
     setSerializerIfAbsent(typeResolver, (Class<T>) type);
@@ -77,12 +84,17 @@ public abstract class StaticGeneratedStructSerializer<T> extends AbstractObjectS
   }
 
   private void setSerializerIfAbsent(TypeResolver typeResolver, Class<T> type) {
-    if (!typeResolver.isCrossLanguage() || typeResolver.getTypeInfo(type, false) != null) {
+    TypeInfo typeInfo = typeResolver.getTypeInfo(type, false);
+    if (!typeResolver.isCrossLanguage() || typeInfo != null) {
       // Field-group construction resolves monomorphic field serializers. A generated serializer can
       // therefore encounter its own type before the subclass constructor has finished, just like
       // ObjectSerializer. Install this instance early so recursive fields reuse it instead of
       // constructing another serializer for the same type.
-      typeResolver.setSerializerIfAbsent(type, this);
+      if (typeInfo != null && typeInfo.getSerializer() instanceof DeferedLazySerializer) {
+        typeResolver.setSerializer(type, this);
+      } else {
+        typeResolver.setSerializerIfAbsent(type, this);
+      }
     }
   }
 
@@ -95,15 +107,49 @@ public abstract class StaticGeneratedStructSerializer<T> extends AbstractObjectS
   @Override
   public abstract T copy(CopyContext copyContext, T value);
 
+  /**
+   * Creates an equivalent serializer for another local/remote TypeDef view of the same generated
+   * struct.
+   *
+   * <p>Named Java/Kotlin generated serializers are rediscovered through their generated class.
+   * Macro-generated serializers may instead override this method so compatible xlang reads can
+   * reuse the same serializer-owned construction logic without a separate factory object.
+   */
+  @Internal
+  @SuppressWarnings("unchecked")
+  public StaticGeneratedStructSerializer<T> copySerializer(
+      TypeResolver typeResolver, Class<?> type, TypeDef typeDef) {
+    try {
+      Constructor<? extends StaticGeneratedStructSerializer> constructor =
+          getClass()
+              .asSubclass(StaticGeneratedStructSerializer.class)
+              .getDeclaredConstructor(TypeResolver.class, Class.class, TypeDef.class);
+      constructor.setAccessible(true);
+      return (StaticGeneratedStructSerializer<T>)
+          constructor.newInstance(typeResolver, type, typeDef);
+    } catch (ReflectiveOperationException e) {
+      throw new ForyException(
+          "Failed to copy static generated serializer "
+              + getClass().getName()
+              + " for "
+              + type.getName(),
+          e);
+    }
+  }
+
   public abstract List<Descriptor> getGeneratedDescriptors();
 
   public final List<Descriptor> getDescriptors() {
     return getGeneratedDescriptors();
   }
 
+  public final List<RemoteFieldInfo> getRemoteFields() {
+    return remoteFields;
+  }
+
   public abstract T readCompatible(ReadContext readContext);
 
-  protected final FieldGroups buildFieldGroups(List<Descriptor> descriptors) {
+  public final FieldGroups buildFieldGroups(List<Descriptor> descriptors) {
     descriptors = runtimeDescriptors(descriptors);
     DescriptorGrouper grouper =
         FieldGroups.buildDescriptorGrouper(
@@ -111,13 +157,15 @@ public abstract class StaticGeneratedStructSerializer<T> extends AbstractObjectS
     return FieldGroups.buildFieldInfos(typeResolver, grouper);
   }
 
-  protected final FieldGroups buildLocalFieldGroups(List<Descriptor> descriptors) {
-    if (!typeResolver.isShareMeta()) {
+  public final FieldGroups buildLocalFieldGroups(List<Descriptor> descriptors) {
+    if (!typeResolver.isShareMeta() || hasSourceOnlyMetadata(descriptors)) {
       return buildFieldGroups(descriptors);
     }
-    // Meta-share writers use the local TypeDef-reified descriptor grouping, matching
-    // ObjectSerializer. The constructor TypeDef may be a remote schema for compatible reads, so it
-    // must not own local field access ordering.
+    // In meta-share mode, Java static-generated writers must use the same local TypeDef-reified
+    // descriptor view as ObjectSerializer; otherwise readers can disagree on built-in and
+    // collection wire shapes during compatible skips. Scala macro descriptors are the exception:
+    // Option wrappers are source-only metadata used for generated accessor adaptation and are not
+    // represented in TypeDef, so those descriptors must stay on the generated path.
     DescriptorGrouper grouper =
         typeResolver.createDescriptorGrouper(typeResolver.getTypeDef(type, true), type);
     return FieldGroups.buildFieldInfos(typeResolver, grouper);
@@ -127,7 +175,39 @@ public abstract class StaticGeneratedStructSerializer<T> extends AbstractObjectS
     return typeResolver.normalizeFieldDescriptors(type, true, descriptors);
   }
 
-  protected final int[] localFieldIds(
+  private static boolean hasSourceOnlyMetadata(List<Descriptor> descriptors) {
+    Set<TypeRef<?>> visitedTypes = Collections.newSetFromMap(new IdentityHashMap<>());
+    for (Descriptor descriptor : descriptors) {
+      if (hasSourceOnlyMetadata(descriptor.getTypeRef(), visitedTypes)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private static boolean hasSourceOnlyMetadata(TypeRef<?> typeRef, Set<TypeRef<?>> visitedTypes) {
+    if (!visitedTypes.add(typeRef)) {
+      return false;
+    }
+    TypeExtMeta meta = typeRef.getTypeExtMeta();
+    if (meta != null && meta.nullableWrapper()) {
+      return true;
+    }
+    for (TypeRef<?> argument : typeRef.getTypeArguments()) {
+      if (hasSourceOnlyMetadata(argument, visitedTypes)) {
+        return true;
+      }
+    }
+    // TypeRef.getComponentType() is only meaningful for arrays here; walking it for arbitrary
+    // TypeRefs can loop through self-like component views while checking a cold descriptor path.
+    if (!typeRef.isArray()) {
+      return false;
+    }
+    TypeRef<?> componentType = typeRef.getComponentType();
+    return componentType != null && hasSourceOnlyMetadata(componentType, visitedTypes);
+  }
+
+  public final int[] localFieldIds(
       SerializationFieldInfo[] fieldInfos, List<Descriptor> descriptors) {
     Map<String, Integer> localIds = new HashMap<>();
     for (int i = 0; i < descriptors.size(); i++) {
@@ -176,6 +256,21 @@ public abstract class StaticGeneratedStructSerializer<T> extends AbstractObjectS
         fieldValue);
   }
 
+  private static void writeContainerFieldValue(
+      TypeResolver typeResolver,
+      WriteContext writeContext,
+      SerializationFieldInfo fieldInfo,
+      Object fieldValue) {
+    AbstractObjectSerializer.writeContainerFieldValue(
+        writeContext,
+        typeResolver,
+        writeContext.getRefWriter(),
+        writeContext.getGenerics(),
+        fieldInfo,
+        writeContext.getBuffer(),
+        fieldValue);
+  }
+
   protected final void writeOtherFieldValue(
       WriteContext writeContext, SerializationFieldInfo fieldInfo, Object fieldValue) {
     AbstractObjectSerializer.writeField(
@@ -187,17 +282,43 @@ public abstract class StaticGeneratedStructSerializer<T> extends AbstractObjectS
         fieldValue);
   }
 
-  protected final void writeFieldValue(
+  public final void writeFieldValue(
       WriteContext writeContext, SerializationFieldInfo fieldInfo, Object fieldValue) {
+    writeFieldValue(typeResolver, writeContext, fieldInfo, fieldValue);
+  }
+
+  public static void writeFieldValue(
+      TypeResolver typeResolver,
+      WriteContext writeContext,
+      SerializationFieldInfo fieldInfo,
+      Object fieldValue) {
     switch (fieldInfo.codecCategory) {
       case BUILD_IN:
-        writeBuildInFieldValue(writeContext, fieldInfo, fieldValue);
+        // Some schema-built-in fields still use container-shaped Java accessors, such as
+        // @ArrayType List<T>. The override owns the accessor-to-payload conversion.
+        if (fieldInfo.containerSerializerOverride != null) {
+          writeContainerFieldValue(typeResolver, writeContext, fieldInfo, fieldValue);
+          return;
+        }
+        AbstractObjectSerializer.writeBuildInFieldValue(
+            writeContext,
+            typeResolver,
+            writeContext.getRefWriter(),
+            fieldInfo,
+            writeContext.getBuffer(),
+            fieldValue);
         return;
       case CONTAINER:
-        writeContainerFieldValue(writeContext, fieldInfo, fieldValue);
+        writeContainerFieldValue(typeResolver, writeContext, fieldInfo, fieldValue);
         return;
       case OTHER:
-        writeOtherFieldValue(writeContext, fieldInfo, fieldValue);
+        AbstractObjectSerializer.writeField(
+            writeContext,
+            typeResolver,
+            writeContext.getRefWriter(),
+            fieldInfo,
+            writeContext.getBuffer(),
+            fieldValue);
         return;
       default:
         throw new IllegalStateException("Unknown field codec category " + fieldInfo.codecCategory);
@@ -225,6 +346,17 @@ public abstract class StaticGeneratedStructSerializer<T> extends AbstractObjectS
         readContext.getBuffer());
   }
 
+  private static Object readContainerFieldValue(
+      TypeResolver typeResolver, ReadContext readContext, SerializationFieldInfo fieldInfo) {
+    return AbstractObjectSerializer.readContainerFieldValue(
+        readContext,
+        typeResolver,
+        readContext.getRefReader(),
+        readContext.getGenerics(),
+        fieldInfo,
+        readContext.getBuffer());
+  }
+
   protected final Object readOtherFieldValue(
       ReadContext readContext, SerializationFieldInfo fieldInfo) {
     return AbstractObjectSerializer.readField(
@@ -232,13 +364,32 @@ public abstract class StaticGeneratedStructSerializer<T> extends AbstractObjectS
   }
 
   protected final Object readFieldValue(ReadContext readContext, SerializationFieldInfo fieldInfo) {
+    return readFieldValue(typeResolver, readContext, fieldInfo);
+  }
+
+  public static Object readFieldValue(
+      TypeResolver typeResolver, ReadContext readContext, SerializationFieldInfo fieldInfo) {
     switch (fieldInfo.codecCategory) {
       case BUILD_IN:
-        return readBuildInFieldValue(readContext, fieldInfo);
+        // See writeFieldValue: built-in schema groups can still need container conversion.
+        if (fieldInfo.containerSerializerOverride != null) {
+          return readContainerFieldValue(typeResolver, readContext, fieldInfo);
+        }
+        return AbstractObjectSerializer.readBuildInFieldValue(
+            readContext,
+            typeResolver,
+            readContext.getRefReader(),
+            fieldInfo,
+            readContext.getBuffer());
       case CONTAINER:
-        return readContainerFieldValue(readContext, fieldInfo);
+        return readContainerFieldValue(typeResolver, readContext, fieldInfo);
       case OTHER:
-        return readOtherFieldValue(readContext, fieldInfo);
+        return AbstractObjectSerializer.readField(
+            readContext,
+            typeResolver,
+            readContext.getRefReader(),
+            fieldInfo,
+            readContext.getBuffer());
       default:
         throw new IllegalStateException("Unknown field codec category " + fieldInfo.codecCategory);
     }
@@ -254,7 +405,7 @@ public abstract class StaticGeneratedStructSerializer<T> extends AbstractObjectS
     return readField(readContext, remoteField.serializationFieldInfo);
   }
 
-  protected final void skipField(ReadContext readContext, RemoteFieldInfo remoteField) {
+  public final void skipField(ReadContext readContext, RemoteFieldInfo remoteField) {
     try {
       FieldSkipper.skipField(
           readContext,
@@ -273,7 +424,7 @@ public abstract class StaticGeneratedStructSerializer<T> extends AbstractObjectS
     return localFieldsById[matchedId];
   }
 
-  protected final boolean canReadRemoteField(
+  public final boolean canReadRemoteField(
       RemoteFieldInfo remoteField, SerializationFieldInfo localFieldInfo) {
     if (remoteField.incompatibleCollectionArrayMatch) {
       throw new DeserializationException(
@@ -295,7 +446,7 @@ public abstract class StaticGeneratedStructSerializer<T> extends AbstractObjectS
     return FieldConverters.canConvert(remoteType, localType);
   }
 
-  protected final Object readCompatibleFieldValue(
+  public final Object readCompatibleFieldValue(
       ReadContext readContext, RemoteFieldInfo remoteField, SerializationFieldInfo localFieldInfo) {
     Object fieldValue = readRemoteField(readContext, remoteField);
     if (remoteField.compatibleCollectionArrayReadAction != null) {
@@ -375,25 +526,36 @@ public abstract class StaticGeneratedStructSerializer<T> extends AbstractObjectS
             + buffer.readerIndex());
   }
 
-  protected final Object copyFieldValue(
+  public static Object copyFieldValue(
       CopyContext copyContext, Object fieldValue, SerializationFieldInfo fieldInfo) {
+    if (fieldValue == null) {
+      return null;
+    }
     if (fieldInfo.containerSerializerOverride != null) {
       @SuppressWarnings("unchecked")
       Serializer<Object> serializer = (Serializer<Object>) fieldInfo.containerSerializerOverride;
       return copyContext.copyObject(fieldValue, serializer);
     }
+    if (fieldInfo.codecCategory == FieldGroups.FieldCodecCategory.CONTAINER
+        && fieldInfo.containerTypeInfo != null) {
+      @SuppressWarnings("unchecked")
+      Serializer<Object> serializer =
+          (Serializer<Object>) fieldInfo.containerTypeInfo.getSerializer();
+      return copyContext.copyObject(fieldValue, serializer);
+    }
     return copyContext.copyObject(fieldValue, fieldInfo.dispatchId);
   }
 
-  protected final int computeClassVersionHash(List<Descriptor> descriptors) {
-    descriptors = runtimeDescriptors(descriptors);
-    return ObjectSerializer.computeStructHash(
-        typeResolver,
-        FieldGroups.buildDescriptorGrouper(
-            typeResolver, descriptors, false, descriptor -> descriptor));
+  public final int computeClassVersionHash(List<Descriptor> descriptors) {
+    DescriptorGrouper grouper =
+        typeResolver.isShareMeta()
+            ? typeResolver.createDescriptorGrouper(typeResolver.getTypeDef(type, true), type)
+            : FieldGroups.buildDescriptorGrouper(
+                typeResolver, runtimeDescriptors(descriptors), false, descriptor -> descriptor);
+    return ObjectSerializer.computeStructHash(typeResolver, grouper);
   }
 
-  protected final void checkClassVersion(int readHash, int classVersionHash) {
+  public final void checkClassVersion(int readHash, int classVersionHash) {
     ObjectSerializer.checkClassVersion(type, readHash, classVersionHash);
   }
 
@@ -475,6 +637,12 @@ public abstract class StaticGeneratedStructSerializer<T> extends AbstractObjectS
       int matchedId = matchField(fieldInfo, fieldIds, fields);
       Descriptor localDescriptor =
           matchedId == UNKNOWN_FIELD ? null : localDescriptors.get(matchedId);
+      if (localDescriptor != null) {
+        Descriptor readDescriptor = fieldInfo.toDescriptor(typeResolver, localDescriptor);
+        serializationFieldInfo =
+            new SerializationFieldInfo(
+                typeResolver, readDescriptor, serializationFieldInfo.codecCategory);
+      }
       remoteFields.add(
           new RemoteFieldInfo(
               typeResolver,

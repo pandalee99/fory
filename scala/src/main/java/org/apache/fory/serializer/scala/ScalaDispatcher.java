@@ -19,6 +19,7 @@
 
 package org.apache.fory.serializer.scala;
 
+import java.lang.reflect.Method;
 import org.apache.fory.resolver.TypeResolver;
 import org.apache.fory.serializer.JavaSerializer;
 import org.apache.fory.serializer.Serializer;
@@ -26,13 +27,20 @@ import org.apache.fory.serializer.SerializerFactory;
 import org.apache.fory.util.Preconditions;
 import scala.collection.generic.DefaultSerializable;
 
-import java.lang.reflect.Method;
-
 /**
  * Serializer dispatcher for scala types.
  */
 @SuppressWarnings({"rawtypes", "unchecked"})
 public class ScalaDispatcher implements SerializerFactory {
+  private final SerializerFactory delegate;
+
+  public ScalaDispatcher() {
+    this(null);
+  }
+
+  public ScalaDispatcher(SerializerFactory delegate) {
+    this.delegate = delegate;
+  }
 
   /**
    * Get Serializer for scala type.
@@ -42,6 +50,30 @@ public class ScalaDispatcher implements SerializerFactory {
    */
   @Override
   public Serializer createSerializer(TypeResolver typeResolver, Class<?> clz) {
+    Serializer serializer;
+    if (delegate != null) {
+      serializer = delegate.createSerializer(typeResolver, clz);
+      if (serializer != null) {
+        return serializer;
+      }
+    }
+    if (ScalaEnumSerializer.canSerialize(clz)) {
+      return new ScalaEnumSerializer(typeResolver, clz);
+    }
+    if (scala.Option.class.isAssignableFrom(clz)) {
+      return new ScalaOptionSerializer(typeResolver, clz);
+    }
+    if (typeResolver.isCrossLanguage()) {
+      if (scala.collection.Map.class.isAssignableFrom(clz)) {
+        return new ScalaXlangMapSerializer(typeResolver, clz);
+      } else if (scala.collection.Set.class.isAssignableFrom(clz)) {
+        return new ScalaXlangSetSerializer(typeResolver, clz);
+      } else if (scala.collection.Seq.class.isAssignableFrom(clz)) {
+        return new ScalaXlangSeqSerializer(typeResolver, clz);
+      } else if (scala.collection.Iterable.class.isAssignableFrom(clz)) {
+        return new ScalaXlangCollectionSerializer(typeResolver, clz);
+      }
+    }
     // Many map/seq/set types doesn't extends DefaultSerializable.
     if (scala.collection.SortedMap.class.isAssignableFrom(clz)) {
       return new ScalaSortedMapSerializer(typeResolver, clz);
