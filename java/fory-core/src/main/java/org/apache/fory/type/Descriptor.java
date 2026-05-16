@@ -42,7 +42,6 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.atomic.AtomicBoolean;
-import org.apache.fory.annotation.ArrayType;
 import org.apache.fory.annotation.BFloat16Type;
 import org.apache.fory.annotation.Expose;
 import org.apache.fory.annotation.Float16Type;
@@ -203,7 +202,7 @@ public class Descriptor {
     this.foryFieldId = resolveForyFieldId(foryField, name);
     this.dynamic = hasForyField ? foryField.dynamic() : ForyField.Dynamic.AUTO;
     typeAnnotation = getAnnotation(field);
-    arrayType = field.isAnnotationPresent(ArrayType.class);
+    arrayType = TypeAnnotationUtils.isArrayType(field);
     this.nullable =
         nullableOverride == null
             ? resolveNullable(typeRef, !hasForyField, field, null, readMethod)
@@ -408,7 +407,7 @@ public class Descriptor {
     this.foryFieldId = resolveForyFieldId(foryField, name);
     this.dynamic = hasForyField ? foryField.dynamic() : ForyField.Dynamic.AUTO;
     typeAnnotation = getAnnotation(field);
-    arrayType = field.isAnnotationPresent(ArrayType.class);
+    arrayType = TypeAnnotationUtils.isArrayType(field);
     this.nullable = resolveNullable(typeRef, !hasForyField, field, recordComponent, readMethod);
     this.hasTrackingRefMetadata = resolveHasTrackingRefMetadata(typeRef, field, readMethod);
     this.trackingRef = resolveTrackingRef(typeRef, field, readMethod);
@@ -430,7 +429,7 @@ public class Descriptor {
     this.foryFieldId = resolveForyFieldId(foryField, name);
     this.dynamic = hasForyField ? foryField.dynamic() : ForyField.Dynamic.AUTO;
     typeAnnotation = TypeUtils.getMethodReturnTypeUseAnnotation(readMethod, readMethod.getName());
-    arrayType = readMethod.isAnnotationPresent(ArrayType.class);
+    arrayType = TypeAnnotationUtils.isArrayType(readMethod);
     this.nullable = resolveNullable(typeRef, !hasForyField, null, null, readMethod);
     this.hasTrackingRefMetadata = resolveHasTrackingRefMetadata(typeRef, null, readMethod);
     this.trackingRef = resolveTrackingRef(typeRef, null, readMethod);
@@ -467,8 +466,8 @@ public class Descriptor {
     typeAnnotation = field == null ? null : getAnnotation(field);
     arrayType =
         builder.arrayType
-            || (field != null && field.isAnnotationPresent(ArrayType.class))
-            || (readMethod != null && readMethod.isAnnotationPresent(ArrayType.class));
+            || TypeAnnotationUtils.isArrayType(field)
+            || TypeAnnotationUtils.isArrayType(readMethod);
     // Use builder.nullable directly - this is set by DescriptorBuilder.nullable()
     // and should be respected, especially for xlang compatible mode where remote
     // TypeDef's nullable flag may differ from local field's nullable

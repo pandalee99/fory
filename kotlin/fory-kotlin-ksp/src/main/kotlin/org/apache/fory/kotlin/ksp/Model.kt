@@ -25,18 +25,45 @@ internal data class KotlinSourceStruct(
   val qualifiedTypeName: String,
   val serializerName: String,
   val serializerVisibility: KotlinSerializerVisibility,
+  val construction: KotlinStructConstruction = KotlinStructConstruction.CONSTRUCTOR,
   val fields: List<KotlinSourceField>,
   val originatingFiles: List<com.google.devtools.ksp.symbol.KSFile>,
 ) {
   val qualifiedSerializerName: String =
     if (packageName.isEmpty()) serializerName else "$packageName.$serializerName"
 
-  val hasNestedCompatibleStructFields: Boolean = fields.any { it.type.hasNestedCompatibleStruct() }
+  val hasCompatStructFields: Boolean = fields.any { it.type.hasNestedCompatibleStruct() }
 }
+
+internal data class KotlinSourceUnion(
+  val packageName: String,
+  val typeName: String,
+  val qualifiedTypeName: String,
+  val serializerName: String,
+  val serializerVisibility: KotlinSerializerVisibility,
+  val unknownCase: KotlinSourceUnionCase,
+  val cases: List<KotlinSourceUnionCase>,
+  val originatingFiles: List<com.google.devtools.ksp.symbol.KSFile>,
+) {
+  val qualifiedSerializerName: String =
+    if (packageName.isEmpty()) serializerName else "$packageName.$serializerName"
+}
+
+internal data class KotlinSourceUnionCase(
+  val id: Int,
+  val className: String,
+  val qualifiedClassName: String,
+  val valueType: KotlinSourceTypeNode,
+)
 
 internal enum class KotlinSerializerVisibility(val keyword: String) {
   PUBLIC("public"),
   INTERNAL("internal"),
+}
+
+internal enum class KotlinStructConstruction {
+  CONSTRUCTOR,
+  MUTABLE,
 }
 
 internal data class KotlinSourceField(
@@ -53,7 +80,6 @@ internal data class KotlinSourceField(
   val propertyTypeName: String,
 ) {
   val localName: String = "field$id"
-  val presentMask: Long = 1L shl id
 }
 
 internal data class KotlinSourceTypeNode(
@@ -66,6 +92,8 @@ internal data class KotlinSourceTypeNode(
   val trackingRef: Boolean,
   val primitive: Boolean,
   val unsigned: Boolean,
+  val arrayType: Boolean = false,
+  val enum: Boolean = false,
   val nestedCompatibleStruct: Boolean = false,
   val collectionFactory: CollectionFactory = CollectionFactory.NONE,
   val typeArguments: List<KotlinSourceTypeNode> = emptyList(),

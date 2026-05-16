@@ -22,14 +22,14 @@ package org.apache.fory.serializer.scala
 import scala.concurrent.duration.DurationInt
 
 import org.apache.fory.Fory
+import org.apache.fory.scala.ForyScala
 import org.scalatest.matchers.should.Matchers
 import org.scalatest.wordspec.AnyWordSpec
 
 class DurationTest extends AnyWordSpec with Matchers {
-  val fory: Fory = Fory.builder()
+  val fory: Fory = ForyScala.builder()
     .withXlang(false)
     .withRefTracking(true)
-    .withScalaOptimizationEnabled(true)
     .requireClassRegistration(false).build()
 
   "fory scala duration support" should {

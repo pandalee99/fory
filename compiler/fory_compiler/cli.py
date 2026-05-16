@@ -31,6 +31,10 @@ from fory_compiler.ir.emitter import FDLEmitter
 from fory_compiler.ir.validator import SchemaValidator
 from fory_compiler.generators.base import GeneratorOptions
 from fory_compiler.generators import GENERATORS
+from fory_compiler.generators.kotlin import (
+    kotlin_output_paths,
+    kotlin_package_for_schema,
+)
 
 
 class ImportError(Exception):
@@ -123,6 +127,7 @@ def resolve_imports(
     imported_enums = []
     imported_messages = []
     imported_unions = []
+    resolved_import_files = []
 
     for imp in schema.imports:
         # Resolve import path using search paths
@@ -140,10 +145,14 @@ def resolve_imports(
                 f"  Searched in: {', '.join(searched)}"
             )
 
+        imp.resolved_path = str(import_path)
+
         # Recursively resolve the imported file
         imported_schema = resolve_imports(
             import_path, import_paths, visited.copy(), cache
         )
+        resolved_import_files.append(str(import_path))
+        resolved_import_files.extend(imported_schema.resolved_import_files)
 
         # Collect types from imported schema
         imported_enums.extend(imported_schema.enums)
@@ -161,6 +170,7 @@ def resolve_imports(
         options=schema.options,
         source_file=schema.source_file,
         source_format=schema.source_format,
+        resolved_import_files=list(dict.fromkeys(resolved_import_files)),
     )
 
     cache[file_path] = copy.deepcopy(merged_schema)
@@ -180,6 +190,117 @@ def go_package_info(schema: Schema) -> Tuple[Optional[str], str]:
     if schema.package:
         return None, schema.package.split(".")[-1]
     return None, ""
+
+
+def collect_schema_graph(
+    file_path: Path,
+    import_paths: List[Path],
+    cache: Dict[Path, Schema],
+    visiting: Set[Path],
+) -> Optional[List[Tuple[Path, Schema]]]:
+    """Parse a schema and its imports before generated files are written."""
+    file_path = file_path.resolve()
+    if file_path in visiting:
+        print(f"Import error: Circular import detected: {file_path}", file=sys.stderr)
+        return None
+    if file_path in cache:
+        return []
+    visiting.add(file_path)
+    try:
+        schema = parse_idl_file(file_path)
+    except OSError as e:
+        print(f"Error reading {file_path}: {e}", file=sys.stderr)
+        visiting.remove(file_path)
+        return None
+    except (FrontendError, ValueError) as e:
+        print(f"Error: {e}", file=sys.stderr)
+        visiting.remove(file_path)
+        return None
+    cache[file_path] = schema
+    entries = [(file_path, schema)]
+    for imp in schema.imports:
+        import_path = resolve_import_path(imp.path, file_path, import_paths)
+        if import_path is None:
+            searched = [str(file_path.parent)]
+            searched.extend(str(p) for p in import_paths)
+            line = imp.location.line if imp.location else imp.line
+            column = imp.location.column if imp.location else imp.column
+            print(
+                f"Import error: Import not found: {imp.path}\n"
+                f"  at line {line}, column {column}\n"
+                f"  Searched in: {', '.join(searched)}",
+                file=sys.stderr,
+            )
+            visiting.remove(file_path)
+            return None
+        imp.resolved_path = str(import_path)
+        imported = collect_schema_graph(import_path, import_paths, cache, visiting)
+        if imported is None:
+            visiting.remove(file_path)
+            return None
+        entries.extend(imported)
+    visiting.remove(file_path)
+    return entries
+
+
+def validate_kotlin_import_packages(graph: List[Tuple[Path, Schema]]) -> bool:
+    """Check package combinations that Kotlin source cannot compile."""
+    packages = {kotlin_package_for_schema(schema) for _, schema in graph}
+    if None not in packages or len(packages) <= 1:
+        return True
+    details = ", ".join(
+        f"{package or '<default>'}: {path}"
+        for path, schema in sorted(graph, key=lambda item: str(item[0]))
+        for package in [kotlin_package_for_schema(schema)]
+    )
+    print(
+        "Error: Kotlin imports cannot mix default-package schemas with named "
+        f"Kotlin packages; found {details}",
+        file=sys.stderr,
+    )
+    return False
+
+
+def validate_kotlin_output_paths(
+    graph: List[Tuple[Path, Schema]],
+) -> bool:
+    """Check Kotlin output paths for the current generation run."""
+    outputs: Dict[str, List[str]] = {}
+    for path, schema in graph:
+        for output_path, owner in kotlin_output_paths(schema):
+            outputs.setdefault(output_path, []).append(f"{path} {owner}")
+    collisions = {
+        output_path: paths for output_path, paths in outputs.items() if len(paths) > 1
+    }
+    if not collisions:
+        return True
+    details = ", ".join(
+        f"{output_path}: {', '.join(paths)}"
+        for output_path, paths in sorted(collisions.items())
+    )
+    print(
+        "Error: Kotlin generated file path collision; rename schema files or "
+        f"schema types, or use distinct Kotlin packages. Collisions: {details}",
+        file=sys.stderr,
+    )
+    return False
+
+
+def validate_kotlin_generation(
+    files: List[Path],
+    import_paths: List[Path],
+) -> bool:
+    """Preflight Kotlin package and helper paths before writing output."""
+    cache: Dict[Path, Schema] = {}
+    graph: List[Tuple[Path, Schema]] = []
+    for file_path in files:
+        file_graph = collect_schema_graph(file_path, import_paths, cache, set())
+        if file_graph is None:
+            return False
+        graph.extend(file_graph)
+    if not validate_kotlin_import_packages(graph):
+        return False
+    return validate_kotlin_output_paths(graph)
 
 
 def _find_go_module_root(base_go_out: Path) -> Optional[Path]:
@@ -264,7 +385,7 @@ def parse_args(args: Optional[List[str]] = None) -> argparse.Namespace:
         "--lang",
         type=str,
         default="all",
-        help="Comma-separated list of target languages (java,python,cpp,rust,go,csharp,javascript,swift,dart,scala). Default: all",
+        help="Comma-separated list of target languages (java,python,cpp,rust,go,csharp,javascript,swift,dart,scala,kotlin). Default: all",
     )
 
     parser.add_argument(
@@ -273,13 +394,6 @@ def parse_args(args: Optional[List[str]] = None) -> argparse.Namespace:
         type=Path,
         default=Path("./generated"),
         help="Output directory. Default: ./generated",
-    )
-
-    parser.add_argument(
-        "--package",
-        type=str,
-        default=None,
-        help="Override package name from FDL file",
     )
 
     parser.add_argument(
@@ -373,6 +487,14 @@ def parse_args(args: Optional[List[str]] = None) -> argparse.Namespace:
         default=None,
         metavar="DST_DIR",
         help="Generate Scala 3 code in DST_DIR",
+    )
+
+    parser.add_argument(
+        "--kotlin_out",
+        type=Path,
+        default=None,
+        metavar="DST_DIR",
+        help="Generate Kotlin code in DST_DIR",
     )
 
     parser.add_argument(
@@ -473,7 +595,6 @@ def get_languages(lang_arg: str) -> List[str]:
 def compile_file(
     file_path: Path,
     lang_output_dirs: Dict[str, Path],
-    package_override: Optional[str] = None,
     import_paths: Optional[List[Path]] = None,
     go_nested_type_style: Optional[str] = None,
     swift_namespace_style: Optional[str] = None,
@@ -487,7 +608,6 @@ def compile_file(
     Args:
         file_path: Path to the IDL file
         lang_output_dirs: Dictionary mapping language name to output directory
-        package_override: Optional package name override
         import_paths: List of import search paths
     """
     print(f"Compiling {file_path}...")
@@ -543,19 +663,22 @@ def compile_file(
     for lang, lang_output in lang_output_dirs.items():
         options = GeneratorOptions(
             output_dir=lang_output,
-            package_override=package_override,
             go_nested_type_style=go_nested_type_style,
             swift_namespace_style=swift_namespace_style,
             grpc=grpc,
         )
 
         generator_class = GENERATORS[lang]
-        generator = generator_class(schema, options)
-        files = generator.generate()
+        try:
+            generator = generator_class(schema, options)
+            files = generator.generate()
 
-        if grpc:
-            service_files = generator.generate_services()
-            files.extend(service_files)
+            if grpc:
+                service_files = generator.generate_services()
+                files.extend(service_files)
+        except ValueError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return False
 
         generator.write_files(files)
 
@@ -568,7 +691,6 @@ def compile_file(
 def compile_file_recursive(
     file_path: Path,
     lang_output_dirs: Dict[str, Path],
-    package_override: Optional[str],
     import_paths: List[Path],
     go_nested_type_style: Optional[str],
     swift_namespace_style: Optional[str],
@@ -633,7 +755,6 @@ def compile_file_recursive(
         if not compile_file_recursive(
             import_path,
             lang_output_dirs,
-            None,
             import_paths,
             go_nested_type_style,
             swift_namespace_style,
@@ -652,7 +773,6 @@ def compile_file_recursive(
     ok = compile_file(
         file_path,
         effective_outputs,
-        package_override,
         import_paths,
         go_nested_type_style,
         swift_namespace_style,
@@ -681,6 +801,7 @@ def cmd_compile(args: argparse.Namespace) -> int:
         "swift": args.swift_out,
         "dart": args.dart_out,
         "scala": args.scala_out,
+        "kotlin": args.kotlin_out,
     }
 
     # Determine which languages to generate
@@ -727,6 +848,10 @@ def cmd_compile(args: argparse.Namespace) -> int:
                 )
             import_paths.append(resolved)
 
+    if "kotlin" in lang_output_dirs:
+        if not validate_kotlin_generation(args.files, import_paths):
+            return 1
+
     # Create output directories
     for out_dir in lang_output_dirs.values():
         out_dir.mkdir(parents=True, exist_ok=True)
@@ -744,7 +869,6 @@ def cmd_compile(args: argparse.Namespace) -> int:
             if not compile_file_recursive(
                 file_path,
                 lang_output_dirs,
-                args.package,
                 import_paths,
                 args.go_nested_type_style,
                 args.swift_namespace_style,
