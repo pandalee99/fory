@@ -49,8 +49,8 @@ Create a Fory instance, register your types, and serialize:
 	}
 
 	func main() {
-		// Create a Fory instance
-		f := fory.New()
+		// Create an xlang Fory instance.
+		f := fory.New(fory.WithXlang(true))
 
 		// Register struct with a type ID
 		if err := f.RegisterStruct(User{}, 1); err != nil {
@@ -77,23 +77,22 @@ Create a Fory instance, register your types, and serialize:
 
 Fory uses a functional options pattern for configuration:
 
-	// Default configuration
-	f := fory.New()
+	// Xlang configuration
+	f := fory.New(fory.WithXlang(true))
 
 	// With options
 	f := fory.New(
+		fory.WithXlang(true),        // Select xlang mode explicitly
 		fory.WithTrackRef(true),     // Enable reference tracking for circular references
-		fory.WithCompatible(true),   // Enable schema evolution
 		fory.WithMaxDepth(30),       // Set maximum nesting depth
-		fory.WithXlang(true),        // Enable cross-language mode
 	)
 
 Configuration defaults:
 
   - TrackRef: false (reference tracking disabled)
   - MaxDepth: 20 (maximum nesting depth)
-  - IsXlang: false (cross-language mode disabled)
-  - Compatible: false (schema evolution disabled)
+  - IsXlang: true (xlang mode enabled)
+  - Compatible: true in the default xlang mode; false in native mode unless WithCompatible(true) is set
 
 # Type Registration
 
@@ -163,7 +162,7 @@ Available tags:
 
 Enable reference tracking to handle circular references and shared objects:
 
-	f := fory.New(fory.WithTrackRef(true))
+	f := fory.New(fory.WithXlang(true), fory.WithTrackRef(true))
 
 	type Node struct {
 		Value int32
@@ -185,9 +184,10 @@ When reference tracking is enabled:
 
 # Schema Evolution
 
-Enable compatible mode for forward/backward compatibility:
+Native mode defaults to schema-consistent payloads. Enable compatible mode for
+forward/backward compatibility in Go-only native payloads:
 
-	f := fory.New(fory.WithCompatible(true))
+	f := fory.New(fory.WithXlang(false), fory.WithCompatible(true))
 
 	// V1: original struct
 	type UserV1 struct {
@@ -209,10 +209,10 @@ Compatible mode supports:
 
 # Cross-Language Serialization
 
-Enable cross-language mode for interoperability with Java, Python, C++, Rust,
+Go defaults to xlang mode for interoperability with Java, Python, C++, Rust,
 and JavaScript:
 
-	f := fory.New(fory.WithXlang(true), fory.WithCompatible(true))
+	f := fory.New(fory.WithXlang(true))
 	f.RegisterStruct(User{}, 1)  // Use same ID across all languages
 
 	data, _ := f.Serialize(&User{ID: 1, Name: "Alice"})
@@ -231,10 +231,7 @@ threadsafe package:
 	import "github.com/apache/fory/go/fory/threadsafe"
 
 	// Create thread-safe instance
-	f := threadsafe.New(
-		fory.WithTrackRef(true),
-		fory.WithCompatible(true),
-	)
+	f := threadsafe.New()
 
 	// Safe for concurrent use
 	go func() {
@@ -253,7 +250,7 @@ The thread-safe wrapper:
 
 The default Fory instance reuses its internal buffer for zero-copy performance:
 
-	f := fory.New()
+	f := fory.New(fory.WithXlang(true))
 	data1, _ := f.Serialize(value1)
 	// WARNING: data1 becomes invalid after next Serialize call!
 	data2, _ := f.Serialize(value2)
@@ -331,7 +328,7 @@ may change between service versions.
 For comprehensive documentation, see https://fory.apache.org/docs/guide/go/
 
 Related specifications:
-  - Xlang Serialization: https://fory.apache.org/docs/specification/fory_xlang_serialization_spec
+  - Xlang Serialization: https://fory.apache.org/docs/specification/xlang_serialization_spec
   - Type Mapping: https://fory.apache.org/docs/specification/xlang_type_mapping
 */
 package fory

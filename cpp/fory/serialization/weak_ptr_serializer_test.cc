@@ -33,7 +33,7 @@ namespace {
 // ============================================================================
 
 Fory create_serializer(bool track_ref = true) {
-  return Fory::builder().track_ref(track_ref).build();
+  return Fory::builder().xlang(true).track_ref(track_ref).build();
 }
 
 // ============================================================================
@@ -425,14 +425,17 @@ TEST(WeakPtrSerializerTest, RequiresTrackRef) {
   original.weak_ref = SharedWeak<SimpleStruct>::from(target);
 
   // Create serializer WITHOUT track_ref
-  auto fory = Fory::builder().track_ref(false).build();
+  auto fory = Fory::builder().xlang(true).track_ref(false).build();
   fory.register_struct<SimpleStruct>(100);
   fory.register_struct<StructWithWeak>(101);
 
   auto bytes_result = fory.serialize(original);
   EXPECT_FALSE(bytes_result.ok()) << "Should fail when track_ref is disabled";
-  EXPECT_TRUE(bytes_result.error().to_string().find("track_ref") !=
-              std::string::npos);
+  auto error = bytes_result.error().to_string();
+  EXPECT_EQ(error,
+            "Invalid ref: SharedWeak requires track_ref to be enabled. Use "
+            "Fory::builder().track_ref(true).build()");
+  EXPECT_EQ(error.find("xlang("), std::string::npos);
 }
 
 // ============================================================================

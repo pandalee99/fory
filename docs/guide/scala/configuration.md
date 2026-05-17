@@ -1,7 +1,7 @@
 ---
-title: Fory Creation
+title: Configuration
 sidebar_position: 1
-id: fory_creation
+id: configuration
 license: |
   Licensed to the Apache Software Foundation (ASF) under one or more
   contributor license agreements.  See the NOTICE file distributed with
@@ -19,23 +19,46 @@ license: |
   limitations under the License.
 ---
 
-This page covers Scala-specific requirements for creating Fory instances.
+This page covers Scala-specific runtime configuration and Fory instance creation.
 
-## Basic Setup
+## Xlang Setup
 
-When using Fory for Scala serialization, you must:
-
-1. Create the runtime with `ForyScala.builder()`, or install `ForyScala` with `Fory.builder().withModule(ForyScala)`.
-2. Register application classes before serialization.
+Fory Scala follows the Java builder default: xlang mode with compatible schema
+evolution. Use this path for cross-language Scala payloads, schema IDL generated
+Scala models, and macro-derived xlang serializers.
 
 ```scala
 import org.apache.fory.scala.ForyScala
 
 val fory = ForyScala.builder()
+  .withXlang(true)
   .build()
 ```
 
-## Registering Scala Internal Types
+Register application classes before serialization:
+
+```scala
+fory.register(classOf[Person])
+fory.register(classOf[Point])
+```
+
+## Native Mode Setup
+
+For same-language Scala/JVM payloads that need native JVM object behavior, you
+must:
+
+1. Create the runtime with `ForyScala.builder().withXlang(false)`, or install
+   `ForyScala` with `Fory.builder().withXlang(false).withModule(ForyScala)`.
+2. Register application classes before serialization.
+
+```scala
+import org.apache.fory.scala.ForyScala
+
+val fory = ForyScala.builder().withXlang(false)
+  .build()
+```
+
+### Registering Scala Internal Types
 
 Depending on the object types you serialize, you may need to register some Scala internal types:
 
@@ -46,19 +69,19 @@ fory.register(Class.forName("scala.Enumeration.Val"))
 To avoid such registration, you can disable class registration:
 
 ```scala
-val fory = ForyScala.builder()
+val fory = ForyScala.builder().withXlang(false)
   .requireClassRegistration(false)
   .build()
 ```
 
 > **Note**: Disabling class registration allows deserialization of unknown types. This is more flexible but may be insecure if the classes contain malicious code.
 
-## Reference Tracking
+### Reference Tracking
 
 Circular references are common in Scala. Reference tracking should be enabled with `withRefTracking(true)`:
 
 ```scala
-val fory = ForyScala.builder()
+val fory = ForyScala.builder().withXlang(false)
   .withRefTracking(true)
   .build()
 ```
@@ -77,6 +100,7 @@ import org.apache.fory.scala.ForyScala
 
 object ForyHolder {
   val fory: Fory = ForyScala.builder()
+    .withXlang(true)
     .build()
 }
 ```
@@ -91,6 +115,7 @@ import org.apache.fory.scala.ForyScala
 
 object ForyHolder {
   val fory: ThreadSafeFory = ForyScala.builder()
+    .withXlang(true)
     .buildThreadSafeFory()
 }
 ```
@@ -99,25 +124,25 @@ object ForyHolder {
 
 All configuration options from Fory Java are available. See [Java Configuration](../java/configuration.md) for the complete list.
 
-Common options for Scala:
+Common options for Scala native-mode payloads:
 
 ```scala
 import org.apache.fory.scala.ForyScala
 
-val fory = ForyScala.builder()
+val fory = ForyScala.builder().withXlang(false)
   // Enable reference tracking for circular references
   .withRefTracking(true)
-  // Enable schema evolution support
+  // Enable schema evolution support for native-mode payloads
   .withCompatible(true)
   // Enable async compilation for better startup performance
   .withAsyncCompilation(true)
   .build()
 ```
 
-## Cross-Language Mode
+## Xlang Mode
 
-For Scala xlang or schema IDL generated code, enable xlang and register the
-generated schema module:
+For Scala xlang or schema IDL generated code, use the default xlang mode and
+register the generated schema module:
 
 ```scala
 import org.apache.fory.scala.ForyScala
@@ -125,7 +150,6 @@ import example.ExampleForyModule
 
 val fory = ForyScala.builder()
   .withXlang(true)
-  .withCompatible(true)
   .withRefTracking(true)
   .withModule(ExampleForyModule)
   .build()

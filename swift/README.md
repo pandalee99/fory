@@ -7,16 +7,16 @@
 
 The Swift implementation provides high-performance object graph serialization with macro-based code generation, schema evolution support, and xlang interoperability.
 
-## 🚀 Why Apache Fory™ Swift?
+## Why Apache Fory™ Swift?
 
-- **🔥 Fast Binary Serialization**: Efficient encoding for Swift value and reference types
-- **🧩 Macro-Driven Models**: Use `@ForyStruct`, `@ForyEnum`, and `@ForyUnion` to generate serializers
-- **🌍 Cross-Language**: Exchange payloads with Java, Rust, Go, Python, and other Fory runtimes via xlang
-- **🔄 Shared/Circular References**: Preserve object identity with `trackRef` for reference graphs
-- **🧬 Dynamic Values**: Serialize `Any`, `AnyObject`, `any Serializer`, `AnyHashable`, and dynamic containers
-- **📦 Schema Evolution**: Enable compatible mode for add/remove/reorder field evolution
+- **Fast Binary Serialization**: Efficient encoding for Swift value and reference types
+- **Macro-Driven Models**: Use `@ForyStruct`, `@ForyEnum`, and `@ForyUnion` to generate serializers
+- **Cross-Language**: Exchange payloads with Java, Rust, Go, Python, and other Fory runtimes via xlang
+- **Shared/Circular References**: Preserve object identity with `trackRef` for reference graphs
+- **Dynamic Values**: Serialize `Any`, `AnyObject`, `any Serializer`, `AnyHashable`, and dynamic containers
+- **Schema Evolution**: Enable compatible mode for add/remove/reorder field evolution
 
-## 📦 Package Layout
+## Package Layout
 
 | Target           | Description                                              |
 | ---------------- | -------------------------------------------------------- |
@@ -25,7 +25,7 @@ The Swift implementation provides high-performance object graph serialization wi
 | `ForyXlangTests` | Executable used by Java-driven xlang integration tests   |
 | `ForyTests`      | Swift unit tests                                         |
 
-## 🏃 Quick Start
+## Quick Start
 
 ### 1. Add dependency
 
@@ -87,7 +87,7 @@ assert(output2 == input)
 
 `Fory` is the fastest option for single-threaded reuse. Keep one instance per thread.
 
-## 📚 Core Features
+## Core Features
 
 ### 1. Object Graph Serialization
 
@@ -137,7 +137,7 @@ assert(decoded == person)
 Enable reference tracking for class/reference graphs:
 
 ```swift
-let fory = Fory(xlang: true, ref: true, compatible: false)
+let fory = Fory(ref: true, compatible: false)
 ```
 
 Shared reference identity is preserved:
@@ -169,7 +169,7 @@ final class AnimalPair {
     }
 }
 
-let fory = Fory(xlang: true, ref: true, compatible: true)
+let fory = Fory(ref: true)
 fory.register(Animal.self, id: 200)
 fory.register(AnimalPair.self, id: 201)
 
@@ -257,10 +257,10 @@ struct PersonV2 {
     var phone: String? = nil
 }
 
-let writer = Fory(xlang: true, compatible: true)
+let writer = Fory()
 writer.register(PersonV1.self, id: 1)
 
-let reader = Fory(xlang: true, compatible: true)
+let reader = Fory()
 reader.register(PersonV2.self, id: 1)
 
 let v1 = PersonV1(name: "alice", age: 30, address: "main st")
@@ -351,7 +351,7 @@ enum StringOrLong: Equatable {
     case number(Int64)
 }
 
-let fory = Fory(xlang: true, compatible: false)
+let fory = Fory(compatible: false)
 fory.register(Color.self, id: 300)
 fory.register(StringOrLong.self, id: 301)
 
@@ -370,12 +370,12 @@ assert(value == .text("hello"))
 For types that should not use Fory model macros, implement `Serializer` manually and register the type.
 See `../docs/guide/swift/custom-serializers.md` for a complete example.
 
-## 🌍 Cross-Language Serialization
+## Cross-Language Serialization
 
-Recommended xlang preset:
+Recommended preset:
 
 ```swift
-let fory = Fory(xlang: true, ref: false, compatible: true)
+let fory = Fory()
 ```
 
 Type registration can be ID-based or name-based:
@@ -391,18 +391,13 @@ Cross-language rules:
 - Use compatible mode for independently evolving schemas
 - Register all user-defined concrete types used inside dynamic payloads
 
-## ⚠️ Row Format Status
-
-Swift runtime currently exposes object graph serialization APIs (`Fory.serialize` / `Fory.deserialize`).
-Row-format APIs are not exposed yet in Swift.
-
-## ⚡ Performance Notes
+## Performance Notes
 
 - Prefer `trackRef=false` for value-only payloads to avoid reference-table overhead
 - Reuse the same `Fory` instance and register types once per process/service lifecycle
 - Use schema-consistent mode (`compatible=false`) when strict schema parity is guaranteed
 
-## 🛠️ Development
+## Development
 
 Run Swift tests:
 
@@ -418,7 +413,7 @@ cd java/fory-core
 ENABLE_FORY_DEBUG_OUTPUT=1 FORY_SWIFT_JAVA_CI=1 mvn -T16 test -Dtest=org.apache.fory.xlang.SwiftXlangTest
 ```
 
-## 📖 Documentation
+## Documentation
 
 - [Swift Guide](../docs/guide/swift/index.md)
 - [Configuration](../docs/guide/swift/configuration.md)
@@ -428,10 +423,10 @@ ENABLE_FORY_DEBUG_OUTPUT=1 FORY_SWIFT_JAVA_CI=1 mvn -T16 test -Dtest=org.apache.
 - [Xlang Specification](../docs/specification/xlang_serialization_spec.md)
 - [Xlang Type Mapping](../docs/specification/xlang_type_mapping.md)
 
-## 📄 License
+## License
 
 Licensed under the Apache License, Version 2.0. See [LICENSE](https://github.com/apache/fory/blob/main/LICENSE).
 
-## 🤝 Contributing
+## Contributing
 
 Contributions are welcome. See [CONTRIBUTING.md](https://github.com/apache/fory/blob/main/CONTRIBUTING.md).
