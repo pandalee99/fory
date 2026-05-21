@@ -15,13 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
-[package]
-name = "idl_tests"
-version = "1.1.0-alpha.0"
-edition = "2021"
-license = "Apache-2.0"
-
-[dependencies]
-chrono = "0.4"
-fory = { path = "../../../rust/fory", features = ["chrono"] }
-fory-core = { path = "../../../rust/fory-core" }
+interface:
+  display_name: "Fory Version Bump"
+  short_description: "Bump Fory release and development versions across runtimes"
+  default_prompt: "Bump Apache Fory versions across package metadata, build files, integration tests, examples, and source docs, then run an independent audit for missed or inconsistent version surfaces."
