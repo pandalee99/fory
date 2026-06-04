@@ -62,14 +62,12 @@ void main() {
   PersonForyModule.register(
     fory,
     Color,
-    namespace: 'example',
-    typeName: 'Color',
+    name: 'example.Color',
   );
   PersonForyModule.register(
     fory,
     Person,
-    namespace: 'example',
-    typeName: 'Person',
+    name: 'example.Person',
   );
 
   final person = Person()
@@ -93,7 +91,7 @@ dart run build_runner build --delete-conflicting-outputs
 
 ## Type Registration
 
-Generated types register through the generated library namespace. The namespace
+Generated types register through the generated Fory module. The module
 class is named `<FileName>ForyModule` based on the source file that contains the
 annotated types.
 
@@ -101,21 +99,22 @@ annotated types.
 PersonForyModule.register(fory, Person, id: 100);
 ```
 
-Or use namespace and type name registration:
+Or use named registration:
 
 ```dart
 PersonForyModule.register(
   fory,
   Person,
-  namespace: 'example',
-  typeName: 'Person',
+  name: 'example.Person',
 );
 ```
 
 Exactly one registration mode is required:
 
 - `id: ...`
-- `namespace: ...` and `typeName: ...`
+- `name: ...`
+
+Use `.` inside `name` to add a namespace prefix, for example `example.Person`.
 
 Keep the same registration identity on all runtimes that exchange the type.
 
@@ -220,8 +219,7 @@ void main() {
   fory.registerSerializer(
     Person,
     const PersonSerializer(),
-    namespace: 'example',
-    typeName: 'Person',
+    name: 'example.Person',
   );
 
   final bytes = fory.serialize(Person('Ada', 36));
@@ -300,7 +298,7 @@ The main exported API includes:
 
 - The Dart runtime only supports xlang payloads.
 - Register user-defined types before serialization or deserialization.
-- Keep numeric IDs or `namespace + typeName` mappings consistent across
+- Keep numeric IDs or `name` mappings consistent across
   languages.
 - Use Dart `int` plus `@ForyField(type: ...)` for 8/16/32-bit integer fields,
   Dart `double` plus `Float16Type` or `Bfloat16Type` for 16-bit
