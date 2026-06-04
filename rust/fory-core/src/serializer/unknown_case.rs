@@ -18,7 +18,7 @@
 use crate::context::{ReadContext, WriteContext};
 use crate::error::Error;
 use crate::resolver::{RefFlag, RefMode};
-use crate::serializer::any::check_generic_container_type;
+use crate::serializer::any::check_erased_any_payload_type;
 use crate::serializer::{ForyDefault, Serializer};
 use crate::type_id::{self, TypeId};
 use crate::types::UnknownCase;
@@ -154,10 +154,10 @@ pub fn read_payload(context: &mut ReadContext, case_id: u32) -> Result<UnknownCa
             // boundary by itself, and real nested payload serializers perform their
             // own depth checks.
             let type_info = context.read_any_type_info()?;
-            check_generic_container_type(&type_info)?;
+            check_erased_any_payload_type(&type_info)?;
             let boxed = type_info
                 .get_harness()
-                .read_polymorphic_data_send_sync(context, &type_info)?;
+                .read_polymorphic_data_as_send_sync_any(context, &type_info)?;
             let value: Arc<dyn std::any::Any + Send + Sync> = Arc::from(boxed);
             if let Some(ref_id) = ref_id {
                 context.ref_reader.store_arc_ref_at(ref_id, value.clone());
@@ -207,12 +207,7 @@ impl Serializer for UnknownCase {
     fn fory_read_data(context: &mut ReadContext) -> Result<Self, Error> {
         read_payload(context, 0)
     }
-
-    fn fory_is_threadsafe_type() -> bool {
-        true
-    }
-
-    fn fory_read_data_send_sync(
+    fn fory_read_data_as_send_sync_any(
         context: &mut ReadContext,
     ) -> Result<Box<dyn Any + Send + Sync>, Error> {
         Ok(crate::serializer::box_send_sync(read_payload(context, 0)?))

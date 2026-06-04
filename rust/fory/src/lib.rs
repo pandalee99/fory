@@ -340,7 +340,8 @@
 //! - `Box<dyn Trait>` - Owned trait objects
 //! - `Rc<dyn Trait>` - Reference-counted trait objects
 //! - `Arc<dyn Trait>` - Thread-safe reference-counted trait objects
-//! - `Rc<dyn Any>` / `Arc<dyn Any + Send + Sync>` - Runtime type dispatch without custom traits
+//! - `Box<dyn Any>` / `Rc<dyn Any>` / `Arc<dyn Any + Send + Sync>` - Runtime type
+//!   dispatch without custom traits for registered non-container payloads
 //! - Collections: `Vec<Box<dyn Trait>>`, `HashMap<K, Box<dyn Trait>>`
 //!
 //! #### Basic Trait Object Serialization
@@ -401,7 +402,7 @@
 //!
 //! #### Serializing `dyn Any` Trait Objects
 //!
-//! **What it does:** Supports serializing `Rc<dyn Any>` and
+//! **What it does:** Supports serializing `Box<dyn Any>`, `Rc<dyn Any>`, and
 //! `Arc<dyn Any + Send + Sync>` for maximum runtime type flexibility without
 //! defining custom traits.
 //!
@@ -410,7 +411,7 @@
 //!
 //! **Key points:**
 //!
-//! - Works with any type that implements `Serializer`
+//! - Works with registered concrete non-container types that implement `Serializer`
 //! - Requires downcasting after deserialization to access the concrete type
 //! - Type information is preserved during serialization
 //!
@@ -469,6 +470,18 @@
 //! # Ok(())
 //! # }
 //! ```
+//!
+//! `Box<dyn Any>`, `Rc<dyn Any>`, and `Arc<dyn Any + Send + Sync>` are supported
+//! erased `Any` carriers for registered concrete non-container payloads.
+//! Use `Arc<dyn Any + Send + Sync>` when the erased payload must be shareable
+//! across threads; the concrete payload type must also satisfy `Send + Sync`.
+//! Registered structs, enums, and unions that satisfy those bounds can be used
+//! as the erased payload.
+//! Generic containers such as `Vec<T>`, `HashMap<K, V>`, `HashSet<T>`, and
+//! `LinkedList<T>` are not supported directly as top-level erased `Any`
+//! payloads behind any of those carriers. This also includes primitive vector
+//! encodings such as `Vec<u8>`. Wrap the container in a registered derived type
+//! when it needs to travel behind an erased `Any` carrier.
 //!
 //! #### Rc/Arc-Based Trait Objects in Structs
 //!
@@ -536,8 +549,9 @@
 //! `Serializer` directly. For standalone serialization (not inside struct fields),
 //! the `register_trait_type!` macro generates wrapper types.
 //!
-//! **Note:** If you don't want to use wrapper types, you can serialize as `Rc<dyn Any>`
-//! or `Arc<dyn Any + Send + Sync>` instead (see the `dyn Any` section above).
+//! **Note:** If you don't want to use wrapper types for concrete non-container payloads,
+//! you can serialize as `Box<dyn Any>`, `Rc<dyn Any>`, or
+//! `Arc<dyn Any + Send + Sync>` instead (see the `dyn Any` section above).
 //!
 //! The `register_trait_type!` macro generates `AnimalRc` and `AnimalArc` wrapper types:
 //!
@@ -1005,8 +1019,11 @@
 //! - `Box<dyn Trait>` - Owned trait objects
 //! - `Rc<dyn Trait>` - Reference-counted trait objects
 //! - `Arc<dyn Trait>` - Thread-safe reference-counted trait objects
-//! - `Rc<dyn Any>` - Runtime type dispatch without custom traits
-//! - `Arc<dyn Any + Send + Sync>` - Thread-safe runtime type dispatch
+//! - `Box<dyn Any>` - Runtime type dispatch for registered non-container payloads
+//! - `Rc<dyn Any>` - Reference-counted runtime type dispatch for registered
+//!   non-container payloads
+//! - `Arc<dyn Any + Send + Sync>` - Thread-safe runtime type dispatch for
+//!   registered non-container payloads
 //!
 //! ## Wire Modes And Schema Evolution
 //!
