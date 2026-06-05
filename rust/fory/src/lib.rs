@@ -379,7 +379,7 @@
 //! }
 //!
 //! # fn main() -> Result<(), Error> {
-//! let mut fory = Fory::builder().xlang(false).compatible(true).build();
+//! let mut fory = Fory::builder().xlang(false).build();
 //! fory.register::<Dog>(100)?;
 //! fory.register::<Cat>(101)?;
 //! fory.register::<Zoo>(102)?;
@@ -519,7 +519,7 @@
 //! }
 //!
 //! # fn main() -> Result<(), Error> {
-//! let mut fory = Fory::builder().xlang(false).compatible(true).build();
+//! let mut fory = Fory::builder().xlang(false).build();
 //! fory.register::<Dog>(100)?;
 //! fory.register::<Cat>(101)?;
 //! fory.register::<AnimalShelter>(102)?;
@@ -574,7 +574,7 @@
 //! register_trait_type!(Animal, Dog);
 //!
 //! # fn main() -> Result<(), Error> {
-//! let mut fory = Fory::builder().xlang(false).compatible(true).build();
+//! let mut fory = Fory::builder().xlang(false).build();
 //! fory.register::<Dog>(100)?;
 //!
 //! // For Rc<dyn Trait>
@@ -649,10 +649,10 @@
 //! }
 //!
 //! # fn main() -> Result<(), Error> {
-//! let mut fory1 = Fory::builder().xlang(true).compatible(true).build();
+//! let mut fory1 = Fory::builder().xlang(true).build();
 //! fory1.register_by_name::<PersonV1>("example.Person")?;
 //!
-//! let mut fory2 = Fory::builder().xlang(true).compatible(true).build();
+//! let mut fory2 = Fory::builder().xlang(true).build();
 //! fory2.register_by_name::<PersonV2>("example.Person")?;
 //!
 //! let person_v1 = PersonV1 {
@@ -748,10 +748,10 @@
 //! }
 //!
 //! # fn main() -> Result<(), Error> {
-//! let mut fory_old = Fory::builder().xlang(false).compatible(true).build();
+//! let mut fory_old = Fory::builder().xlang(false).build();
 //! fory_old.register::<OldEvent>(5)?;
 //!
-//! let mut fory_new = Fory::builder().xlang(false).compatible(true).build();
+//! let mut fory_new = Fory::builder().xlang(false).build();
 //! fory_new.register::<NewEvent>(5)?;
 //!
 //! // Serialize with old schema (2 fields)
@@ -786,8 +786,9 @@
 //! useful for temporary groupings, function return values, and ad-hoc data structures.
 //!
 //! **Technical approach:** Each tuple size (1-22) has a specialized `Serializer` implementation.
-//! In schema-consistent mode, elements are serialized sequentially without overhead. In compatible
-//! mode, the tuple is serialized as a heterogeneous collection with type metadata for each element.
+//! With the same-schema optimization, elements are serialized sequentially without overhead. In
+//! compatible mode, the tuple is serialized as a heterogeneous collection with type metadata for
+//! each element.
 //!
 //! **Features:**
 //!
@@ -1034,8 +1035,8 @@
 //!   xlang mode uses compatible schema evolution so independently deployed
 //!   peers can add, remove, or reorder fields.
 //! - **Native mode** is selected with `.xlang(false)`. Use it for Rust-only
-//!   payloads. When `compatible` is omitted, native mode uses
-//!   schema-consistent payloads for the smaller same-schema format.
+//!   payloads. When `compatible` is omitted, native mode also uses compatible
+//!   schema evolution.
 //!
 //! ```rust
 //! use fory::Fory;
@@ -1043,11 +1044,11 @@
 //! // Xlang mode with compatible schema evolution.
 //! let xlang = Fory::builder().xlang(true).build();
 //!
-//! // Native mode with schema-consistent payloads.
+//! // Native mode with compatible schema evolution.
 //! let native = Fory::builder().xlang(false).build();
 //!
-//! // Native mode with compatible schema evolution.
-//! let native_compatible = Fory::builder().xlang(false).compatible(true).build();
+//! // Same-schema optimization for Rust-only payloads.
+//! let native_same_schema = Fory::builder().xlang(false).compatible(false).build();
 //! ```
 //!
 //! ## Cross-Language Serialization

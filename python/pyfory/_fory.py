@@ -166,8 +166,7 @@ class Fory:
                 are allowed. We are not responsible for security risks when this option
                 is disabled without proper policy controls.
 
-            compatible: Enable schema evolution. When omitted, xlang mode defaults to
-                compatible mode and Python native mode defaults to schema-consistent mode.
+            compatible: Enable schema evolution. When omitted, compatible mode is enabled.
                 When enabled, supports forward/backward compatibility for dataclass field
                 additions and removals.
 
@@ -199,7 +198,7 @@ class Fory:
             >>> # Xlang mode with compatible schema evolution
             >>> fory = Fory(xlang=True)
         """
-        compatible = xlang if compatible is None else compatible
+        compatible = True if compatible is None else compatible
         self.xlang = xlang
         self.track_ref = ref
         self.strict = _ENABLE_TYPE_REGISTRATION_FORCIBLY or strict
@@ -604,7 +603,8 @@ class ThreadSafeFory:
         ref (bool): Whether to enable reference tracking. Defaults to False.
         strict (bool): Whether to require type registration. Defaults to True.
         compatible (bool): Whether to enable compatible mode. Defaults to compatible mode
-            in xlang and schema-consistent mode in Python native mode.
+            in both xlang and Python native mode. Set False only when every reader and
+            writer always uses the same Python class schema and smaller payloads matter.
         max_depth (int): Maximum depth for deserialization. Defaults to 50.
         max_collection_size (int): Maximum allowed size for collections and maps during
             deserialization. Defaults to 1,000,000.

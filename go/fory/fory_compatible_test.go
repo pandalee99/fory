@@ -163,13 +163,25 @@ func TestMetaShareEnabled(t *testing.T) {
 	assert.True(t, fory.metaContext.IsScopedMetaShareEnabled(), "Expected scoped meta share to be enabled by default when compatible=true")
 }
 
-func TestXlangDefaultsToCompatibleUnlessExplicitlySet(t *testing.T) {
+func TestCompatibleDefaults(t *testing.T) {
 	defaultXlang := NewForyWithOptions(WithXlang(true))
+	defaultNative := NewForyWithOptions(WithXlang(false))
+
+	assert.True(t, defaultXlang.config.Compatible)
+	assert.NotNil(t, defaultXlang.metaContext)
+	assert.True(t, defaultXlang.metaContext.IsScopedMetaShareEnabled())
+	assert.True(t, defaultNative.config.Compatible)
+	assert.NotNil(t, defaultNative.metaContext)
+	assert.True(t, defaultNative.metaContext.IsScopedMetaShareEnabled())
+}
+
+func TestCompatibleModeOverrides(t *testing.T) {
+	compatibleXlang := NewForyWithOptions(WithXlang(true), WithCompatible(true))
 	explicitSchemaConsistent := NewForyWithOptions(WithCompatible(false), WithXlang(true))
 	explicitSchemaConsistentReverseOrder := NewForyWithOptions(WithXlang(true), WithCompatible(false))
 
-	assert.True(t, defaultXlang.config.Compatible, "xlang should default to compatible mode")
-	assert.NotNil(t, defaultXlang.metaContext, "xlang default compatible mode should initialize metaContext")
+	assert.True(t, compatibleXlang.config.Compatible)
+	assert.NotNil(t, compatibleXlang.metaContext)
 
 	assert.False(t, explicitSchemaConsistent.config.Compatible)
 	assert.Nil(t, explicitSchemaConsistent.metaContext)
