@@ -20,6 +20,7 @@ from dataclasses import dataclass
 import datetime
 import decimal
 import enum
+import math
 from typing import Dict, Any, List, Set, Optional, Tuple
 
 import pytest
@@ -27,7 +28,8 @@ import typing
 
 import pyfory
 from pyfory import Fory
-from pyfory.error import TypeUnregisteredError
+from pyfory.error import ForyInvalidDataError, TypeUnregisteredError
+from pyfory.resolver import NOT_NULL_VALUE_FLAG, REF_VALUE_FLAG
 from pyfory.struct import DataClassSerializer, build_default_values_factory
 from pyfory.types import TypeId
 
@@ -37,12 +39,20 @@ def ser_de(fory, obj):
     return fory.deserialize(binary)
 
 
-def compat_ser_de(remote_cls, local_cls, value, type_id):
+def compat_ser_de(remote_cls, local_cls, value, type_id, ref=False):
+    writer = Fory(xlang=True, compatible=True, ref=ref)
+    reader = Fory(xlang=True, compatible=True, ref=ref)
+    writer.register_type(remote_cls, type_id=type_id)
+    reader.register_type(local_cls, type_id=type_id)
+    return reader.deserialize(writer.serialize(value))
+
+
+def compat_ser(remote_cls, local_cls, value, type_id):
     writer = Fory(xlang=True, compatible=True, ref=False)
     reader = Fory(xlang=True, compatible=True, ref=False)
     writer.register_type(remote_cls, type_id=type_id)
     reader.register_type(local_cls, type_id=type_id)
-    return reader.deserialize(writer.serialize(value))
+    return writer, reader, writer.serialize(value)
 
 
 @dataclass
@@ -147,6 +157,257 @@ class RemoteNestedUnsigned:
 @dataclass
 class LocalNestedSignedDefault:
     values: Dict[pyfory.FixedInt32, List[pyfory.TaggedInt64]] = dataclasses.field(default_factory=lambda: {-1: [-1]})
+
+
+@dataclass
+class RemoteStringScalar:
+    value: str = ""
+
+
+@dataclass
+class LocalBoolScalar:
+    value: bool = False
+
+
+@dataclass
+class RemoteBoolScalar:
+    value: bool = False
+
+
+@dataclass
+class RemoteOptionalBoolScalar:
+    value: Optional[bool] = None
+
+
+@dataclass
+class RemoteOptionalRefBoolScalar:
+    value: Optional[bool] = pyfory.field(default=True, ref=True)
+
+
+@dataclass
+class LocalStringScalar:
+    value: str = ""
+
+
+@dataclass
+class RemoteInt64Scalar:
+    value: pyfory.Int64 = 0
+
+
+@dataclass
+class LocalInt8Scalar:
+    value: pyfory.Int8 = 0
+
+
+@dataclass
+class RemoteUInt64Scalar:
+    value: pyfory.UInt64 = 0
+
+
+@dataclass
+class LocalInt64Scalar:
+    value: pyfory.Int64 = 0
+
+
+@dataclass
+class LocalDecimalScalar:
+    value: decimal.Decimal = decimal.Decimal(0)
+
+
+@dataclass
+class RemoteDecimalScalar:
+    value: decimal.Decimal = decimal.Decimal(0)
+
+
+@dataclass
+class LocalFloat32Scalar:
+    value: pyfory.Float32 = 0.0
+
+
+@dataclass
+class RemoteFloat64Scalar:
+    value: pyfory.Float64 = 0.0
+
+
+@dataclass
+class RemoteOptionalStringScalar:
+    value: Optional[str] = None
+
+
+@dataclass
+class RemoteTwoStringScalars:
+    flag: str = pyfory.field(default="", ref=True)
+    count: str = pyfory.field(default="", ref=True)
+
+
+@dataclass
+class RemoteRefBoolScalar:
+    value: bool = pyfory.field(default=False, ref=True)
+
+
+@dataclass
+class LocalRefBoolScalar:
+    value: bool = pyfory.field(default=False, ref=True)
+
+
+@dataclass
+class LocalOptionalRefBoolScalar:
+    value: Optional[bool] = pyfory.field(default=None, ref=True)
+
+
+@dataclass
+class RemoteRefFixedInt32Scalar:
+    value: pyfory.FixedInt32 = pyfory.field(default=0, ref=True)
+
+
+@dataclass
+class LocalRefInt32Scalar:
+    value: pyfory.Int32 = pyfory.field(default=0, ref=True)
+
+
+@dataclass
+class LocalBoolIntScalars:
+    flag: bool = False
+    count: pyfory.Int32 = 0
+
+
+def test_compatible_scalar_conversions():
+    assert compat_ser_de(RemoteStringScalar, LocalBoolScalar, RemoteStringScalar("true"), 720) == LocalBoolScalar(True)
+    assert compat_ser_de(RemoteStringScalar, LocalBoolScalar, RemoteStringScalar("0"), 721) == LocalBoolScalar(False)
+    assert compat_ser_de(RemoteBoolScalar, LocalStringScalar, RemoteBoolScalar(True), 722) == LocalStringScalar("true")
+    assert compat_ser_de(RemoteInt64Scalar, LocalBoolScalar, RemoteInt64Scalar(1), 723) == LocalBoolScalar(True)
+    assert compat_ser_de(RemoteBoolScalar, LocalInt8Scalar, RemoteBoolScalar(True), 724) == LocalInt8Scalar(1)
+    assert compat_ser_de(RemoteInt64Scalar, LocalInt8Scalar, RemoteInt64Scalar(127), 725) == LocalInt8Scalar(127)
+    assert compat_ser_de(RemoteUInt64Scalar, LocalInt64Scalar, RemoteUInt64Scalar(42), 726) == LocalInt64Scalar(42)
+    assert compat_ser_de(RemoteStringScalar, LocalFloat32Scalar, RemoteStringScalar("0.5"), 727) == LocalFloat32Scalar(0.5)
+    assert compat_ser_de(RemoteFloat64Scalar, LocalStringScalar, RemoteFloat64Scalar(-0.0), 728) == LocalStringScalar("-0.0")
+    assert compat_ser_de(RemoteStringScalar, LocalDecimalScalar, RemoteStringScalar("1.2300"), 729) == LocalDecimalScalar(decimal.Decimal("1.23"))
+    assert compat_ser_de(RemoteDecimalScalar, LocalInt64Scalar, RemoteDecimalScalar(decimal.Decimal("1.0")), 730) == LocalInt64Scalar(1)
+    assert compat_ser_de(RemoteInt64Scalar, LocalDecimalScalar, RemoteInt64Scalar(7), 731) == LocalDecimalScalar(decimal.Decimal(7))
+    digits_256 = "1" * 256
+    digit_bound = compat_ser_de(RemoteStringScalar, LocalDecimalScalar, RemoteStringScalar(digits_256), 743)
+    assert digit_bound.value == decimal.Decimal(digits_256)
+    exponent_bound = compat_ser_de(RemoteStringScalar, LocalDecimalScalar, RemoteStringScalar("1e255"), 744)
+    assert len(str(int(exponent_bound.value))) == 256
+    result = compat_ser_de(RemoteStringScalar, LocalFloat32Scalar, RemoteStringScalar("-0e0"), 737)
+    assert result.value == 0.0
+    assert math.copysign(1.0, result.value) < 0.0
+
+
+def test_compatible_scalar_rejects_invalid_bool_payload():
+    _, reader, payload = compat_ser(RemoteBoolScalar, LocalStringScalar, RemoteBoolScalar(True), 745)
+    corrupted = bytearray(payload)
+    corrupted[-1] = 2
+    with pytest.raises(ForyInvalidDataError):
+        reader.deserialize(bytes(corrupted))
+
+
+def test_compatible_scalar_rejects_ref_value_flag():
+    _, reader, payload = compat_ser(RemoteOptionalStringScalar, LocalBoolScalar, RemoteOptionalStringScalar("1"), 746)
+    corrupted = bytearray(payload)
+    flag_offset = corrupted.rfind(bytes([NOT_NULL_VALUE_FLAG & 0xFF]))
+    assert flag_offset >= 0
+    corrupted[flag_offset] = REF_VALUE_FLAG & 0xFF
+    with pytest.raises(ForyInvalidDataError):
+        reader.deserialize(bytes(corrupted))
+
+
+def test_compatible_scalar_same_type_nullable_uses_strict_source_read():
+    _, reader, payload = compat_ser(RemoteOptionalBoolScalar, LocalBoolScalar, RemoteOptionalBoolScalar(True), 747)
+    corrupted = bytearray(payload)
+    flag_offset = corrupted.rfind(bytes([NOT_NULL_VALUE_FLAG & 0xFF]))
+    assert flag_offset >= 0
+    corrupted[flag_offset] = REF_VALUE_FLAG & 0xFF
+    with pytest.raises(ForyInvalidDataError):
+        reader.deserialize(bytes(corrupted))
+
+    corrupted = bytearray(payload)
+    corrupted[-1] = 2
+    with pytest.raises(ForyInvalidDataError):
+        reader.deserialize(bytes(corrupted))
+
+
+@pytest.mark.parametrize(
+    ("remote_cls", "local_cls", "value"),
+    [
+        (RemoteStringScalar, LocalBoolScalar, RemoteStringScalar("True")),
+        (RemoteInt64Scalar, LocalBoolScalar, RemoteInt64Scalar(2)),
+        (RemoteStringScalar, LocalInt64Scalar, RemoteStringScalar("01")),
+        (RemoteStringScalar, LocalInt64Scalar, RemoteStringScalar("1.5")),
+        (RemoteStringScalar, LocalFloat32Scalar, RemoteStringScalar("0.1")),
+        (RemoteStringScalar, LocalDecimalScalar, RemoteStringScalar("1" * 257)),
+        (RemoteStringScalar, LocalDecimalScalar, RemoteStringScalar("0." + "0" * 319)),
+        (RemoteStringScalar, LocalDecimalScalar, RemoteStringScalar("1e1000000")),
+        (RemoteStringScalar, LocalDecimalScalar, RemoteStringScalar("1e256")),
+        (RemoteInt64Scalar, LocalInt8Scalar, RemoteInt64Scalar(128)),
+        (RemoteDecimalScalar, LocalInt64Scalar, RemoteDecimalScalar(decimal.Decimal(1 << 63))),
+        (RemoteDecimalScalar, LocalStringScalar, RemoteDecimalScalar(decimal.Decimal((0, (1,), 256)))),
+        (RemoteFloat64Scalar, LocalStringScalar, RemoteFloat64Scalar(float("inf"))),
+    ],
+)
+def test_compatible_scalar_conversion_errors(remote_cls, local_cls, value):
+    _, reader, payload = compat_ser(remote_cls, local_cls, value, 732)
+    with pytest.raises(ForyInvalidDataError):
+        reader.deserialize(payload)
+
+
+def test_compatible_scalar_optional_composition():
+    assert compat_ser_de(RemoteOptionalStringScalar, LocalBoolScalar, RemoteOptionalStringScalar("false"), 733) == LocalBoolScalar(False)
+    assert compat_ser_de(RemoteOptionalStringScalar, LocalBoolScalar, RemoteOptionalStringScalar("1"), 734) == LocalBoolScalar(True)
+    assert compat_ser_de(RemoteOptionalStringScalar, LocalBoolScalar, RemoteOptionalStringScalar(None), 735) == LocalBoolScalar(False)
+
+
+def test_scalar_tracking_ref_is_not_converted():
+    writer = Fory(xlang=True, compatible=True, ref=True)
+    reader = Fory(xlang=True, compatible=True, ref=True)
+    writer.register_type(RemoteTwoStringScalars, type_id=738)
+    reader.register_type(LocalBoolIntScalars, type_id=738)
+    field_infos = writer.type_resolver.get_serializer(RemoteTwoStringScalars)._field_infos
+    assert [field_info.runtime_ref_tracking for field_info in field_infos] == [True, True]
+    assert [field_info.field_type.is_tracking_ref for field_info in field_infos] == [True, True]
+
+    shared = "".join(["", "1"])
+    result = reader.deserialize(writer.serialize(RemoteTwoStringScalars(shared, shared)))
+    assert result == LocalBoolIntScalars(False, 0)
+
+
+def test_scalar_tracking_ref_rules():
+    assert compat_ser_de(RemoteRefBoolScalar, LocalBoolScalar, RemoteRefBoolScalar(True), 739, ref=True) == LocalBoolScalar(False)
+    assert compat_ser_de(RemoteBoolScalar, LocalRefBoolScalar, RemoteBoolScalar(True), 740, ref=True) == LocalRefBoolScalar(False)
+    assert compat_ser_de(RemoteRefBoolScalar, LocalRefBoolScalar, RemoteRefBoolScalar(True), 741, ref=True) == LocalRefBoolScalar(True)
+    assert compat_ser_de(RemoteRefFixedInt32Scalar, LocalRefInt32Scalar, RemoteRefFixedInt32Scalar(7), 742, ref=True) == LocalRefInt32Scalar(0)
+    assert compat_ser_de(
+        RemoteOptionalRefBoolScalar,
+        LocalRefBoolScalar,
+        RemoteOptionalRefBoolScalar(True),
+        748,
+        ref=True,
+    ) == LocalRefBoolScalar(False)
+    assert compat_ser_de(
+        RemoteRefBoolScalar,
+        LocalOptionalRefBoolScalar,
+        RemoteRefBoolScalar(True),
+        749,
+        ref=True,
+    ) == LocalOptionalRefBoolScalar(None)
+    assert compat_ser_de(
+        RemoteOptionalRefBoolScalar,
+        LocalOptionalRefBoolScalar,
+        RemoteOptionalRefBoolScalar(True),
+        750,
+        ref=True,
+    ) == LocalOptionalRefBoolScalar(True)
+
+
+def test_same_schema_scalar_read_is_direct():
+    from pyfory.converter import CompatibleScalarFieldSerializer
+
+    fory = Fory(xlang=True, compatible=True, ref=False)
+    fory.register_type(RemoteStringScalar, type_id=736)
+    serializer = fory.type_resolver.get_serializer(RemoteStringScalar)
+    assert all(not isinstance(field_serializer, CompatibleScalarFieldSerializer) for field_serializer in serializer._serializers)
+    value = RemoteStringScalar("true")
+    assert fory.deserialize(fory.serialize(value)) == value
 
 
 def test_compatible_read_accepts_nested_same_domain_integer_encoding():

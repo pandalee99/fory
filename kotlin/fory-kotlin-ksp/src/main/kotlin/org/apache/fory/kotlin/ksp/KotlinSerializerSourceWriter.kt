@@ -304,7 +304,7 @@ internal class KotlinSerializerSourceWriter(private val struct: KotlinSourceStru
     builder.append("          continue\n")
     builder.append("        }\n")
     builder.append("        val localField = fieldsById[fieldId]!!\n")
-    builder.append("        if (!canReadRemoteField(remoteField, localField)) {\n")
+    builder.append("        if (!canReadGeneratedField(remoteField, localField)) {\n")
     builder.append("          skipField(readContext, remoteField)\n")
     builder.append("          continue\n")
     builder.append("        }\n")
@@ -845,7 +845,7 @@ internal class KotlinSerializerSourceWriter(private val struct: KotlinSourceStru
         .append("      val localField = fieldsById[")
         .append(field.id)
         .append("]!!\n")
-      builder.append(indent).append("      if (canReadRemoteField(remoteField, localField)) {\n")
+      builder.append(indent).append("      if (canReadGeneratedField(remoteField, localField)) {\n")
       val readExpression = "readCompatibleFieldValue(readContext, remoteField, localField)"
       val constructorReadExpression =
         if (constructorRefs && field.trackingRef) {
@@ -924,7 +924,7 @@ internal class KotlinSerializerSourceWriter(private val struct: KotlinSourceStru
     for (field in struct.fields) {
       builder.append("        ").append(field.id).append(" -> {\n")
       builder.append("          val localField = fieldsById[").append(field.id).append("]!!\n")
-      builder.append("          if (canReadRemoteField(remoteField, localField)) {\n")
+      builder.append("          if (canReadGeneratedField(remoteField, localField)) {\n")
       builder
         .append("            value.")
         .append(field.name)
@@ -1569,14 +1569,10 @@ internal class KotlinSerializerSourceWriter(private val struct: KotlinSourceStru
     if (type.unsigned && type.componentType == null) {
       val compatibleValue = "compatibleValue$depth"
       return when (type.valueTypeName.removeSuffix("?")) {
-        "UByte" ->
-          "run { val $compatibleValue = $expression; if ($compatibleValue is UByte) $compatibleValue else ($compatibleValue as Number).toInt().toUByte() }"
-        "UShort" ->
-          "run { val $compatibleValue = $expression; if ($compatibleValue is UShort) $compatibleValue else ($compatibleValue as Number).toInt().toUShort() }"
-        "UInt" ->
-          "run { val $compatibleValue = $expression; if ($compatibleValue is UInt) $compatibleValue else ($compatibleValue as Number).toLong().toUInt() }"
-        "ULong" ->
-          "run { val $compatibleValue = $expression; if ($compatibleValue is ULong) $compatibleValue else ($compatibleValue as Number).toLong().toULong() }"
+        "UByte" -> unsignedCompatExpr(compatibleValue, expression, "UByte")
+        "UShort" -> unsignedCompatExpr(compatibleValue, expression, "UShort")
+        "UInt" -> unsignedCompatExpr(compatibleValue, expression, "UInt")
+        "ULong" -> unsignedCompatExpr(compatibleValue, expression, "ULong")
         else -> expression
       }
     }
@@ -1614,6 +1610,26 @@ internal class KotlinSerializerSourceWriter(private val struct: KotlinSourceStru
       }
       else -> "($expression as ${type.valueTypeName})"
     }
+  }
+
+  private fun unsignedCompatExpr(valueName: String, expression: String, target: String): String {
+    val javaType =
+      when (target) {
+        "UByte" -> "org.apache.fory.type.unsigned.UInt8"
+        "UShort" -> "org.apache.fory.type.unsigned.UInt16"
+        "UInt" -> "org.apache.fory.type.unsigned.UInt32"
+        "ULong" -> "org.apache.fory.type.unsigned.UInt64"
+        else -> error("Unsupported Kotlin unsigned target $target")
+      }
+    val conversion =
+      when (target) {
+        "UByte" -> "$valueName.toInt().toUByte()"
+        "UShort" -> "$valueName.toInt().toUShort()"
+        "UInt" -> "$valueName.toLong().toUInt()"
+        "ULong" -> "$valueName.toLong().toULong()"
+        else -> error("Unsupported Kotlin unsigned target $target")
+      }
+    return "run { val $valueName = $expression; when ($valueName) { is $target -> $valueName; is $javaType -> $conversion; is Number -> $conversion; else -> run { val carrier: Any? = $valueName; throw DeserializationException(\"Compatible Kotlin $target field decoded unsupported value carrier \" + (carrier?.javaClass?.name ?: \"null\")) } } }"
   }
 
   private fun canDirect(field: KotlinSourceField): Boolean =

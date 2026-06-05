@@ -77,10 +77,13 @@ public abstract class StaticGeneratedStructSerializer<T> extends AbstractObjectS
     super(typeResolver, (Class<T>) type);
     setSerializerIfAbsent(typeResolver, (Class<T>) type);
     List<Descriptor> runtimeDescriptors = runtimeDescriptors(descriptors);
+    SerializationFieldInfo[] localFields = buildLocalFieldsById(runtimeDescriptors);
     this.typeDef = typeDef;
     this.remoteFields =
-        typeDef == null ? Collections.emptyList() : buildRemoteFields(typeDef, runtimeDescriptors);
-    this.localFieldsById = buildLocalFieldsById(runtimeDescriptors);
+        typeDef == null
+            ? Collections.emptyList()
+            : buildRemoteFields(typeDef, runtimeDescriptors, localFields);
+    this.localFieldsById = localFields;
   }
 
   private void setSerializerIfAbsent(TypeResolver typeResolver, Class<T> type) {
@@ -451,6 +454,14 @@ public abstract class StaticGeneratedStructSerializer<T> extends AbstractObjectS
     return readField(readContext, remoteField.serializationFieldInfo);
   }
 
+  protected final Object readFieldConverterSource(
+      ReadContext readContext, RemoteFieldInfo remoteField) {
+    return FieldConverters.readSourceScalar(
+        readContext,
+        remoteField.serializationFieldInfo,
+        remoteField.serializationFieldInfo.fieldConverter);
+  }
+
   public final void skipField(ReadContext readContext, RemoteFieldInfo remoteField) {
     try {
       FieldSkipper.skipField(
@@ -470,7 +481,23 @@ public abstract class StaticGeneratedStructSerializer<T> extends AbstractObjectS
     return localFieldsById[matchedId];
   }
 
-  public final boolean canReadRemoteField(
+  public final boolean canReadRemoteField(RemoteFieldInfo remoteField) {
+    if (remoteField.incompatibleCollectionArrayMatch) {
+      throw new DeserializationException(
+          "Cannot read remote field "
+              + remoteField.descriptor.getName()
+              + " as local field "
+              + localFieldsById[remoteField.matchedId].descriptor.getName()
+              + ": compatible list/array adaptation requires a matching non-null primitive element"
+              + " schema and does not apply recursively");
+    }
+    if (remoteField.nestedCollectionArrayMatch) {
+      return false;
+    }
+    return remoteField.canRead;
+  }
+
+  public final boolean canReadGeneratedField(
       RemoteFieldInfo remoteField, SerializationFieldInfo localFieldInfo) {
     if (remoteField.incompatibleCollectionArrayMatch) {
       throw new DeserializationException(
@@ -484,23 +511,25 @@ public abstract class StaticGeneratedStructSerializer<T> extends AbstractObjectS
     if (remoteField.nestedCollectionArrayMatch) {
       return false;
     }
-    if (remoteField.compatibleCollectionArrayReadAction != null) {
-      return true;
-    }
-    Class<?> remoteType = remoteField.serializationFieldInfo.typeRef.getRawType();
-    Class<?> localType = localFieldInfo.typeRef.getRawType();
-    return FieldConverters.canConvert(remoteType, localType);
+    return remoteField.canRead
+        || FieldConverters.canReadGeneratedField(
+            remoteField.serializationFieldInfo, localFieldInfo);
   }
 
   public final Object readCompatibleFieldValue(
       ReadContext readContext, RemoteFieldInfo remoteField, SerializationFieldInfo localFieldInfo) {
+    if (remoteField.compatibleScalarRead) {
+      Object fieldValue =
+          FieldConverters.readSourceScalar(
+              readContext, remoteField.serializationFieldInfo, localFieldInfo);
+      return FieldConverters.convertValue(
+          remoteField.serializationFieldInfo, localFieldInfo, fieldValue);
+    }
     Object fieldValue = readRemoteField(readContext, remoteField);
     if (remoteField.compatibleCollectionArrayReadAction != null) {
       return fieldValue;
     }
-    Class<?> remoteType = remoteField.serializationFieldInfo.typeRef.getRawType();
-    Class<?> localType = localFieldInfo.typeRef.getRawType();
-    return FieldConverters.convertValue(remoteType, localType, fieldValue);
+    return fieldValue;
   }
 
   protected final void debugWriteField(
@@ -610,7 +639,9 @@ public abstract class StaticGeneratedStructSerializer<T> extends AbstractObjectS
   }
 
   private List<RemoteFieldInfo> buildRemoteFields(
-      TypeDef remoteTypeDef, List<Descriptor> localDescriptors) {
+      TypeDef remoteTypeDef,
+      List<Descriptor> localDescriptors,
+      SerializationFieldInfo[] localFieldsById) {
     Class<?> remoteDescriptorClass = remoteDescriptorClass(remoteTypeDef);
     List<FieldInfo> remoteFieldInfos = remoteTypeDef.getFieldsInfo();
     List<Descriptor> remoteDescriptors =
@@ -646,7 +677,8 @@ public abstract class StaticGeneratedStructSerializer<T> extends AbstractObjectS
         remoteFieldInfosByKey,
         fieldIds,
         fields,
-        localDescriptors);
+        localDescriptors,
+        localFieldsById);
     return Collections.unmodifiableList(remoteFields);
   }
 
@@ -673,7 +705,8 @@ public abstract class StaticGeneratedStructSerializer<T> extends AbstractObjectS
       Map<String, FieldInfo> remoteFieldInfosByKey,
       Map<Short, Integer> fieldIds,
       Map<String, Integer> fields,
-      List<Descriptor> localDescriptors) {
+      List<Descriptor> localDescriptors,
+      SerializationFieldInfo[] localFieldsById) {
     for (SerializationFieldInfo serializationFieldInfo : remoteFieldInfosInWireOrder) {
       Descriptor descriptor = serializationFieldInfo.descriptor;
       FieldInfo fieldInfo = remoteFieldInfosByKey.get(remoteFieldKey(descriptor));
@@ -683,6 +716,8 @@ public abstract class StaticGeneratedStructSerializer<T> extends AbstractObjectS
       int matchedId = matchField(fieldInfo, fieldIds, fields);
       Descriptor localDescriptor =
           matchedId == UNKNOWN_FIELD ? null : localDescriptors.get(matchedId);
+      SerializationFieldInfo localFieldInfo =
+          matchedId == UNKNOWN_FIELD ? null : localFieldsById[matchedId];
       if (localDescriptor != null) {
         Descriptor readDescriptor = fieldInfo.toDescriptor(typeResolver, localDescriptor);
         serializationFieldInfo =
@@ -696,7 +731,8 @@ public abstract class StaticGeneratedStructSerializer<T> extends AbstractObjectS
               fieldInfo,
               descriptor,
               serializationFieldInfo,
-              localDescriptor));
+              localDescriptor,
+              localFieldInfo));
     }
   }
 
@@ -766,6 +802,8 @@ public abstract class StaticGeneratedStructSerializer<T> extends AbstractObjectS
     public final CompatibleCollectionArrayReader.ReadAction compatibleCollectionArrayReadAction;
     public final boolean incompatibleCollectionArrayMatch;
     public final boolean nestedCollectionArrayMatch;
+    public final boolean canRead;
+    public final boolean compatibleScalarRead;
 
     private RemoteFieldInfo(
         TypeResolver typeResolver,
@@ -773,7 +811,8 @@ public abstract class StaticGeneratedStructSerializer<T> extends AbstractObjectS
         FieldInfo fieldInfo,
         Descriptor descriptor,
         SerializationFieldInfo serializationFieldInfo,
-        Descriptor localDescriptor) {
+        Descriptor localDescriptor,
+        SerializationFieldInfo localFieldInfo) {
       this.matchedId = matchedId;
       this.fieldInfo = fieldInfo;
       this.descriptor = descriptor;
@@ -786,6 +825,20 @@ public abstract class StaticGeneratedStructSerializer<T> extends AbstractObjectS
       this.nestedCollectionArrayMatch =
           CompatibleCollectionArrayReader.nestedCollectionArrayMatch(
               typeResolver, fieldInfo, localDescriptor);
+      if (localFieldInfo == null
+          || incompatibleCollectionArrayMatch
+          || nestedCollectionArrayMatch) {
+        this.canRead = false;
+        this.compatibleScalarRead = false;
+      } else if (compatibleCollectionArrayReadAction != null) {
+        this.canRead = true;
+        this.compatibleScalarRead = false;
+      } else {
+        this.canRead = FieldConverters.canConvert(serializationFieldInfo, localFieldInfo);
+        this.compatibleScalarRead =
+            canRead
+                && FieldConverters.requiresSourceScalarRead(serializationFieldInfo, localFieldInfo);
+      }
     }
   }
 }
